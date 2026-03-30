@@ -1,0 +1,15 @@
+services:
+  insightd:
+    build: .
+    image: insightd:latest
+    container_name: insightd
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host:ro
+      - insightd-data:/data
+    env_file:
+      - .env
+
+volumes:
+  insightd-data:
