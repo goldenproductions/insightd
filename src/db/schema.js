@@ -1,6 +1,6 @@
 const logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 function bootstrap(db) {
   db.exec(`
@@ -24,11 +24,35 @@ function bootstrap(db) {
       cpu_percent     REAL,
       memory_mb       REAL,
       restart_count   INTEGER DEFAULT 0,
+      network_rx_bytes INTEGER,
+      network_tx_bytes INTEGER,
+      blkio_read_bytes INTEGER,
+      blkio_write_bytes INTEGER,
+      health_status   TEXT,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_snapshots_host_name_time
       ON container_snapshots (host_id, container_name, collected_at);
+
+    CREATE TABLE IF NOT EXISTS host_snapshots (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id             TEXT NOT NULL,
+      cpu_percent         REAL,
+      memory_total_mb     REAL,
+      memory_used_mb      REAL,
+      memory_available_mb REAL,
+      swap_total_mb       REAL,
+      swap_used_mb        REAL,
+      load_1              REAL,
+      load_5              REAL,
+      load_15             REAL,
+      uptime_seconds      REAL,
+      collected_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_host_snapshots_host_time
+      ON host_snapshots (host_id, collected_at);
 
     CREATE TABLE IF NOT EXISTS disk_snapshots (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,7 +103,7 @@ function bootstrap(db) {
     logger.info('schema', `Database bootstrapped at schema version ${SCHEMA_VERSION}`);
   } else {
     const currentVersion = parseInt(row.value, 10);
-    if (currentVersion < 3) {
+    if (currentVersion < SCHEMA_VERSION) {
       migrate(db, currentVersion);
       db.prepare('UPDATE meta SET value = ? WHERE key = ?').run(String(SCHEMA_VERSION), 'schema_version');
       logger.info('schema', `Database migrated from version ${currentVersion} to ${SCHEMA_VERSION}`);
@@ -102,11 +126,27 @@ function migrate(db, fromVersion) {
       try {
         db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT NOT NULL DEFAULT 'local'`);
       } catch {
-        // Column already exists (e.g., fresh DB created with v3 schema)
+        // Column already exists
       }
     }
-    // Drop old indexes and create new host-scoped ones
-    // (CREATE INDEX IF NOT EXISTS handles this in the bootstrap above)
+  }
+  if (fromVersion < 4) {
+    // Add new container telemetry columns
+    const newCols = [
+      'network_rx_bytes INTEGER',
+      'network_tx_bytes INTEGER',
+      'blkio_read_bytes INTEGER',
+      'blkio_write_bytes INTEGER',
+      'health_status TEXT',
+    ];
+    for (const col of newCols) {
+      try {
+        db.exec(`ALTER TABLE container_snapshots ADD COLUMN ${col}`);
+      } catch {
+        // Column already exists (fresh DB)
+      }
+    }
+    // host_snapshots table is created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 
@@ -119,7 +159,8 @@ function pruneOldData(db) {
   const r2 = db.prepare(`DELETE FROM disk_snapshots WHERE collected_at < ${cutoff}`).run();
   const r3 = db.prepare(`DELETE FROM update_checks WHERE checked_at < ${cutoff}`).run();
   const r4 = db.prepare(`DELETE FROM alert_state WHERE resolved_at IS NOT NULL AND resolved_at < ${cutoff}`).run();
-  const total = r1.changes + r2.changes + r3.changes + r4.changes;
+  const r5 = db.prepare(`DELETE FROM host_snapshots WHERE collected_at < ${cutoff}`).run();
+  const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes;
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows older than 30 days`);
   }

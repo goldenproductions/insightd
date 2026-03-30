@@ -5,13 +5,14 @@ const logger = require('../../shared/utils/logger');
  */
 function ingestContainers(db, hostId, containers) {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `);
 
   const insertMany = db.transaction((items) => {
     for (const c of items) {
-      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount);
+      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount,
+        c.networkRxBytes ?? null, c.networkTxBytes ?? null, c.blkioReadBytes ?? null, c.blkioWriteBytes ?? null, c.healthStatus ?? null);
     }
   });
 
@@ -70,4 +71,27 @@ function upsertHost(db, hostId) {
   `).run(hostId);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestUpdates, upsertHost };
+/**
+ * Ingest host-level system metrics into the database.
+ */
+function ingestHost(db, hostId, hostData) {
+  if (!hostData) return;
+  db.prepare(`
+    INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, memory_available_mb, swap_total_mb, swap_used_mb, load_1, load_5, load_15, uptime_seconds, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).run(
+    hostId,
+    hostData.cpuPercent ?? null,
+    hostData.memory?.totalMb ?? null,
+    hostData.memory?.usedMb ?? null,
+    hostData.memory?.availableMb ?? null,
+    hostData.memory?.swapTotalMb ?? null,
+    hostData.memory?.swapUsedMb ?? null,
+    hostData.load?.load1 ?? null,
+    hostData.load?.load5 ?? null,
+    hostData.load?.load15 ?? null,
+    hostData.uptimeSeconds ?? null
+  );
+}
+
+module.exports = { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost };

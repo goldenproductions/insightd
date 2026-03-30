@@ -42,6 +42,7 @@ function renderHtml(digest) {
     ${renderSummaryBlock(digest)}
   </div>
 
+  ${digest.hostMetrics && digest.hostMetrics.length > 0 ? renderHostMetricsSection(digest) : ''}
   ${digest.containers.length > 0 ? renderContainersSection(digest) : ''}
   ${digest.trends.length > 0 ? renderTrendsSection(digest) : ''}
   ${digest.disk.length > 0 ? renderDiskSection(digest) : ''}
@@ -68,6 +69,19 @@ function renderSummaryBlock(d) {
     lines.push(`<strong>Disk:</strong> ⚠️ ${d.diskWarnings.map(w => `${w.mount_point} at ${w.used_percent}%`).join(', ')}`);
   }
   return lines.join('<br>');
+}
+
+function renderHostMetricsSection(d) {
+  const rows = d.hostMetrics.map(h => {
+    const memPct = h.memTotalMb ? Math.round((h.avgMemUsedMb / h.memTotalMb) * 100) : null;
+    return `
+    <div class="metric">
+      <span class="label">${h.hostId}</span>
+      <span class="value">CPU avg ${h.avgCpu ?? '?'}% (peak ${h.maxCpu ?? '?'}%) · RAM ${memPct ?? '?'}% · Load ${h.avgLoad ?? '?'}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="section"><h2>Host System</h2>${rows}</div>`;
 }
 
 function renderContainersSection(d) {
@@ -127,6 +141,12 @@ function renderPlainText(digest) {
     `Restarts:     ${digest.totalRestarts}${digest.restartedContainers.length > 0 ? `  (${digest.restartedContainers.join(', ')})` : ''}`,
     `Updates:      ${digest.updatesAvailable.length} containers have new versions available`,
   ];
+
+  if (digest.hostMetrics && digest.hostMetrics.length > 0) {
+    for (const h of digest.hostMetrics) {
+      lines.push(`Host ${h.hostId}: CPU avg ${h.avgCpu ?? '?'}% (peak ${h.maxCpu ?? '?'}%), Load avg ${h.avgLoad ?? '?'}`);
+    }
+  }
 
   if (digest.trends.length > 0) {
     lines.push(`Resources:    ${digest.trends.map(t => {

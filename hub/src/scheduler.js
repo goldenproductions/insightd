@@ -42,8 +42,9 @@ function startStandaloneScheduler(db, docker, config) {
   const { collectContainers } = require('../../src/collectors/containers');
   const { collectResources } = require('../../src/collectors/resources');
   const { collectDisk } = require('../../src/collectors/disk');
+  const { collectHost } = require('../../src/collectors/host');
   const { checkUpdates } = require('../../src/collectors/updates');
-  const { ingestContainers, ingestDisk, ingestUpdates, upsertHost } = require('./ingest');
+  const { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost } = require('./ingest');
   const { buildDigest } = require('./digest/builder');
   const { sendDigest } = require('./digest/sender');
   const hostId = config.hostId || 'local';
@@ -69,6 +70,11 @@ function startStandaloneScheduler(db, docker, config) {
     const diskResults = await safeCollect('disk', () => collectDisk(config)) || [];
     if (diskResults.length > 0) {
       safeCollect('ingest-disk', () => ingestDisk(db, hostId, diskResults));
+    }
+
+    const hostMetrics = await safeCollect('host', () => collectHost(config));
+    if (hostMetrics) {
+      safeCollect('ingest-host', () => ingestHost(db, hostId, hostMetrics));
     }
 
     logger.info('scheduler', 'Collection cycle complete');

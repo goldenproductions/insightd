@@ -28,6 +28,27 @@ function evaluateAlerts(db, config) {
     }
   }
 
+  // Host-level alerts
+  const hostRows = db.prepare('SELECT DISTINCT host_id FROM host_snapshots').all();
+  for (const { host_id } of hostRows) {
+    if (alerts.hostCpuPercent > 0) {
+      triggered.push(...checkHighHostCpu(db, host_id, alerts.hostCpuPercent));
+    }
+    if (alerts.hostMemoryAvailableMb > 0) {
+      triggered.push(...checkLowHostMemory(db, host_id, alerts.hostMemoryAvailableMb));
+    }
+    if (alerts.hostLoadThreshold > 0) {
+      triggered.push(...checkHighLoad(db, host_id, alerts.hostLoadThreshold));
+    }
+  }
+
+  // Container health
+  for (const { host_id } of hosts) {
+    if (alerts.containerUnhealthy) {
+      triggered.push(...checkContainerUnhealthy(db, host_id));
+    }
+  }
+
   // Disk — check across all hosts
   if (alerts.diskPercent > 0) {
     triggered.push(...checkDiskFull(db, alerts.diskPercent));
@@ -155,6 +176,57 @@ function checkDiskFull(db, threshold) {
     }));
 }
 
+function checkHighHostCpu(db, hostId, threshold) {
+  const latest = db.prepare(
+    'SELECT cpu_percent FROM host_snapshots WHERE host_id = ? AND cpu_percent IS NOT NULL ORDER BY collected_at DESC LIMIT 1'
+  ).get(hostId);
+  if (!latest || latest.cpu_percent <= threshold) return [];
+  return [{
+    type: 'high_host_cpu', hostId, target: 'system',
+    message: `Host "${hostId}" CPU at ${latest.cpu_percent}%`,
+    value: latest.cpu_percent,
+  }];
+}
+
+function checkLowHostMemory(db, hostId, thresholdMb) {
+  const latest = db.prepare(
+    'SELECT memory_available_mb FROM host_snapshots WHERE host_id = ? AND memory_available_mb IS NOT NULL ORDER BY collected_at DESC LIMIT 1'
+  ).get(hostId);
+  if (!latest || latest.memory_available_mb >= thresholdMb) return [];
+  return [{
+    type: 'low_host_memory', hostId, target: 'system',
+    message: `Host "${hostId}" available memory low: ${Math.round(latest.memory_available_mb)}MB`,
+    value: latest.memory_available_mb,
+  }];
+}
+
+function checkHighLoad(db, hostId, threshold) {
+  const latest = db.prepare(
+    'SELECT load_5 FROM host_snapshots WHERE host_id = ? AND load_5 IS NOT NULL ORDER BY collected_at DESC LIMIT 1'
+  ).get(hostId);
+  if (!latest || latest.load_5 <= threshold) return [];
+  return [{
+    type: 'high_load', hostId, target: 'system',
+    message: `Host "${hostId}" load average: ${latest.load_5}`,
+    value: latest.load_5,
+  }];
+}
+
+function checkContainerUnhealthy(db, hostId) {
+  const rows = db.prepare(`
+    SELECT container_name, health_status FROM container_snapshots
+    WHERE host_id = ? AND collected_at = (
+      SELECT MAX(collected_at) FROM container_snapshots WHERE host_id = ?
+    ) AND health_status = 'unhealthy'
+  `).all(hostId, hostId);
+
+  return rows.map(r => ({
+    type: 'container_unhealthy', hostId, target: r.container_name,
+    message: `Container "${r.container_name}" on ${hostId} is unhealthy`,
+    value: 'unhealthy',
+  }));
+}
+
 function checkResolutions(db, alertsConfig) {
   const resolved = [];
   const activeAlerts = db.prepare(
@@ -184,6 +256,18 @@ function checkResolutions(db, alertsConfig) {
     } else if (alert.alert_type === 'disk_full') {
       const latest = db.prepare('SELECT used_percent FROM disk_snapshots WHERE host_id = ? AND mount_point = ? ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target);
       isResolved = latest && latest.used_percent <= alertsConfig.diskPercent;
+    } else if (alert.alert_type === 'high_host_cpu') {
+      const latest = db.prepare('SELECT cpu_percent FROM host_snapshots WHERE host_id = ? AND cpu_percent IS NOT NULL ORDER BY collected_at DESC LIMIT 1').get(alert.host_id);
+      isResolved = latest && latest.cpu_percent <= alertsConfig.hostCpuPercent;
+    } else if (alert.alert_type === 'low_host_memory') {
+      const latest = db.prepare('SELECT memory_available_mb FROM host_snapshots WHERE host_id = ? AND memory_available_mb IS NOT NULL ORDER BY collected_at DESC LIMIT 1').get(alert.host_id);
+      isResolved = latest && latest.memory_available_mb >= alertsConfig.hostMemoryAvailableMb;
+    } else if (alert.alert_type === 'high_load') {
+      const latest = db.prepare('SELECT load_5 FROM host_snapshots WHERE host_id = ? AND load_5 IS NOT NULL ORDER BY collected_at DESC LIMIT 1').get(alert.host_id);
+      isResolved = latest && latest.load_5 <= alertsConfig.hostLoadThreshold;
+    } else if (alert.alert_type === 'container_unhealthy') {
+      const latest = db.prepare('SELECT health_status FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target);
+      isResolved = latest && latest.health_status !== 'unhealthy';
     }
 
     if (isResolved) {
@@ -208,6 +292,10 @@ function getResolutionMessage(type, target, hostId) {
     case 'high_cpu': return `Container "${target}"${on} CPU back to normal`;
     case 'high_memory': return `Container "${target}"${on} memory back to normal`;
     case 'disk_full': return `Disk "${target}"${on} usage back to normal`;
+    case 'high_host_cpu': return `Host${on} CPU back to normal`;
+    case 'low_host_memory': return `Host${on} memory back to normal`;
+    case 'high_load': return `Host${on} load back to normal`;
+    case 'container_unhealthy': return `Container "${target}"${on} is healthy again`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }
