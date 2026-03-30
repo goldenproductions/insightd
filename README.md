@@ -1,6 +1,6 @@
 # Insightd
 
-**Server awareness without the overhead.** A lightweight monitoring agent that sends you a weekly digest of how your Docker setup is doing — no dashboards, no noise, just insight.
+**Server awareness without the overhead.** A lightweight monitoring tool that gives you a web dashboard and weekly digest of how your Docker setup is doing — real-time visibility plus proactive summaries, without the noise.
 
 ```
 🟢 Insightd — Week 14
@@ -45,7 +45,7 @@ docker run -d \
   insightd
 ```
 
-That's it. Insightd will start collecting data immediately and send your first digest on schedule.
+That's it. Insightd will start collecting data immediately, serve the web UI at `http://localhost:3000`, and send your first digest on schedule.
 
 ## What It Monitors
 
@@ -71,14 +71,41 @@ All configuration is via environment variables. See [`.env.example`](.env.exampl
 | `INSIGHTD_DIGEST_CRON` | `0 8 * * 1` | Digest schedule (default: Monday 08:00) |
 | `INSIGHTD_DISK_WARN_THRESHOLD` | `85` | Disk usage warning threshold (%) |
 | `INSIGHTD_COLLECT_INTERVAL` | `5` | Collection interval in minutes |
+| `INSIGHTD_WEB_ENABLED` | `true` | Set to `false` to disable the web UI |
+| `INSIGHTD_WEB_PORT` | `3000` | Web UI HTTP port |
+| `INSIGHTD_WEB_HOST` | `0.0.0.0` | Web UI bind address |
 | `TZ` | `UTC` | Timezone for cron schedules |
+
+## Web UI
+
+The hub serves a built-in web dashboard at `http://localhost:3000` (enabled by default). No extra setup needed.
+
+- **Dashboard** — aggregate health: hosts online, containers running, active alerts, disk warnings
+- **Hosts** — grid view of all connected agents with status and container counts
+- **Host detail** — per-container CPU/RAM/restarts, disk usage, active alerts, available updates
+- **Alerts** — full alert history with trigger/resolution times
+
+### REST API
+
+The web UI is backed by a REST API you can also use directly:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/health` | Hub health check |
+| `GET /api/dashboard` | Aggregate summary across all hosts |
+| `GET /api/hosts` | List all hosts with online/offline status |
+| `GET /api/hosts/:id` | Host detail with containers, disk, alerts, updates |
+| `GET /api/hosts/:id/containers` | Latest container snapshots |
+| `GET /api/hosts/:id/disk` | Latest disk snapshots |
+| `GET /api/alerts` | Alert list (default: active only, `?active=false` for all) |
 
 ## How It Works
 
 1. **Collects** container status, resource usage, and disk metrics every 5 minutes
 2. **Stores** snapshots in a local SQLite database
-3. **Compares** this week's data against last week to spot trends
-4. **Sends** a digest email on your configured schedule with only what matters:
+3. **Serves** a real-time web dashboard for immediate visibility
+4. **Compares** this week's data against last week to spot trends
+5. **Sends** a digest email on your configured schedule with only what matters:
    - Uptime percentages per container
    - Restart counts
    - Resource trend changes (>10% flagged)
