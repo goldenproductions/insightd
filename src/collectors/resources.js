@@ -4,16 +4,12 @@ const { safeCollect } = require('../utils/errors');
 // In-memory store for previous CPU stats (needed for delta calculation)
 const prevStats = new Map();
 
-async function collectResources(db, docker, containers, hostId = 'local') {
-  const update = db.prepare(`
-    UPDATE container_snapshots
-    SET cpu_percent = ?, memory_mb = ?
-    WHERE container_id = ? AND collected_at = (
-      SELECT collected_at FROM container_snapshots
-      WHERE container_id = ? ORDER BY collected_at DESC LIMIT 1
-    )
-  `);
-
+/**
+ * Collect CPU and memory stats for running containers.
+ * Returns the containers array with cpuPercent and memoryMb merged in.
+ * Does not write to DB.
+ */
+async function collectResources(docker, containers) {
   for (const c of containers) {
     if (c.status !== 'running') continue;
 
@@ -47,10 +43,15 @@ async function collectResources(db, docker, containers, hostId = 'local') {
       // Calculate memory MB
       const memoryMb = Math.round((stats.memory_stats.usage || 0) / 1024 / 1024 * 100) / 100;
 
-      update.run(cpuPercent, memoryMb, c.id, c.id);
+      // Merge into the container object
+      c.cpuPercent = cpuPercent;
+      c.memoryMb = memoryMb;
+
       logger.info('resources', `${c.name}: CPU=${cpuPercent ?? 'pending'}%, RAM=${memoryMb}MB`);
     });
   }
+
+  return containers;
 }
 
 function _resetPrevStats() { prevStats.clear(); }

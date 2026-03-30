@@ -2,19 +2,33 @@ const cron = require('node-cron');
 const logger = require('./utils/logger');
 const { safeCollect } = require('./utils/errors');
 const { pruneOldData } = require('./db/schema');
+const { ingestContainers, ingestDisk, ingestUpdates, upsertHost } = require('./ingest');
 
 function startScheduler({ db, docker, config, collectors, digest, alerts }) {
   const { collectContainers, collectResources, collectDisk, checkUpdates } = collectors;
   const { buildDigest, sendDigest } = digest;
+  const hostId = config.hostId || 'local';
 
   // Run a full collection cycle
   async function runCollection() {
     logger.info('scheduler', 'Starting collection cycle');
-    const containers = await safeCollect('containers', () => collectContainers(db, docker));
+
+    // Collect data (pure functions, no DB writes)
+    let containers = await safeCollect('containers', () => collectContainers(docker));
     if (containers) {
-      await safeCollect('resources', () => collectResources(db, docker, containers));
+      containers = await safeCollect('resources', () => collectResources(docker, containers));
+      // Ingest into database
+      safeCollect('ingest-containers', () => {
+        ingestContainers(db, hostId, containers);
+        upsertHost(db, hostId);
+      });
     }
-    await safeCollect('disk', () => collectDisk(db, config));
+
+    const diskResults = await safeCollect('disk', () => collectDisk(config));
+    if (diskResults && diskResults.length > 0) {
+      safeCollect('ingest-disk', () => ingestDisk(db, hostId, diskResults));
+    }
+
     logger.info('scheduler', 'Collection cycle complete');
 
     // Evaluate and send alerts after each collection
@@ -45,7 +59,10 @@ function startScheduler({ db, docker, config, collectors, digest, alerts }) {
   // Schedule daily update checks
   cron.schedule(config.updateCheckCron, async () => {
     logger.info('scheduler', 'Checking for image updates...');
-    await safeCollect('updates', () => checkUpdates(db, docker));
+    const updates = await safeCollect('updates', () => checkUpdates(docker));
+    if (updates && updates.length > 0) {
+      safeCollect('ingest-updates', () => ingestUpdates(db, hostId, updates));
+    }
   }, { timezone: config.timezone });
   logger.info('scheduler', `Update checks scheduled: ${config.updateCheckCron}`);
 }

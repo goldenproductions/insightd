@@ -7,6 +7,9 @@ const config = Object.freeze({
     return path.join(this.dataDir, 'insightd.db');
   },
 
+  // Host identification
+  hostId: process.env.INSIGHTD_HOST_ID || 'local',
+
   // Collection
   collectIntervalMinutes: parseInt(process.env.INSIGHTD_COLLECT_INTERVAL || '5', 10),
 

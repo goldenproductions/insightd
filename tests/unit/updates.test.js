@@ -1,6 +1,5 @@
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { createTestDb } = require('../helpers/db');
 const { suppressConsole } = require('../helpers/mocks');
 
 describe('parseImage', () => {
@@ -43,29 +42,24 @@ describe('parseImage', () => {
 });
 
 describe('checkUpdates', () => {
-  let db;
   let checkUpdates;
   let restore;
   let https;
 
   beforeEach(() => {
     restore = suppressConsole();
-    db = createTestDb();
     delete require.cache[require.resolve('../../src/collectors/updates')];
     checkUpdates = require('../../src/collectors/updates').checkUpdates;
     https = require('https');
   });
 
   afterEach(() => {
-    db.close();
     restore();
   });
 
-  it('stores update check results in database', async () => {
+  it('returns update check results', async () => {
     const { EventEmitter } = require('events');
-    const { mock } = require('node:test');
 
-    // Mock Docker
     const docker = {
       listContainers: async () => [
         { Names: ['/nginx'], Id: 'abc123', Image: 'nginx:alpine', Labels: {} },
@@ -75,30 +69,18 @@ describe('checkUpdates', () => {
       }),
     };
 
-    // Mock https.request for both token request and HEAD request
-    let callCount = 0;
     const origRequest = https.request;
     https.request = (url, opts, callback) => {
       const res = new EventEmitter();
-      callCount++;
-
       if (typeof url === 'string' && url.includes('auth.docker.io')) {
         res.statusCode = 200;
         res.headers = {};
-        process.nextTick(() => {
-          callback(res);
-          res.emit('data', JSON.stringify({ token: 'test-token-123' }));
-          res.emit('end');
-        });
+        process.nextTick(() => { callback(res); res.emit('data', JSON.stringify({ token: 'test-token-123' })); res.emit('end'); });
       } else {
         res.statusCode = 200;
         res.headers = { 'docker-content-digest': 'sha256:remotedigest' };
-        process.nextTick(() => {
-          callback(res);
-          res.emit('end');
-        });
+        process.nextTick(() => { callback(res); res.emit('end'); });
       }
-
       const req = new EventEmitter();
       req.setTimeout = () => {};
       req.end = () => {};
@@ -107,11 +89,10 @@ describe('checkUpdates', () => {
     };
 
     try {
-      await checkUpdates(db, docker);
-      const rows = db.prepare('SELECT * FROM update_checks').all();
-      assert.equal(rows.length, 1);
-      assert.equal(rows[0].container_name, 'nginx');
-      assert.equal(rows[0].has_update, 1); // digests differ
+      const results = await checkUpdates(docker);
+      assert.equal(results.length, 1);
+      assert.equal(results[0].containerName, 'nginx');
+      assert.equal(results[0].hasUpdate, true);
     } finally {
       https.request = origRequest;
     }
@@ -134,25 +115,20 @@ describe('checkUpdates', () => {
     https.request = (url, opts, callback) => {
       const res = new EventEmitter();
       if (typeof url === 'string' && url.includes('auth.docker.io')) {
-        res.statusCode = 200;
-        res.headers = {};
+        res.statusCode = 200; res.headers = {};
         process.nextTick(() => { callback(res); res.emit('data', JSON.stringify({ token: 't' })); res.emit('end'); });
       } else {
-        res.statusCode = 200;
-        res.headers = { 'docker-content-digest': 'sha256:same' };
+        res.statusCode = 200; res.headers = { 'docker-content-digest': 'sha256:same' };
         process.nextTick(() => { callback(res); res.emit('end'); });
       }
       const req = new EventEmitter();
-      req.setTimeout = () => {};
-      req.end = () => {};
-      req.destroy = () => {};
+      req.setTimeout = () => {}; req.end = () => {}; req.destroy = () => {};
       return req;
     };
 
     try {
-      await checkUpdates(db, docker);
-      const rows = db.prepare('SELECT * FROM update_checks').all();
-      assert.equal(rows.length, 1); // deduplicated
+      const results = await checkUpdates(docker);
+      assert.equal(results.length, 1);
     } finally {
       https.request = origRequest;
     }
@@ -166,8 +142,7 @@ describe('checkUpdates', () => {
       getImage: () => ({ inspect: async () => ({ RepoDigests: [] }) }),
     };
 
-    await checkUpdates(db, docker);
-    const rows = db.prepare('SELECT * FROM update_checks').all();
-    assert.equal(rows.length, 0);
+    const results = await checkUpdates(docker);
+    assert.equal(results.length, 0);
   });
 });
