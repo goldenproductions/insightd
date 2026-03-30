@@ -48,9 +48,30 @@ describe('collectContainers', () => {
   });
 
   it('enriches restart count from inspect', async () => {
-    const docker = createMockDocker({ inspect: DOCKER_INSPECT });
+    const docker = createMockDocker({
+      inspect: { RestartCount: 3, State: { Running: true, StartedAt: '2020-01-01T00:00:00Z' } },
+    });
     const result = await collectContainers(db, docker);
     assert.equal(result[0].restartCount, 3);
+  });
+
+  it('detects manual restart via StartedAt', async () => {
+    // First collection — establish baseline
+    const oldStart = '2026-03-29T00:00:00Z';
+    const docker1 = createMockDocker({
+      containers: [DOCKER_CONTAINER_LIST[0]], // just nginx
+      inspect: { RestartCount: 0, State: { Running: true, StartedAt: oldStart } },
+    });
+    await collectContainers(db, docker1);
+
+    // Second collection — container has a newer StartedAt (manual restart)
+    const newStart = new Date(Date.now() + 60000).toISOString(); // future to guarantee it's newer
+    const docker2 = createMockDocker({
+      containers: [DOCKER_CONTAINER_LIST[0]],
+      inspect: { RestartCount: 0, State: { Running: true, StartedAt: newStart } },
+    });
+    const result = await collectContainers(db, docker2);
+    assert.equal(result[0].restartCount, 1); // detected restart
   });
 
   it('handles inspect failure gracefully', async () => {
