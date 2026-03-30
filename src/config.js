@@ -37,12 +37,26 @@ const config = Object.freeze({
 
   // Update checks (daily by default)
   updateCheckCron: process.env.INSIGHTD_UPDATE_CHECK_CRON || '0 3 * * *',
+
+  // Alerts
+  alerts: Object.freeze({
+    enabled: process.env.INSIGHTD_ALERTS_ENABLED === 'true',
+    to: process.env.INSIGHTD_ALERTS_TO || process.env.INSIGHTD_DIGEST_TO || '',
+    cooldownMinutes: parseInt(process.env.INSIGHTD_ALERT_COOLDOWN || '60', 10),
+    cpuPercent: parseInt(process.env.INSIGHTD_ALERT_CPU || '90', 10),
+    memoryMb: parseInt(process.env.INSIGHTD_ALERT_MEMORY || '0', 10),
+    diskPercent: parseInt(process.env.INSIGHTD_ALERT_DISK || '90', 10),
+    restartCount: parseInt(process.env.INSIGHTD_ALERT_RESTART || '3', 10),
+    containerDown: process.env.INSIGHTD_ALERT_DOWN !== 'false',
+  }),
 });
 
 function validate() {
   const warnings = [];
   if (!config.smtp.host) warnings.push('INSIGHTD_SMTP_HOST not set — email digest disabled');
   if (!config.digestTo) warnings.push('INSIGHTD_DIGEST_TO not set — email digest disabled');
+  if (config.alerts.enabled && !config.alerts.to) warnings.push('INSIGHTD_ALERTS_ENABLED is true but no recipient set');
+  if (config.alerts.enabled && !config.smtp.host) warnings.push('INSIGHTD_ALERTS_ENABLED is true but SMTP not configured');
   return warnings;
 }
 

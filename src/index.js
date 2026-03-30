@@ -37,6 +37,14 @@ async function main() {
   const { buildDigest } = require('./digest/builder');
   const { sendDigest } = require('./digest/sender');
 
+  // Load alerts (conditionally)
+  let alerts = null;
+  if (config.alerts.enabled) {
+    const { runAlerts } = require('./alerts/evaluator');
+    alerts = { runAlerts };
+    logger.info('main', 'Alerts enabled');
+  }
+
   // Load scheduler
   const { startScheduler } = require('./scheduler');
 
@@ -46,6 +54,7 @@ async function main() {
     config,
     collectors: { collectContainers, collectResources, collectDisk, checkUpdates },
     digest: { buildDigest, sendDigest },
+    alerts,
   });
 
   logger.info('main', 'insightd is running');

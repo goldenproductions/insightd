@@ -3,7 +3,7 @@ const logger = require('./utils/logger');
 const { safeCollect } = require('./utils/errors');
 const { pruneOldData } = require('./db/schema');
 
-function startScheduler({ db, docker, config, collectors, digest }) {
+function startScheduler({ db, docker, config, collectors, digest, alerts }) {
   const { collectContainers, collectResources, collectDisk, checkUpdates } = collectors;
   const { buildDigest, sendDigest } = digest;
 
@@ -16,6 +16,11 @@ function startScheduler({ db, docker, config, collectors, digest }) {
     }
     await safeCollect('disk', () => collectDisk(db, config));
     logger.info('scheduler', 'Collection cycle complete');
+
+    // Evaluate and send alerts after each collection
+    if (alerts) {
+      await safeCollect('alerts', () => alerts.runAlerts(db, config));
+    }
   }
 
   // Run immediately on startup
