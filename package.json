@@ -1,0 +1,20 @@
+{
+  "name": "insightd",
+  "version": "1.0.0",
+  "description": "Self-hosted server awareness tool — proactive digests, not dashboards",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "collect": "node -e \"require('./src/index.js')\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["monitoring", "docker", "digest", "homelab"],
+  "author": "goldenproductions",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^12.8.0",
+    "dockerode": "^4.0.10",
+    "node-cron": "^4.2.1",
+    "nodemailer": "^8.0.4"
+  }
+}
