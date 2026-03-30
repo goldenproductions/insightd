@@ -22,4 +22,7 @@ ENV NODE_OPTIONS="--max-old-space-size=40"
 VOLUME ["/data"]
 EXPOSE 3000
 
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/api/health',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>process.exit(r.statusCode===200?0:1))})"
+
 CMD ["node", "hub/src/index.js"]

@@ -20,17 +20,21 @@ function connect(config, docker) {
 
     client = mqtt.connect(config.mqttUrl, opts);
 
+    let connected = false;
     client.on('connect', () => {
-      logger.info('mqtt', `Connected to ${config.mqttUrl}`);
+      logger.info('mqtt', `${connected ? 'Reconnected' : 'Connected'} to ${config.mqttUrl}`);
 
-      // Subscribe to log requests
+      // Subscribe to log requests (re-subscribes on reconnect)
       const logRequestTopic = `insightd/${config.hostId}/logs/request`;
       client.subscribe(logRequestTopic, { qos: 1 }, (err) => {
         if (err) logger.error('mqtt', 'Failed to subscribe to log request topic');
         else logger.info('mqtt', `Subscribed to ${logRequestTopic}`);
       });
 
-      resolve(client);
+      if (!connected) {
+        connected = true;
+        resolve(client);
+      }
     });
 
     client.on('message', async (topic, message) => {

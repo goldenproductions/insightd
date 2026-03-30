@@ -62,7 +62,7 @@ function handleAlerts(req, res, db, config, params) {
 
 function handleContainerDetail(req, res, db, config, params) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const hours = parseInt(url.searchParams.get('hours') || '24', 10);
+  const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
   const latest = queries.getLatestContainers(db, params.hostId)
     .find(c => c.container_name === params.containerName);
   if (!latest) {
@@ -118,13 +118,14 @@ async function handleContainerLogs(req, res, db, config, params, ctx) {
 
 function handleHostMetrics(req, res, db, config, params) {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const hours = parseInt(url.searchParams.get('hours') || '24', 10);
+  const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
   return queries.getHostMetricsHistory(db, params.hostId, hours);
 }
 
 async function handleLogin(req, res, db, config) {
   const body = await readBody(req);
-  const token = authenticate(body.password || '');
+  const ip = req.socket.remoteAddress;
+  const token = authenticate(body.password || '', ip);
   if (!token) {
     res.statusCode = 401;
     return { error: 'Invalid password' };

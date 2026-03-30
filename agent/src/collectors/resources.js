@@ -81,6 +81,12 @@ async function collectResources(docker, containers) {
     });
   }
 
+  // Clean up stale entries for removed containers
+  const currentIds = new Set(containers.map(c => c.id));
+  for (const id of prevStats.keys()) {
+    if (!currentIds.has(id)) prevStats.delete(id);
+  }
+
   return containers;
 }
 

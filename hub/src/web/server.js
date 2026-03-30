@@ -4,6 +4,7 @@ const path = require('path');
 const logger = require('../../../shared/utils/logger');
 const { createRouter } = require('./router');
 const handlers = require('./handlers');
+const { isRateLimited } = require('./rate-limit');
 
 const MIME_TYPES = {
   '.html': 'text/html',
@@ -39,6 +40,14 @@ function startWebServer(db, config, context) {
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
     const pathname = url.pathname;
+
+    // Rate limiting
+    if (isRateLimited(req)) {
+      res.statusCode = 429;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ error: 'Too many requests' }));
+      return;
+    }
 
     // API routes
     if (pathname.startsWith('/api/')) {

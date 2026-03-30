@@ -20,8 +20,9 @@ function startSubscriber(db, config) {
 
     client = mqtt.connect(config.mqttUrl, opts);
 
+    let connected = false;
     client.on('connect', () => {
-      logger.info('mqtt', `Connected to ${config.mqttUrl}`);
+      logger.info('mqtt', `${connected ? 'Reconnected' : 'Connected'} to ${config.mqttUrl}`);
 
       // Subscribe to all agent topics
       client.subscribe('insightd/+/collection', { qos: 1 }, (err) => {
@@ -39,7 +40,10 @@ function startSubscriber(db, config) {
         else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
       });
 
-      resolve(client);
+      if (!connected) {
+        connected = true;
+        resolve(client);
+      }
     });
 
     client.on('message', (topic, message) => {
@@ -180,6 +184,13 @@ function requestContainerLogs(hostId, containerId, options = {}) {
 }
 
 function disconnect() {
+  // Reject all pending log requests
+  for (const [id, pending] of pendingLogRequests) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error('MQTT disconnecting'));
+  }
+  pendingLogRequests.clear();
+
   if (client) {
     client.end();
     client = null;

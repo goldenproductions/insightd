@@ -1,3 +1,4 @@
+const fs = require('fs');
 const cron = require('node-cron');
 const logger = require('../../shared/utils/logger');
 const { safeCollect } = require('../../shared/utils/errors');
@@ -29,6 +30,9 @@ function startAgentScheduler(docker, config) {
         publishCollection(config.hostId, { containers, disk, host })
       );
     }
+
+    // Write health file for Docker HEALTHCHECK
+    try { fs.writeFileSync('/tmp/insightd-healthy', ''); } catch { /* ignore */ }
   }
 
   // Run immediately

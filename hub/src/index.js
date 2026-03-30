@@ -19,7 +19,7 @@ async function main() {
     // Hub mode: receive data via MQTT, run digest + alerts
     const mqttModule = require('./mqtt');
     const { startSubscriber, disconnect } = mqttModule;
-    const { startHubScheduler } = require('./scheduler');
+    const { startHubScheduler, stopScheduler } = require('./scheduler');
 
     try {
       await startSubscriber(db, config);
@@ -39,7 +39,8 @@ async function main() {
     logger.info('main', 'insightd hub is running (MQTT mode)');
 
     const shutdown = () => {
-      logger.info('main', 'Shutting down...');
+      logger.info('main', 'Shutting down gracefully...');
+      stopScheduler();
       if (webServer) webServer.close();
       disconnect();
       closeDb();
@@ -60,7 +61,7 @@ async function main() {
       process.exit(1);
     }
 
-    const { startStandaloneScheduler } = require('./scheduler');
+    const { startStandaloneScheduler, stopScheduler } = require('./scheduler');
     startStandaloneScheduler(db, docker, config);
 
     let webServer;
@@ -72,7 +73,8 @@ async function main() {
     logger.info('main', 'insightd is running (standalone mode)');
 
     const shutdown = () => {
-      logger.info('main', 'Shutting down...');
+      logger.info('main', 'Shutting down gracefully...');
+      stopScheduler();
       if (webServer) webServer.close();
       closeDb();
       process.exit(0);
