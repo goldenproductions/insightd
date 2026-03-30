@@ -29,6 +29,7 @@ const SETTING_DEFS = [
   { key: 'alerts.hostMemoryAvailableMb', env: 'INSIGHTD_ALERT_HOST_MEMORY', type: 'int', category: 'Alerts', label: 'Host Low Memory Threshold (MB)', hotReload: true, default: '0' },
   { key: 'alerts.hostLoadThreshold', env: 'INSIGHTD_ALERT_LOAD', type: 'float', category: 'Alerts', label: 'Host Load Threshold', hotReload: true, default: '0' },
   { key: 'alerts.containerUnhealthy', env: 'INSIGHTD_ALERT_UNHEALTHY', type: 'bool', category: 'Alerts', label: 'Unhealthy Container Alerts', hotReload: true, default: 'true' },
+  { key: 'alerts.excludeContainers', env: 'INSIGHTD_ALERT_EXCLUDE', type: 'string', category: 'Alerts', label: 'Exclude Containers (patterns)', hotReload: true, default: '', description: 'Comma-separated patterns. Use * as wildcard. E.g. dev-*,test-*,insightd-*' },
 
   // Collection
   { key: 'collectIntervalMinutes', env: 'INSIGHTD_COLLECT_INTERVAL', type: 'int', category: 'Collection', label: 'Collection Interval (minutes)', hotReload: false, default: '5' },
@@ -68,6 +69,7 @@ function getSettings(db) {
       label: def.label,
       hotReload: def.hotReload,
       sensitive: !!def.sensitive,
+      description: def.description || null,
     };
   });
 }
@@ -143,6 +145,7 @@ function getEffectiveConfig(db, baseConfig) {
       hostMemoryAvailableMb: get('alerts.hostMemoryAvailableMb'),
       hostLoadThreshold: get('alerts.hostLoadThreshold'),
       containerUnhealthy: get('alerts.containerUnhealthy'),
+      excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts.excludeContainers,
     },
   };
 }

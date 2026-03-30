@@ -549,9 +549,10 @@
           } else {
             input = `<input type="text" name="${esc(s.key)}" data-key="${esc(s.key)}" value="${esc(s.value)}">`;
           }
+          const desc = s.description ? `<div class="form-description">${esc(s.description)}</div>` : '';
           fields += `<div class="form-group">
             <label>${esc(s.label)} ${restart} ${src}</label>
-            ${input}
+            ${input}${desc}
           </div>`;
         }
         html += `<div class="card"><h2>${esc(category)}</h2>${fields}</div>`;
