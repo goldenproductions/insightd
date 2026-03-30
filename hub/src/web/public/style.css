@@ -387,6 +387,12 @@ tr.clickable td { padding-top: 0.75rem; padding-bottom: 0.75rem; }
   font-size: 0.9rem;
 }
 
+.form-description {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
 .form-hint {
   font-size: 0.7rem;
   color: var(--yellow);

@@ -71,6 +71,7 @@ const config = Object.freeze({
     hostMemoryAvailableMb: parseInt(process.env.INSIGHTD_ALERT_HOST_MEMORY || '0', 10),
     hostLoadThreshold: parseFloat(process.env.INSIGHTD_ALERT_LOAD || '0'),
     containerUnhealthy: process.env.INSIGHTD_ALERT_UNHEALTHY !== 'false',
+    excludeContainers: process.env.INSIGHTD_ALERT_EXCLUDE || '',
   }),
 });
 

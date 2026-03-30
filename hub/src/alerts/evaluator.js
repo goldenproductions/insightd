@@ -1,5 +1,6 @@
 const logger = require('../../../shared/utils/logger');
 const { sendAlert } = require('./sender');
+const { isExcluded } = require('./filter');
 
 /**
  * Evaluate all alert conditions against the latest data.
@@ -10,25 +11,28 @@ function evaluateAlerts(db, config) {
   const triggered = [];
   const resolved = [];
 
+  const excludePatterns = alerts.excludeContainers || '';
+  const notExcluded = (a) => !isExcluded(a.target, excludePatterns);
+
   // Get all known hosts
   const hosts = db.prepare('SELECT DISTINCT host_id FROM container_snapshots').all();
 
   for (const { host_id } of hosts) {
     if (alerts.containerDown) {
-      triggered.push(...checkContainerDown(db, host_id));
+      triggered.push(...checkContainerDown(db, host_id).filter(notExcluded));
     }
     if (alerts.restartCount > 0) {
-      triggered.push(...checkRestartLoop(db, host_id, alerts.restartCount));
+      triggered.push(...checkRestartLoop(db, host_id, alerts.restartCount).filter(notExcluded));
     }
     if (alerts.cpuPercent > 0) {
-      triggered.push(...checkHighCpu(db, host_id, alerts.cpuPercent));
+      triggered.push(...checkHighCpu(db, host_id, alerts.cpuPercent).filter(notExcluded));
     }
     if (alerts.memoryMb > 0) {
-      triggered.push(...checkHighMemory(db, host_id, alerts.memoryMb));
+      triggered.push(...checkHighMemory(db, host_id, alerts.memoryMb).filter(notExcluded));
     }
   }
 
-  // Host-level alerts
+  // Host-level alerts (not filtered — these are host-wide, not per-container)
   const hostRows = db.prepare('SELECT DISTINCT host_id FROM host_snapshots').all();
   for (const { host_id } of hostRows) {
     if (alerts.hostCpuPercent > 0) {
@@ -45,7 +49,7 @@ function evaluateAlerts(db, config) {
   // Container health
   for (const { host_id } of hosts) {
     if (alerts.containerUnhealthy) {
-      triggered.push(...checkContainerUnhealthy(db, host_id));
+      triggered.push(...checkContainerUnhealthy(db, host_id).filter(notExcluded));
     }
   }
 
