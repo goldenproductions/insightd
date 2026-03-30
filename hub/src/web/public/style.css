@@ -437,6 +437,39 @@ tr.clickable td { padding-top: 0.75rem; padding-bottom: 0.75rem; }
   .alert-banner.red { background: #7f1d1d; color: #fca5a5; }
 }
 
+/* Command block */
+.command-wrapper {
+  position: relative;
+}
+
+.command-block {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  padding: 1rem;
+  border-radius: var(--radius);
+  overflow-x: auto;
+  margin: 0;
+  white-space: pre;
+}
+
+.copy-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.3rem 0.7rem;
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.1);
+  color: #e0e0e0;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.copy-btn:hover { background: rgba(255,255,255,0.2); }
+
 /* Auto-refresh indicator */
 .refresh-info {
   font-size: 0.75rem;

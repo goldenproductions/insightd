@@ -31,6 +31,7 @@ function startWebServer(db, config, context) {
   router.add('GET', '/api/hosts/:hostId/disk', handlers.handleHostDisk);
   router.add('GET', '/api/dashboard', handlers.handleDashboard);
   router.add('GET', '/api/alerts', handlers.handleAlerts);
+  router.add('GET', '/api/agent-setup', handlers.handleAgentSetup);
   router.add('POST', '/api/auth', handlers.handleLogin);
   router.add('GET', '/api/settings', handlers.handleGetSettings);
   router.add('PUT', '/api/settings', handlers.handlePutSettings);
