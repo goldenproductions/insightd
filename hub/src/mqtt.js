@@ -1,8 +1,10 @@
+const crypto = require('crypto');
 const mqtt = require('mqtt');
 const logger = require('../../shared/utils/logger');
 const { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost } = require('./ingest');
 
 let client = null;
+const pendingLogRequests = new Map();
 
 function startSubscriber(db, config) {
   return new Promise((resolve, reject) => {
@@ -32,6 +34,11 @@ function startSubscriber(db, config) {
         else logger.info('mqtt', 'Subscribed to insightd/+/updates');
       });
 
+      client.subscribe('insightd/+/logs/response', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to logs response topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
+      });
+
       resolve(client);
     });
 
@@ -46,6 +53,8 @@ function startSubscriber(db, config) {
           handleCollection(db, hostId, payload);
         } else if (type === 'updates') {
           handleUpdates(db, hostId, payload);
+        } else if (type === 'logs' && parts[3] === 'response') {
+          handleLogResponse(payload);
         }
       } catch (err) {
         logger.error('mqtt', `Failed to process message on ${topic}: ${err.message}`);
@@ -128,6 +137,48 @@ function handleUpdates(db, hostId, payload) {
   logger.info('mqtt', `Ingested updates from ${hostId}: ${updates.length} checks`);
 }
 
+function handleLogResponse(payload) {
+  const pending = pendingLogRequests.get(payload.requestId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingLogRequests.delete(payload.requestId);
+  if (payload.error) {
+    pending.reject(new Error(payload.error));
+  } else {
+    pending.resolve(payload.logs || []);
+  }
+}
+
+function requestContainerLogs(hostId, containerId, options = {}) {
+  const requestId = crypto.randomUUID();
+  const timeoutMs = options.timeoutMs || 15000;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingLogRequests.delete(requestId);
+      reject(new Error('Log request timed out — agent may be offline'));
+    }, timeoutMs);
+
+    pendingLogRequests.set(requestId, { resolve, reject, timer });
+
+    const topic = `insightd/${hostId}/logs/request`;
+    const payload = JSON.stringify({
+      requestId,
+      containerId,
+      lines: options.lines || 100,
+      stream: options.stream || 'both',
+    });
+
+    client.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        clearTimeout(timer);
+        pendingLogRequests.delete(requestId);
+        reject(err);
+      }
+    });
+  });
+}
+
 function disconnect() {
   if (client) {
     client.end();
@@ -135,4 +186,4 @@ function disconnect() {
   }
 }
 
-module.exports = { startSubscriber, disconnect };
+module.exports = { startSubscriber, disconnect, requestContainerLogs };

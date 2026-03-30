@@ -50,6 +50,10 @@ const config = Object.freeze({
     host: process.env.INSIGHTD_WEB_HOST || '0.0.0.0',
   }),
 
+  // Log tailing
+  logLines: parseInt(process.env.INSIGHTD_LOG_LINES || '100', 10),
+  logTimeoutMs: parseInt(process.env.INSIGHTD_LOG_TIMEOUT || '15000', 10),
+
   // Alerts
   alerts: Object.freeze({
     enabled: process.env.INSIGHTD_ALERTS_ENABLED === 'true',

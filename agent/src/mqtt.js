@@ -1,9 +1,12 @@
 const mqtt = require('mqtt');
 const logger = require('../../shared/utils/logger');
+const { fetchContainerLogs } = require('../../shared/utils/docker-logs');
 
 let client = null;
+let dockerInstance = null;
 
-function connect(config) {
+function connect(config, docker) {
+  dockerInstance = docker;
   return new Promise((resolve, reject) => {
     const opts = {
       clientId: `insightd-agent-${config.hostId}`,
@@ -19,7 +22,40 @@ function connect(config) {
 
     client.on('connect', () => {
       logger.info('mqtt', `Connected to ${config.mqttUrl}`);
+
+      // Subscribe to log requests
+      const logRequestTopic = `insightd/${config.hostId}/logs/request`;
+      client.subscribe(logRequestTopic, { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to log request topic');
+        else logger.info('mqtt', `Subscribed to ${logRequestTopic}`);
+      });
+
       resolve(client);
+    });
+
+    client.on('message', async (topic, message) => {
+      if (!topic.endsWith('/logs/request')) return;
+      try {
+        const req = JSON.parse(message.toString());
+        const maxLines = config.logMaxLines || 1000;
+        const lines = Math.min(req.lines || config.logLines || 100, maxLines);
+        logger.info('mqtt', `Log request for ${req.containerId} (${lines} lines)`);
+
+        const logs = await fetchContainerLogs(dockerInstance, req.containerId, {
+          lines,
+          stream: req.stream || 'both',
+        });
+
+        const responseTopic = `insightd/${config.hostId}/logs/response`;
+        const payload = JSON.stringify({ requestId: req.requestId, logs, error: null });
+        client.publish(responseTopic, payload, { qos: 1 });
+      } catch (err) {
+        logger.error('mqtt', `Log request failed: ${err.message}`);
+        const responseTopic = `insightd/${config.hostId}/logs/response`;
+        const req = JSON.parse(message.toString());
+        const payload = JSON.stringify({ requestId: req.requestId, logs: null, error: err.message });
+        client.publish(responseTopic, payload, { qos: 1 });
+      }
     });
 
     client.on('error', (err) => {
