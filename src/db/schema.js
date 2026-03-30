@@ -1,6 +1,6 @@
 const logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 function bootstrap(db) {
   db.exec(`
@@ -9,8 +9,15 @@ function bootstrap(db) {
       value TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS hosts (
+      host_id    TEXT PRIMARY KEY,
+      first_seen TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS container_snapshots (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id         TEXT NOT NULL DEFAULT 'local',
       container_name  TEXT NOT NULL,
       container_id    TEXT NOT NULL,
       status          TEXT NOT NULL,
@@ -20,11 +27,12 @@ function bootstrap(db) {
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE INDEX IF NOT EXISTS idx_snapshots_name_time
-      ON container_snapshots (container_name, collected_at);
+    CREATE INDEX IF NOT EXISTS idx_snapshots_host_name_time
+      ON container_snapshots (host_id, container_name, collected_at);
 
     CREATE TABLE IF NOT EXISTS disk_snapshots (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id       TEXT NOT NULL DEFAULT 'local',
       mount_point   TEXT NOT NULL,
       total_gb      REAL NOT NULL,
       used_gb       REAL NOT NULL,
@@ -32,11 +40,12 @@ function bootstrap(db) {
       collected_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE INDEX IF NOT EXISTS idx_disk_time
-      ON disk_snapshots (collected_at);
+    CREATE INDEX IF NOT EXISTS idx_disk_host_time
+      ON disk_snapshots (host_id, collected_at);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id         TEXT NOT NULL DEFAULT 'local',
       container_name  TEXT NOT NULL,
       image           TEXT NOT NULL,
       local_digest    TEXT,
@@ -45,11 +54,12 @@ function bootstrap(db) {
       checked_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE INDEX IF NOT EXISTS idx_updates_name_time
-      ON update_checks (container_name, checked_at);
+    CREATE INDEX IF NOT EXISTS idx_updates_host_name_time
+      ON update_checks (host_id, container_name, checked_at);
 
     CREATE TABLE IF NOT EXISTS alert_state (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id         TEXT NOT NULL DEFAULT 'local',
       alert_type      TEXT NOT NULL,
       target          TEXT NOT NULL,
       triggered_at    TEXT NOT NULL DEFAULT (datetime('now')),
@@ -58,8 +68,8 @@ function bootstrap(db) {
       notify_count    INTEGER DEFAULT 1
     );
 
-    CREATE INDEX IF NOT EXISTS idx_alert_active
-      ON alert_state (alert_type, target);
+    CREATE INDEX IF NOT EXISTS idx_alert_host_active
+      ON alert_state (host_id, alert_type, target);
   `);
 
   // Track schema version and run migrations
@@ -69,13 +79,34 @@ function bootstrap(db) {
     logger.info('schema', `Database bootstrapped at schema version ${SCHEMA_VERSION}`);
   } else {
     const currentVersion = parseInt(row.value, 10);
-    if (currentVersion < SCHEMA_VERSION) {
-      // Migrations are handled by CREATE TABLE IF NOT EXISTS above
+    if (currentVersion < 3) {
+      migrate(db, currentVersion);
       db.prepare('UPDATE meta SET value = ? WHERE key = ?').run(String(SCHEMA_VERSION), 'schema_version');
       logger.info('schema', `Database migrated from version ${currentVersion} to ${SCHEMA_VERSION}`);
     } else {
       logger.info('schema', `Database at schema version ${row.value}`);
     }
+  }
+}
+
+function migrate(db, fromVersion) {
+  if (fromVersion < 3) {
+    // Add host_id to existing tables (DEFAULT 'local' for existing rows)
+    const tables = [
+      { table: 'container_snapshots', col: 'host_id' },
+      { table: 'disk_snapshots', col: 'host_id' },
+      { table: 'update_checks', col: 'host_id' },
+      { table: 'alert_state', col: 'host_id' },
+    ];
+    for (const { table, col } of tables) {
+      try {
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} TEXT NOT NULL DEFAULT 'local'`);
+      } catch {
+        // Column already exists (e.g., fresh DB created with v3 schema)
+      }
+    }
+    // Drop old indexes and create new host-scoped ones
+    // (CREATE INDEX IF NOT EXISTS handles this in the bootstrap above)
   }
 }
 

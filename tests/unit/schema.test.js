@@ -41,9 +41,9 @@ describe('schema', () => {
     bootstrap(db);
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'").all();
     const names = indexes.map(i => i.name);
-    assert.ok(names.includes('idx_snapshots_name_time'));
-    assert.ok(names.includes('idx_disk_time'));
-    assert.ok(names.includes('idx_updates_name_time'));
+    assert.ok(names.includes('idx_snapshots_host_name_time'));
+    assert.ok(names.includes('idx_disk_host_time'));
+    assert.ok(names.includes('idx_updates_host_name_time'));
     restore();
   });
 

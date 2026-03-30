@@ -4,7 +4,7 @@ const { safeCollect } = require('../utils/errors');
 // In-memory store for previous CPU stats (needed for delta calculation)
 const prevStats = new Map();
 
-async function collectResources(db, docker, containers) {
+async function collectResources(db, docker, containers, hostId = 'local') {
   const update = db.prepare(`
     UPDATE container_snapshots
     SET cpu_percent = ?, memory_mb = ?

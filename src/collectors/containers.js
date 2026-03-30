@@ -1,16 +1,16 @@
 const logger = require('../utils/logger');
 
-async function collectContainers(db, docker) {
+async function collectContainers(db, docker, hostId = 'local') {
   const containers = await docker.listContainers({ all: true });
 
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (container_name, container_id, status, restart_count, collected_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, restart_count, collected_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
   `);
 
   const insertMany = db.transaction((items) => {
     for (const c of items) {
-      insert.run(c.name, c.id, c.status, c.restartCount);
+      insert.run(hostId, c.name, c.id, c.status, c.restartCount);
     }
   });
 
@@ -27,15 +27,15 @@ async function collectContainers(db, docker) {
   const prevStartTimes = {};
   const prevRows = db.prepare(`
     SELECT container_name, MAX(collected_at) as last_collected
-    FROM container_snapshots GROUP BY container_name
-  `).all();
+    FROM container_snapshots WHERE host_id = ? GROUP BY container_name
+  `).all(hostId);
   // We'll use a separate query to get the last known restart_count per container
   const prevRestarts = {};
   for (const row of prevRows) {
     const prev = db.prepare(`
       SELECT restart_count FROM container_snapshots
-      WHERE container_name = ? ORDER BY collected_at DESC LIMIT 1
-    `).get(row.container_name);
+      WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1
+    `).get(hostId, row.container_name);
     if (prev) prevRestarts[row.container_name] = prev.restart_count;
   }
 
@@ -56,9 +56,9 @@ async function collectContainers(db, docker) {
         // This catches manual restarts that don't increment RestartCount
         const lastRow = db.prepare(`
           SELECT collected_at FROM container_snapshots
-          WHERE container_name = ? AND status = 'running'
+          WHERE host_id = ? AND container_name = ? AND status = 'running'
           ORDER BY collected_at DESC LIMIT 1
-        `).get(p.name);
+        `).get(hostId, p.name);
 
         if (lastRow) {
           const lastCollected = new Date(lastRow.collected_at + 'Z');

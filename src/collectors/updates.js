@@ -73,12 +73,12 @@ async function getRemoteDigest(repo, tag, token) {
   return res.headers['docker-content-digest'] || null;
 }
 
-async function checkUpdates(db, docker) {
+async function checkUpdates(db, docker, hostId = 'local') {
   const containers = await docker.listContainers({ all: true });
 
   const insert = db.prepare(`
-    INSERT INTO update_checks (container_name, image, local_digest, remote_digest, has_update, checked_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO update_checks (host_id, container_name, image, local_digest, remote_digest, has_update, checked_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
   `);
 
   // Deduplicate by image
@@ -113,7 +113,7 @@ async function checkUpdates(db, docker) {
       const hasUpdate = localDigest && remoteDigest && localDigest !== remoteDigest ? 1 : 0;
       if (hasUpdate) updatesFound++;
 
-      insert.run(name, image, localDigest, remoteDigest, hasUpdate);
+      insert.run(hostId, name, image, localDigest, remoteDigest, hasUpdate);
       checked++;
 
       const status = hasUpdate ? 'UPDATE AVAILABLE' : 'up to date';

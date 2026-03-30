@@ -217,7 +217,7 @@ describe('processAlerts', () => {
   const config = { alerts: { cooldownMinutes: 60 } };
 
   it('inserts new alert and returns it for sending', () => {
-    const triggered = [{ type: 'container_down', target: 'nginx', message: 'test' }];
+    const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
     const toSend = processAlerts(db, config, { triggered, resolved: [] });
     assert.equal(toSend.length, 1);
     assert.equal(toSend[0].reminderNumber, 0);
@@ -232,7 +232,7 @@ describe('processAlerts', () => {
       { type: 'container_down', target: 'nginx', triggeredAt: ts(NOW), lastNotified: ts(NOW) },
     ]);
 
-    const triggered = [{ type: 'container_down', target: 'nginx', message: 'test' }];
+    const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
     const toSend = processAlerts(db, config, { triggered, resolved: [] });
     assert.equal(toSend.length, 0); // suppressed
   });
@@ -243,7 +243,7 @@ describe('processAlerts', () => {
       { type: 'container_down', target: 'nginx', triggeredAt: oldTime, lastNotified: oldTime },
     ]);
 
-    const triggered = [{ type: 'container_down', target: 'nginx', message: 'test' }];
+    const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
     const toSend = processAlerts(db, config, { triggered, resolved: [] });
     assert.equal(toSend.length, 1);
     assert.equal(toSend[0].reminderNumber, 1); // reminder #1
@@ -254,7 +254,7 @@ describe('processAlerts', () => {
       { type: 'container_down', target: 'nginx', triggeredAt: ts(NOW), lastNotified: ts(NOW) },
     ]);
 
-    const resolved = [{ type: 'container_down', target: 'nginx', message: 'resolved', isResolution: true }];
+    const resolved = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'resolved', isResolution: true }];
     const toSend = processAlerts(db, config, { triggered: [], resolved });
     assert.equal(toSend.length, 1);
 

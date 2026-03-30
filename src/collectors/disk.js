@@ -1,10 +1,10 @@
 const fs = require('fs');
 const logger = require('../utils/logger');
 
-function collectDisk(db, config) {
+function collectDisk(db, config, hostId = 'local') {
   const insert = db.prepare(`
-    INSERT INTO disk_snapshots (mount_point, total_gb, used_gb, used_percent, collected_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    INSERT INTO disk_snapshots (host_id, mount_point, total_gb, used_gb, used_percent, collected_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
   `);
 
   const hostRoot = config.hostRoot;
@@ -56,7 +56,7 @@ function collectDisk(db, config) {
 
   const insertMany = db.transaction((items) => {
     for (const d of items) {
-      insert.run(d.mountPoint, d.totalGb, d.usedGb, d.usedPercent);
+      insert.run(hostId, d.mountPoint, d.totalGb, d.usedGb, d.usedPercent);
     }
   });
 
