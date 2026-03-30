@@ -12,11 +12,24 @@ function createTestDb() {
 function seedContainerSnapshots(db, rows) {
   const insert = db.prepare(`
     INSERT INTO container_snapshots
-    (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const r of rows) {
-    insert.run(r.hostId || 'local', r.name, r.id || 'abc123', r.status || 'running', r.cpu ?? null, r.mem ?? null, r.restarts ?? 0, r.at);
+    insert.run(r.hostId || 'local', r.name, r.id || 'abc123', r.status || 'running', r.cpu ?? null, r.mem ?? null, r.restarts ?? 0,
+      r.netRx ?? null, r.netTx ?? null, r.blkRead ?? null, r.blkWrite ?? null, r.health ?? null, r.at);
+  }
+}
+
+function seedHostSnapshots(db, rows) {
+  const insert = db.prepare(`
+    INSERT INTO host_snapshots
+    (host_id, cpu_percent, memory_total_mb, memory_used_mb, memory_available_mb, swap_total_mb, swap_used_mb, load_1, load_5, load_15, uptime_seconds, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  for (const r of rows) {
+    insert.run(r.hostId || 'local', r.cpu ?? null, r.memTotal ?? null, r.memUsed ?? null, r.memAvail ?? null,
+      r.swapTotal ?? 0, r.swapUsed ?? 0, r.load1 ?? null, r.load5 ?? null, r.load15 ?? null, r.uptime ?? null, r.at);
   }
 }
 
@@ -50,4 +63,4 @@ function seedAlertState(db, rows) {
   }
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState };
+module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots };

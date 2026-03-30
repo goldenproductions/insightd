@@ -28,10 +28,18 @@ async function main() {
     }
 
     startHubScheduler(db, config);
+
+    let webServer;
+    if (config.web.enabled) {
+      const { startWebServer } = require('./web/server');
+      webServer = startWebServer(db, config);
+    }
+
     logger.info('main', 'insightd hub is running (MQTT mode)');
 
     const shutdown = () => {
       logger.info('main', 'Shutting down...');
+      if (webServer) webServer.close();
       disconnect();
       closeDb();
       process.exit(0);
@@ -54,10 +62,17 @@ async function main() {
     const { startStandaloneScheduler } = require('./scheduler');
     startStandaloneScheduler(db, docker, config);
 
+    let webServer;
+    if (config.web.enabled) {
+      const { startWebServer } = require('./web/server');
+      webServer = startWebServer(db, config);
+    }
+
     logger.info('main', 'insightd is running (standalone mode)');
 
     const shutdown = () => {
       logger.info('main', 'Shutting down...');
+      if (webServer) webServer.close();
       closeDb();
       process.exit(0);
     };

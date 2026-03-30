@@ -21,6 +21,8 @@ services:
     restart: unless-stopped
     depends_on:
       - mosquitto
+    ports:
+      - "3000:3000"
     volumes:
       - hub-data:/data
     env_file:

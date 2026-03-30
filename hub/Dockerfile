@@ -20,5 +20,6 @@ RUN mkdir -p /data
 ENV NODE_OPTIONS="--max-old-space-size=40"
 
 VOLUME ["/data"]
+EXPOSE 3000
 
 CMD ["node", "hub/src/index.js"]

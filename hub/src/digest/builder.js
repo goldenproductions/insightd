@@ -107,6 +107,32 @@ function buildDigest(db, config) {
       AND has_update = 1
   `).all();
 
+  // --- Host system metrics ---
+  const hostMetrics = db.prepare(`
+    SELECT host_id,
+      AVG(cpu_percent) as avg_cpu,
+      MAX(cpu_percent) as max_cpu,
+      AVG(memory_used_mb) as avg_mem_used,
+      MAX(memory_used_mb) as max_mem_used,
+      AVG(memory_total_mb) as mem_total,
+      AVG(load_5) as avg_load,
+      MAX(load_5) as max_load,
+      MAX(uptime_seconds) as uptime_seconds
+    FROM host_snapshots
+    WHERE collected_at BETWEEN ? AND ?
+    GROUP BY host_id
+  `).all(thisWeekStart, nowStr).map(h => ({
+    hostId: h.host_id,
+    avgCpu: h.avg_cpu ? Math.round(h.avg_cpu * 10) / 10 : null,
+    maxCpu: h.max_cpu ? Math.round(h.max_cpu * 10) / 10 : null,
+    avgMemUsedMb: h.avg_mem_used ? Math.round(h.avg_mem_used) : null,
+    maxMemUsedMb: h.max_mem_used ? Math.round(h.max_mem_used) : null,
+    memTotalMb: h.mem_total ? Math.round(h.mem_total) : null,
+    avgLoad: h.avg_load ? Math.round(h.avg_load * 100) / 100 : null,
+    maxLoad: h.max_load ? Math.round(h.max_load * 100) / 100 : null,
+    uptimeSeconds: h.uptime_seconds,
+  }));
+
   // --- Build summary ---
   const issues = [];
   if (containers.some(c => c.status === 'red')) issues.push('container downtime');
@@ -134,6 +160,7 @@ function buildDigest(db, config) {
     disk: latestDisk,
     diskWarnings,
     updatesAvailable: latestUpdates,
+    hostMetrics,
     hostCount: hostRows.length,
   };
 

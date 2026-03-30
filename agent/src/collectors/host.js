@@ -1,0 +1,103 @@
+const fs = require('fs');
+const path = require('path');
+const logger = require('../../../shared/utils/logger');
+
+let prevCpuTotals = null;
+
+/**
+ * Collect host-level system metrics from /proc.
+ * Returns plain data object — no DB writes.
+ */
+function collectHost(config) {
+  const root = config.hostRoot || '/host';
+  const procPath = path.join(root, 'proc');
+
+  const cpuPercent = readCpu(procPath);
+  const memory = readMemory(procPath);
+  const load = readLoadAvg(procPath);
+  const uptimeSeconds = readUptime(procPath);
+
+  logger.info('host', `CPU=${cpuPercent ?? 'pending'}% MEM=${memory ? Math.round(memory.usedMb) : '?'}/${memory ? Math.round(memory.totalMb) : '?'}MB Load=${load ? load.load1 : '?'}`);
+
+  return { cpuPercent, memory, load, uptimeSeconds };
+}
+
+function readCpu(procPath) {
+  try {
+    const stat = fs.readFileSync(path.join(procPath, 'stat'), 'utf8');
+    const line = stat.split('\n').find(l => l.startsWith('cpu '));
+    if (!line) return null;
+
+    const parts = line.trim().split(/\s+/).slice(1).map(Number);
+    // user, nice, system, idle, iowait, irq, softirq, steal
+    const idle = parts[3] + (parts[4] || 0);
+    const total = parts.reduce((a, b) => a + b, 0);
+    const active = total - idle;
+
+    if (!prevCpuTotals) {
+      prevCpuTotals = { active, total };
+      return null;
+    }
+
+    const activeDelta = active - prevCpuTotals.active;
+    const totalDelta = total - prevCpuTotals.total;
+    prevCpuTotals = { active, total };
+
+    if (totalDelta <= 0) return null;
+    return Math.round((activeDelta / totalDelta) * 100 * 100) / 100;
+  } catch {
+    return null;
+  }
+}
+
+function readMemory(procPath) {
+  try {
+    const meminfo = fs.readFileSync(path.join(procPath, 'meminfo'), 'utf8');
+    const get = (key) => {
+      const match = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
+      return match ? parseInt(match[1], 10) : 0;
+    };
+
+    const totalKb = get('MemTotal');
+    const availableKb = get('MemAvailable');
+    const swapTotalKb = get('SwapTotal');
+    const swapFreeKb = get('SwapFree');
+
+    return {
+      totalMb: Math.round(totalKb / 1024 * 100) / 100,
+      usedMb: Math.round((totalKb - availableKb) / 1024 * 100) / 100,
+      availableMb: Math.round(availableKb / 1024 * 100) / 100,
+      swapTotalMb: Math.round(swapTotalKb / 1024 * 100) / 100,
+      swapUsedMb: Math.round((swapTotalKb - swapFreeKb) / 1024 * 100) / 100,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readLoadAvg(procPath) {
+  try {
+    const content = fs.readFileSync(path.join(procPath, 'loadavg'), 'utf8');
+    const parts = content.trim().split(/\s+/);
+    return {
+      load1: parseFloat(parts[0]),
+      load5: parseFloat(parts[1]),
+      load15: parseFloat(parts[2]),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readUptime(procPath) {
+  try {
+    const content = fs.readFileSync(path.join(procPath, 'uptime'), 'utf8');
+    return parseFloat(content.trim().split(/\s+/)[0]);
+  } catch {
+    return null;
+  }
+}
+
+function _resetPrevCpu() { prevCpuTotals = null; }
+
+module.exports = { collectHost, _resetPrevCpu };

@@ -1,6 +1,6 @@
 const mqtt = require('mqtt');
 const logger = require('../../shared/utils/logger');
-const { ingestContainers, ingestDisk, ingestUpdates, upsertHost } = require('./ingest');
+const { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost } = require('./ingest');
 
 let client = null;
 
@@ -75,6 +75,11 @@ function handleCollection(db, hostId, payload) {
     cpuPercent: c.cpu_percent,
     memoryMb: c.memory_mb,
     restartCount: c.restart_count,
+    networkRxBytes: c.network_rx_bytes,
+    networkTxBytes: c.network_tx_bytes,
+    blkioReadBytes: c.blkio_read_bytes,
+    blkioWriteBytes: c.blkio_write_bytes,
+    healthStatus: c.health_status,
   }));
 
   const disk = (payload.disk || []).map(d => ({
@@ -88,7 +93,24 @@ function handleCollection(db, hostId, payload) {
   if (containers.length > 0) ingestContainers(db, hostId, containers);
   if (disk.length > 0) ingestDisk(db, hostId, disk);
 
-  logger.info('mqtt', `Ingested from ${hostId}: ${containers.length} containers, ${disk.length} disk mounts`);
+  // Host metrics (v2 payloads)
+  if (payload.host) {
+    const h = payload.host;
+    ingestHost(db, hostId, {
+      cpuPercent: h.cpu_percent,
+      memory: {
+        totalMb: h.memory_total_mb,
+        usedMb: h.memory_used_mb,
+        availableMb: h.memory_available_mb,
+        swapTotalMb: h.swap_total_mb,
+        swapUsedMb: h.swap_used_mb,
+      },
+      load: { load1: h.load_1, load5: h.load_5, load15: h.load_15 },
+      uptimeSeconds: h.uptime_seconds,
+    });
+  }
+
+  logger.info('mqtt', `Ingested from ${hostId}: ${containers.length} containers, ${disk.length} disk mounts${payload.host ? ', host metrics' : ''}`);
 }
 
 function handleUpdates(db, hostId, payload) {

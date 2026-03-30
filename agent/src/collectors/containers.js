@@ -16,6 +16,7 @@ async function collectContainers(docker) {
     id: c.Id.slice(0, 12),
     status: c.State,
     restartCount: 0,
+    healthStatus: null,
   }));
 
   // Enrich with restart counts via inspect
@@ -42,6 +43,9 @@ async function collectContainers(docker) {
       } else {
         p.restartCount = prev.restartCount;
       }
+
+      // Health status
+      p.healthStatus = info.State?.Health?.Status || null;
 
       // Update state
       restartState.set(p.name, {

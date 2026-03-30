@@ -43,6 +43,13 @@ const config = Object.freeze({
   // Update checks (standalone mode only)
   updateCheckCron: process.env.INSIGHTD_UPDATE_CHECK_CRON || '0 3 * * *',
 
+  // Web UI
+  web: Object.freeze({
+    enabled: process.env.INSIGHTD_WEB_ENABLED !== 'false',
+    port: parseInt(process.env.INSIGHTD_WEB_PORT || '3000', 10),
+    host: process.env.INSIGHTD_WEB_HOST || '0.0.0.0',
+  }),
+
   // Alerts
   alerts: Object.freeze({
     enabled: process.env.INSIGHTD_ALERTS_ENABLED === 'true',
@@ -53,6 +60,10 @@ const config = Object.freeze({
     diskPercent: parseInt(process.env.INSIGHTD_ALERT_DISK || '90', 10),
     restartCount: parseInt(process.env.INSIGHTD_ALERT_RESTART || '3', 10),
     containerDown: process.env.INSIGHTD_ALERT_DOWN !== 'false',
+    hostCpuPercent: parseInt(process.env.INSIGHTD_ALERT_HOST_CPU || '90', 10),
+    hostMemoryAvailableMb: parseInt(process.env.INSIGHTD_ALERT_HOST_MEMORY || '0', 10),
+    hostLoadThreshold: parseFloat(process.env.INSIGHTD_ALERT_LOAD || '0'),
+    containerUnhealthy: process.env.INSIGHTD_ALERT_UNHEALTHY !== 'false',
   }),
 });
 

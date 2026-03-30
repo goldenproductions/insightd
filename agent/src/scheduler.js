@@ -7,6 +7,7 @@ function startAgentScheduler(docker, config) {
   const { collectContainers } = require('./collectors/containers');
   const { collectResources } = require('./collectors/resources');
   const { collectDisk } = require('./collectors/disk');
+  const { collectHost } = require('./collectors/host');
   const { checkUpdates } = require('./collectors/updates');
 
   async function runCollection() {
@@ -18,13 +19,14 @@ function startAgentScheduler(docker, config) {
     }
 
     const disk = await safeCollect('disk', () => collectDisk(config)) || [];
+    const host = await safeCollect('host', () => collectHost(config));
 
     logger.info('scheduler', 'Collection cycle complete');
 
     // Publish to MQTT
     if (containers) {
       await safeCollect('mqtt-publish', () =>
-        publishCollection(config.hostId, { containers, disk })
+        publishCollection(config.hostId, { containers, disk, host })
       );
     }
   }
