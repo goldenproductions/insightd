@@ -169,7 +169,11 @@ function pruneOldData(db) {
   const r3 = db.prepare(`DELETE FROM update_checks WHERE checked_at < ${cutoff}`).run();
   const r4 = db.prepare(`DELETE FROM alert_state WHERE resolved_at IS NOT NULL AND resolved_at < ${cutoff}`).run();
   const r5 = db.prepare(`DELETE FROM host_snapshots WHERE collected_at < ${cutoff}`).run();
-  const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes;
+  const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
+    SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${cutoff}
+    UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${cutoff}
+  )`).run();
+  const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes + r6.changes;
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows older than 30 days`);
   }

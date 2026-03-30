@@ -59,6 +59,12 @@ async function collectContainers(docker) {
     }
   }
 
+  // Clean up stale entries for removed containers
+  const currentNames = new Set(parsed.map(p => p.name));
+  for (const name of restartState.keys()) {
+    if (!currentNames.has(name)) restartState.delete(name);
+  }
+
   logger.info('containers', `Collected ${parsed.length} containers`);
   return parsed;
 }

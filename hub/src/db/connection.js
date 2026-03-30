@@ -29,8 +29,10 @@ function getDb(dbPath) {
 
 function closeDb() {
   if (db) {
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore if already closed */ }
     db.close();
     db = null;
+    logger.info('db', 'Database closed (WAL checkpointed)');
   }
 }
 
