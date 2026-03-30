@@ -1,7 +1,11 @@
+# Standalone mode — single container, backwards compatible
+# Use this if you only have one host and don't need MQTT
 services:
   insightd:
-    build: .
-    image: insightd:latest
+    build:
+      context: .
+      dockerfile: hub/Dockerfile
+    image: insightd-hub:latest
     container_name: insightd
     restart: unless-stopped
     volumes:
