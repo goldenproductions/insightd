@@ -35,8 +35,11 @@ async function collectResources(db, docker, containers) {
         const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - prev.cpu_stats.cpu_usage.total_usage;
         const systemDelta = stats.cpu_stats.system_cpu_usage - prev.cpu_stats.system_cpu_usage;
         const cpuCount = stats.cpu_stats.online_cpus || 1;
-        if (systemDelta > 0) {
+        if (systemDelta > 0 && cpuDelta >= 0) {
           cpuPercent = Math.round((cpuDelta / systemDelta) * cpuCount * 100 * 100) / 100;
+        } else if (cpuDelta < 0) {
+          // Container restarted — counters reset. Discard this reading.
+          cpuPercent = null;
         }
       }
       prevStats.set(c.id, stats);

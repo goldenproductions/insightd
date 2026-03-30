@@ -81,6 +81,30 @@ describe('collectResources', () => {
     assert.equal(row.memory_mb, null);
   });
 
+  it('returns null CPU when counters reset (container restart)', async () => {
+    // First call — establish baseline
+    seedContainerSnapshots(db, [{ name: 'nginx', id: 'abc123', status: 'running', at: ts(NOW) }]);
+    const docker1 = createMockDockerWithStats(DOCKER_STATS_SECOND); // higher counters
+    await collectResources(db, docker1, [{ name: 'nginx', id: 'abc123', status: 'running' }]);
+
+    // Second call — counters reset (lower than previous = restart)
+    const now2 = ts(new Date(NOW.getTime() + 300000));
+    seedContainerSnapshots(db, [{ name: 'nginx', id: 'abc123', status: 'running', at: now2 }]);
+    const resetStats = {
+      cpu_stats: {
+        cpu_usage: { total_usage: 100000 }, // much lower than before
+        system_cpu_usage: 12000000000,
+        online_cpus: 2,
+      },
+      memory_stats: { usage: 52428800 },
+    };
+    const docker2 = createMockDockerWithStats(resetStats);
+    await collectResources(db, docker2, [{ name: 'nginx', id: 'abc123', status: 'running' }]);
+
+    const rows = db.prepare('SELECT cpu_percent FROM container_snapshots WHERE container_name = ? ORDER BY collected_at DESC').all('nginx');
+    assert.equal(rows[0].cpu_percent, null); // negative delta → null, not negative
+  });
+
   it('handles stats timeout gracefully', async () => {
     seedContainerSnapshots(db, [{ name: 'nginx', id: 'abc123', status: 'running', at: ts(NOW) }]);
     const docker = {
