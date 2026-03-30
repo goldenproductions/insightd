@@ -15,6 +15,9 @@ const config = Object.freeze({
   mqttUser: process.env.INSIGHTD_MQTT_USER || '',
   mqttPass: process.env.INSIGHTD_MQTT_PASS || '',
 
+  // External hostname (for agent setup command generation)
+  externalHost: process.env.INSIGHTD_EXTERNAL_HOST || '',
+
   // Docker (standalone mode only)
   dockerSocket: process.env.DOCKER_HOST || '/var/run/docker.sock',
   hostRoot: process.env.INSIGHTD_HOST_ROOT || '/host',

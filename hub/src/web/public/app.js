@@ -620,6 +620,84 @@
     });
   }
 
+  // --- Add Agent ---
+  async function renderAddAgent() {
+    const defaults = await api('/agent-setup');
+
+    app.innerHTML = `
+      <div class="section-title">Add Agent</div>
+      <p style="color:var(--text-muted);margin-bottom:1rem">Configure and copy the command below to deploy an agent on a remote host.</p>
+
+      <div class="card">
+        <h2>Agent Configuration</h2>
+        <div class="form-group">
+          <label>Host ID (unique name for this host)</label>
+          <input type="text" id="setup-host-id" placeholder="e.g. nas-01, web-server, pi-cluster-1" value="">
+        </div>
+        <div class="form-group">
+          <label>MQTT URL</label>
+          <input type="text" id="setup-mqtt-url" value="${esc(defaults.mqttUrl)}">
+        </div>
+        <div class="form-group">
+          <label>MQTT User</label>
+          <input type="text" id="setup-mqtt-user" value="${esc(defaults.mqttUser)}">
+        </div>
+        <div class="form-group">
+          <label>MQTT Password</label>
+          <input type="text" id="setup-mqtt-pass" value="${esc(defaults.mqttPass)}">
+        </div>
+        <div class="form-group">
+          <label>Docker Image</label>
+          <input type="text" id="setup-image" value="${esc(defaults.image)}">
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Install Command</h2>
+        <div class="command-wrapper">
+          <pre class="command-block" id="setup-command"></pre>
+          <button class="copy-btn" id="setup-copy" title="Copy to clipboard">Copy</button>
+        </div>
+        <div id="setup-copied" style="display:none" class="alert-banner green">Copied to clipboard!</div>
+      </div>
+    `;
+
+    function updateCommand() {
+      const hostId = document.getElementById('setup-host-id').value || '<host-id>';
+      const mqttUrl = document.getElementById('setup-mqtt-url').value;
+      const mqttUser = document.getElementById('setup-mqtt-user').value;
+      const mqttPass = document.getElementById('setup-mqtt-pass').value;
+      const image = document.getElementById('setup-image').value;
+
+      const cmd = [
+        'docker run -d \\',
+        '  --name insightd-agent \\',
+        '  --restart unless-stopped \\',
+        '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
+        '  -v /:/host:ro \\',
+        `  -e INSIGHTD_HOST_ID=${hostId} \\`,
+        `  -e INSIGHTD_MQTT_URL=${mqttUrl} \\`,
+        mqttUser ? `  -e INSIGHTD_MQTT_USER=${mqttUser} \\` : null,
+        mqttPass ? `  -e INSIGHTD_MQTT_PASS=${mqttPass} \\` : null,
+        `  ${image}`,
+      ].filter(Boolean).join('\n');
+
+      document.getElementById('setup-command').textContent = cmd;
+    }
+
+    document.querySelectorAll('#setup-host-id, #setup-mqtt-url, #setup-mqtt-user, #setup-mqtt-pass, #setup-image')
+      .forEach(el => el.addEventListener('input', updateCommand));
+    updateCommand();
+
+    document.getElementById('setup-copy').addEventListener('click', async () => {
+      const cmd = document.getElementById('setup-command').textContent;
+      await navigator.clipboard.writeText(cmd);
+      const msg = document.getElementById('setup-copied');
+      msg.style.display = '';
+      setTimeout(() => { msg.style.display = 'none'; }, 2000);
+    });
+  }
+
   // --- Router ---
   async function route() {
     clearInterval(refreshTimer);
@@ -641,6 +719,8 @@
         await renderHosts();
       } else if (parts[0] === 'alerts') {
         await renderAlerts();
+      } else if (parts[0] === 'add-agent') {
+        await renderAddAgent();
       } else if (parts[0] === 'settings') {
         await renderSettings();
       } else {
@@ -651,16 +731,20 @@
     }
 
     // Auto-refresh (not for settings page)
-    if (parts[0] !== 'settings') {
+    if (parts[0] !== 'settings' && parts[0] !== 'add-agent') {
       refreshTimer = setInterval(() => route(), 30000);
     }
   }
 
-  // Check if auth is enabled to show/hide settings nav
+  // Check health to show/hide nav links
   api('/health').then(h => {
     if (h.authEnabled) {
       const navSettings = document.getElementById('nav-settings');
       if (navSettings) navSettings.style.display = '';
+    }
+    if (h.mode === 'hub') {
+      const navAddAgent = document.getElementById('nav-add-agent');
+      if (navAddAgent) navAddAgent.style.display = '';
     }
   }).catch(() => {});
 

@@ -22,6 +22,7 @@ function readBody(req, maxBytes = 65536) {
 function handleHealth(req, res, db, config, params) {
   const health = queries.getHealth(db);
   health.authEnabled = isAuthEnabled();
+  health.mode = config.mqttUrl ? 'hub' : 'standalone';
   return health;
 }
 
@@ -155,4 +156,14 @@ async function handlePutSettings(req, res, db) {
   return putSettings(db, body);
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings };
+function handleAgentSetup(req, res, db, config) {
+  const host = config.externalHost || (req.headers.host || 'localhost').replace(/:\d+$/, '');
+  return {
+    mqttUrl: `mqtt://${host}:1883`,
+    mqttUser: config.mqttUser || '',
+    mqttPass: config.mqttPass || '',
+    image: 'andreas404/insightd-agent:latest',
+  };
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup };
