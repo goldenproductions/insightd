@@ -9,9 +9,14 @@ function buildDigest(db, config) {
   const lastWeekStart = twoWeeksAgo.toISOString().slice(0, 19).replace('T', ' ');
   const nowStr = now.toISOString().slice(0, 19).replace('T', ' ');
 
+  // Detect how many hosts we have
+  const hostRows = db.prepare('SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at BETWEEN ? AND ?').all(thisWeekStart, nowStr);
+  const multiHost = hostRows.length > 1;
+
   // --- Container uptime & restarts ---
   const containerStats = db.prepare(`
     SELECT
+      host_id,
       container_name,
       COUNT(*) as total_snapshots,
       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running_snapshots,
@@ -19,8 +24,8 @@ function buildDigest(db, config) {
       MIN(restart_count) as min_restarts
     FROM container_snapshots
     WHERE collected_at BETWEEN ? AND ?
-    GROUP BY container_name
-    ORDER BY container_name
+    GROUP BY host_id, container_name
+    ORDER BY host_id, container_name
   `).all(thisWeekStart, nowStr);
 
   const containers = containerStats.map(c => {
@@ -28,8 +33,10 @@ function buildDigest(db, config) {
       ? Math.round((c.running_snapshots / c.total_snapshots) * 100 * 10) / 10
       : 0;
     const restarts = Math.max(0, c.max_restarts - c.min_restarts);
+    const displayName = multiHost ? `${c.host_id}/${c.container_name}` : c.container_name;
     return {
-      name: c.container_name,
+      name: displayName,
+      hostId: c.host_id,
       uptimePercent,
       restarts,
       status: uptimePercent >= 99 ? 'green' : uptimePercent >= 90 ? 'yellow' : 'red',
@@ -46,6 +53,7 @@ function buildDigest(db, config) {
   // --- Resource trends (this week vs last week) ---
   const resourceTrends = db.prepare(`
     SELECT
+      host_id,
       container_name,
       AVG(CASE WHEN collected_at BETWEEN ? AND ? THEN cpu_percent END) as this_week_cpu,
       AVG(CASE WHEN collected_at BETWEEN ? AND ? THEN cpu_percent END) as last_week_cpu,
@@ -53,7 +61,7 @@ function buildDigest(db, config) {
       AVG(CASE WHEN collected_at BETWEEN ? AND ? THEN memory_mb END) as last_week_ram
     FROM container_snapshots
     WHERE collected_at BETWEEN ? AND ?
-    GROUP BY container_name
+    GROUP BY host_id, container_name
   `).all(
     thisWeekStart, nowStr,
     lastWeekStart, thisWeekStart,
@@ -70,8 +78,9 @@ function buildDigest(db, config) {
       const ramChange = r.last_week_ram && r.this_week_ram
         ? Math.round(((r.this_week_ram - r.last_week_ram) / r.last_week_ram) * 100)
         : null;
+      const displayName = multiHost ? `${r.host_id}/${r.container_name}` : r.container_name;
       return {
-        name: r.container_name,
+        name: displayName,
         cpuAvg: r.this_week_cpu ? Math.round(r.this_week_cpu * 10) / 10 : null,
         ramAvgMb: r.this_week_ram ? Math.round(r.this_week_ram) : null,
         cpuChange,
@@ -83,7 +92,7 @@ function buildDigest(db, config) {
 
   // --- Disk usage ---
   const latestDisk = db.prepare(`
-    SELECT mount_point, total_gb, used_gb, used_percent
+    SELECT host_id, mount_point, total_gb, used_gb, used_percent
     FROM disk_snapshots
     WHERE collected_at = (SELECT MAX(collected_at) FROM disk_snapshots)
   `).all();
@@ -92,7 +101,7 @@ function buildDigest(db, config) {
 
   // --- Update checks ---
   const latestUpdates = db.prepare(`
-    SELECT container_name, image, has_update
+    SELECT host_id, container_name, image, has_update
     FROM update_checks
     WHERE checked_at = (SELECT MAX(checked_at) FROM update_checks)
       AND has_update = 1
@@ -125,9 +134,10 @@ function buildDigest(db, config) {
     disk: latestDisk,
     diskWarnings,
     updatesAvailable: latestUpdates,
+    hostCount: hostRows.length,
   };
 
-  logger.info('digest', `Built digest for week ${weekNumber}: ${summaryLine}`);
+  logger.info('digest', `Built digest for week ${weekNumber} (${hostRows.length} host${hostRows.length !== 1 ? 's' : ''}): ${summaryLine}`);
   return digest;
 }
 
