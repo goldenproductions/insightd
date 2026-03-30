@@ -1,0 +1,53 @@
+const cron = require('node-cron');
+const logger = require('../../shared/utils/logger');
+const { safeCollect } = require('../../shared/utils/errors');
+const { publishCollection, publishUpdates } = require('./mqtt');
+
+function startAgentScheduler(docker, config) {
+  const { collectContainers } = require('./collectors/containers');
+  const { collectResources } = require('./collectors/resources');
+  const { collectDisk } = require('./collectors/disk');
+  const { checkUpdates } = require('./collectors/updates');
+
+  async function runCollection() {
+    logger.info('scheduler', 'Starting collection cycle');
+
+    let containers = await safeCollect('containers', () => collectContainers(docker));
+    if (containers) {
+      containers = await safeCollect('resources', () => collectResources(docker, containers));
+    }
+
+    const disk = await safeCollect('disk', () => collectDisk(config)) || [];
+
+    logger.info('scheduler', 'Collection cycle complete');
+
+    // Publish to MQTT
+    if (containers) {
+      await safeCollect('mqtt-publish', () =>
+        publishCollection(config.hostId, { containers, disk })
+      );
+    }
+  }
+
+  // Run immediately
+  runCollection();
+
+  // Schedule collection
+  const collectCron = `*/${config.collectIntervalMinutes} * * * *`;
+  cron.schedule(collectCron, runCollection, { timezone: config.timezone });
+  logger.info('scheduler', `Collection scheduled: ${collectCron}`);
+
+  // Schedule update checks
+  cron.schedule(config.updateCheckCron, async () => {
+    logger.info('scheduler', 'Checking for image updates...');
+    const updates = await safeCollect('updates', () => checkUpdates(docker));
+    if (updates && updates.length > 0) {
+      await safeCollect('mqtt-updates', () =>
+        publishUpdates(config.hostId, updates)
+      );
+    }
+  }, { timezone: config.timezone });
+  logger.info('scheduler', `Update checks scheduled: ${config.updateCheckCron}`);
+}
+
+module.exports = { startAgentScheduler };

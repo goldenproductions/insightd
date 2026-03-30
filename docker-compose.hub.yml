@@ -1,0 +1,51 @@
+# Full stack — Mosquitto + Hub + local Agent
+# For multi-host setups. Remote agents connect to this host's MQTT.
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: insightd-mqtt
+    restart: unless-stopped
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto-passwd:/mosquitto/config/passwd:ro
+      - mosquitto-data:/mosquitto/data
+    ports:
+      - "1883:1883"
+
+  hub:
+    build:
+      context: .
+      dockerfile: hub/Dockerfile
+    image: insightd-hub:latest
+    container_name: insightd-hub
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    volumes:
+      - hub-data:/data
+    env_file:
+      - .env
+    environment:
+      INSIGHTD_MQTT_URL: mqtt://mosquitto:1883
+
+  agent:
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
+    image: insightd-agent:latest
+    container_name: insightd-agent
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /:/host:ro
+    environment:
+      INSIGHTD_HOST_ID: ${INSIGHTD_HOST_ID:-local}
+      INSIGHTD_MQTT_URL: mqtt://mosquitto:1883
+      INSIGHTD_MQTT_USER: ${INSIGHTD_MQTT_USER:-insightd}
+      INSIGHTD_MQTT_PASS: ${INSIGHTD_MQTT_PASS:-}
+
+volumes:
+  mosquitto-data:
+  hub-data:
