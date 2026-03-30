@@ -14,7 +14,17 @@ describe('startScheduler', () => {
     mock.method(cron, 'schedule', (expr, fn, opts) => {
       scheduledJobs.push({ expr, fn, opts });
     });
+    // Clear scheduler and ingest caches
     delete require.cache[require.resolve('../../src/scheduler')];
+    delete require.cache[require.resolve('../../src/ingest')];
+
+    // Mock ingest functions since scheduler imports them directly
+    const ingest = require('../../src/ingest');
+    mock.method(ingest, 'ingestContainers', () => {});
+    mock.method(ingest, 'ingestDisk', () => {});
+    mock.method(ingest, 'ingestUpdates', () => {});
+    mock.method(ingest, 'upsertHost', () => {});
+
     startScheduler = require('../../src/scheduler').startScheduler;
   });
 
@@ -28,6 +38,7 @@ describe('startScheduler', () => {
       db: {},
       docker: {},
       config: {
+        hostId: 'test-host',
         collectIntervalMinutes: 5,
         digestCron: '0 8 * * 1',
         updateCheckCron: '0 3 * * *',
@@ -36,9 +47,9 @@ describe('startScheduler', () => {
       },
       collectors: {
         collectContainers: mock.fn(async () => []),
-        collectResources: mock.fn(async () => {}),
+        collectResources: mock.fn(async () => []),
         collectDisk: mock.fn(() => []),
-        checkUpdates: mock.fn(async () => {}),
+        checkUpdates: mock.fn(async () => []),
       },
       digest: {
         buildDigest: mock.fn(() => ({})),
@@ -82,7 +93,6 @@ describe('startScheduler', () => {
   it('runs collection immediately on startup', async () => {
     const deps = createDeps();
     startScheduler(deps);
-    // Wait a tick for the async runCollection to execute
     await new Promise(r => setTimeout(r, 50));
     assert.ok(deps.collectors.collectContainers.mock.calls.length >= 1);
   });

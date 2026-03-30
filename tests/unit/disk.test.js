@@ -1,23 +1,19 @@
 const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
-const { createTestDb } = require('../helpers/db');
 const { suppressConsole } = require('../helpers/mocks');
 
 describe('collectDisk', () => {
-  let db;
   let collectDisk;
   let restore;
 
   beforeEach(() => {
     restore = suppressConsole();
-    db = createTestDb();
     delete require.cache[require.resolve('../../src/collectors/disk')];
     collectDisk = require('../../src/collectors/disk').collectDisk;
   });
 
   afterEach(() => {
-    db.close();
     restore();
     mock.restoreAll();
   });
@@ -30,7 +26,7 @@ describe('collectDisk', () => {
     }));
 
     const config = { hostRoot: '/host', diskWarnPercent: 85 };
-    const result = collectDisk(db, config);
+    const result = collectDisk(config);
 
     assert.equal(result.length, 1);
     assert.equal(result[0].mountPoint, '/');
@@ -48,7 +44,7 @@ describe('collectDisk', () => {
     }));
 
     const config = { hostRoot: '/host', diskWarnPercent: 85 };
-    const result = collectDisk(db, config);
+    const result = collectDisk(config);
 
     assert.equal(result.length, 1);
     assert.equal(result[0].mountPoint, '/');
@@ -62,13 +58,13 @@ describe('collectDisk', () => {
     }));
 
     const config = { hostRoot: '/host', diskWarnPercent: 85 };
-    const result = collectDisk(db, config);
+    const result = collectDisk(config);
 
     assert.ok(result[0].totalGb > 99 && result[0].totalGb < 101);
     assert.ok(result[0].usedPercent > 89 && result[0].usedPercent < 91);
   });
 
-  it('stores results in disk_snapshots', () => {
+  it('returns data without DB dependency', () => {
     mock.method(fs, 'existsSync', (p) => p === '/host');
     mock.method(fs, 'statSync', () => ({ isDirectory: () => true }));
     mock.method(fs, 'statfsSync', () => ({
@@ -76,10 +72,11 @@ describe('collectDisk', () => {
     }));
 
     const config = { hostRoot: '/host', diskWarnPercent: 85 };
-    collectDisk(db, config);
+    const result = collectDisk(config);
 
-    const rows = db.prepare('SELECT * FROM disk_snapshots').all();
-    assert.equal(rows.length, 1);
+    assert.ok(Array.isArray(result));
+    assert.ok(result[0].mountPoint);
+    assert.ok(typeof result[0].totalGb === 'number');
   });
 
   it('handles statfs failure gracefully', () => {
@@ -88,7 +85,7 @@ describe('collectDisk', () => {
     mock.method(fs, 'statfsSync', () => { throw new Error('ENOENT'); });
 
     const config = { hostRoot: '/host', diskWarnPercent: 85 };
-    const result = collectDisk(db, config);
+    const result = collectDisk(config);
     assert.equal(result.length, 0);
   });
 });

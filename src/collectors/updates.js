@@ -26,26 +26,19 @@ function httpHead(url, headers = {}) {
   });
 }
 
-/**
- * Parse image string into registry, repo, and tag.
- * Only supports Docker Hub for MVP.
- */
 function parseImage(image) {
-  // Remove digest if present
   const noDigest = image.split('@')[0];
   const parts = noDigest.split(':');
   const tag = parts.length > 1 ? parts[parts.length - 1] : 'latest';
   let repo = parts.slice(0, -1).join(':') || parts[0];
 
-  // If no slash, it's a Docker Hub official image
   if (!repo.includes('/')) {
     repo = `library/${repo}`;
   }
 
-  // Check if it's a Docker Hub image (no domain with dots)
   const firstPart = repo.split('/')[0];
   if (firstPart.includes('.')) {
-    return null; // Non-Docker Hub registry, skip for MVP
+    return null;
   }
 
   return { repo, tag };
@@ -73,15 +66,14 @@ async function getRemoteDigest(repo, tag, token) {
   return res.headers['docker-content-digest'] || null;
 }
 
-async function checkUpdates(db, docker, hostId = 'local') {
+/**
+ * Check for available image updates.
+ * Returns plain data array — no DB writes.
+ */
+async function checkUpdates(docker) {
   const containers = await docker.listContainers({ all: true });
+  const results = [];
 
-  const insert = db.prepare(`
-    INSERT INTO update_checks (host_id, container_name, image, local_digest, remote_digest, has_update, checked_at)
-    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-  `);
-
-  // Deduplicate by image
   const seen = new Set();
   let checked = 0;
   let updatesFound = 0;
@@ -100,20 +92,24 @@ async function checkUpdates(db, docker, hostId = 'local') {
         return;
       }
 
-      // Get local digest
       const imageInfo = await docker.getImage(image).inspect();
       const localDigest = (imageInfo.RepoDigests || [])
         .find(d => d.includes(parsed.repo))
         ?.split('@')[1] || null;
 
-      // Get remote digest
       const token = await getDockerHubToken(parsed.repo);
       const remoteDigest = await getRemoteDigest(parsed.repo, parsed.tag, token);
 
-      const hasUpdate = localDigest && remoteDigest && localDigest !== remoteDigest ? 1 : 0;
+      const hasUpdate = !!(localDigest && remoteDigest && localDigest !== remoteDigest);
       if (hasUpdate) updatesFound++;
 
-      insert.run(hostId, name, image, localDigest, remoteDigest, hasUpdate);
+      results.push({
+        containerName: name,
+        image,
+        localDigest,
+        remoteDigest,
+        hasUpdate,
+      });
       checked++;
 
       const status = hasUpdate ? 'UPDATE AVAILABLE' : 'up to date';
@@ -122,6 +118,7 @@ async function checkUpdates(db, docker, hostId = 'local') {
   }
 
   logger.info('updates', `Checked ${checked} images, ${updatesFound} updates available`);
+  return results;
 }
 
 module.exports = { checkUpdates, parseImage };

@@ -1,27 +1,19 @@
 const fs = require('fs');
 const logger = require('../utils/logger');
 
-function collectDisk(db, config, hostId = 'local') {
-  const insert = db.prepare(`
-    INSERT INTO disk_snapshots (host_id, mount_point, total_gb, used_gb, used_percent, collected_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
-  `);
-
+/**
+ * Collect disk usage stats.
+ * Returns plain data array — no DB writes.
+ */
+function collectDisk(config) {
   const hostRoot = config.hostRoot;
   const useHostMount = fs.existsSync(hostRoot) && fs.statSync(hostRoot).isDirectory();
 
-  // When running in a container with -v /:/host:ro, /host/proc/mounts shows
-  // the container's mount namespace (not the host's). So instead of parsing
-  // mounts, we stat the host root directly and any additional mount points
-  // found via the container's own /proc/mounts.
   const mountsToCheck = [];
 
   if (useHostMount) {
-    // Always stat the host root — this gives us the main filesystem
     mountsToCheck.push({ mountPoint: '/', statPath: hostRoot });
 
-    // Also check for additional host mounts (e.g., /home, /mnt/data)
-    // by looking for directories under /host that are separate filesystems
     try {
       const hostStat = fs.statfsSync(hostRoot);
       const hostFsId = `${hostStat.type}:${hostStat.blocks}`;
@@ -40,7 +32,6 @@ function collectDisk(db, config, hostId = 'local') {
     } catch { /* can't stat host root */ }
   } else {
     logger.warn('disk', 'Host root not mounted — reading container filesystem instead');
-    // Fallback: read container's own /proc/mounts
     const mounts = fs.readFileSync('/proc/mounts', 'utf8');
     const seen = new Set();
 
@@ -54,12 +45,6 @@ function collectDisk(db, config, hostId = 'local') {
     }
   }
 
-  const insertMany = db.transaction((items) => {
-    for (const d of items) {
-      insert.run(hostId, d.mountPoint, d.totalGb, d.usedGb, d.usedPercent);
-    }
-  });
-
   const results = [];
   for (const { mountPoint, statPath } of mountsToCheck) {
     try {
@@ -72,15 +57,11 @@ function collectDisk(db, config, hostId = 'local') {
 
       results.push({ mountPoint, totalGb, usedGb, usedPercent });
 
-      const warn = usedPercent >= config.diskWarnPercent ? ' ⚠️' : '';
+      const warn = usedPercent >= (config.diskWarnPercent || 85) ? ' ⚠️' : '';
       logger.info('disk', `${mountPoint}: ${usedGb}/${totalGb}GB (${usedPercent}%)${warn}`);
     } catch (err) {
       logger.warn('disk', `Failed to stat ${mountPoint}: ${err.message}`);
     }
-  }
-
-  if (results.length > 0) {
-    insertMany(results);
   }
 
   return results;
