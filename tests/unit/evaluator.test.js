@@ -1,0 +1,264 @@
+const { describe, it, beforeEach, afterEach, mock } = require('node:test');
+const assert = require('node:assert/strict');
+const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState } = require('../helpers/db');
+const { ts, NOW } = require('../helpers/fixtures');
+const { suppressConsole } = require('../helpers/mocks');
+
+// Mock the sender before requiring evaluator
+const nodemailer = require('nodemailer');
+
+describe('evaluateAlerts', () => {
+  let db;
+  let evaluateAlerts;
+  let restore;
+
+  beforeEach(() => {
+    restore = suppressConsole();
+    mock.method(nodemailer, 'createTransport', () => ({ sendMail: mock.fn(async () => ({ messageId: 't' })) }));
+    db = createTestDb();
+    delete require.cache[require.resolve('../../src/alerts/evaluator')];
+    delete require.cache[require.resolve('../../src/alerts/sender')];
+    evaluateAlerts = require('../../src/alerts/evaluator').evaluateAlerts;
+  });
+
+  afterEach(() => {
+    db.close();
+    restore();
+    mock.restoreAll();
+  });
+
+  const alertsConfig = {
+    enabled: true, to: 'test@test.com', cooldownMinutes: 60,
+    cpuPercent: 90, memoryMb: 1024, diskPercent: 90,
+    restartCount: 3, containerDown: true,
+  };
+
+  describe('container_down', () => {
+    it('triggers when container transitions from running to exited', () => {
+      const t1 = ts(new Date(NOW - 600000));
+      const t2 = ts(NOW);
+      seedContainerSnapshots(db, [
+        { name: 'nginx', status: 'running', at: t1 },
+        { name: 'nginx', status: 'exited', at: t2 },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      assert.equal(triggered.length, 1);
+      assert.equal(triggered[0].type, 'container_down');
+      assert.equal(triggered[0].target, 'nginx');
+    });
+
+    it('does not trigger when container was already exited', () => {
+      const t1 = ts(new Date(NOW - 600000));
+      const t2 = ts(NOW);
+      seedContainerSnapshots(db, [
+        { name: 'nginx', status: 'exited', at: t1 },
+        { name: 'nginx', status: 'exited', at: t2 },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const downs = triggered.filter(a => a.type === 'container_down');
+      assert.equal(downs.length, 0);
+    });
+
+    it('does not trigger with only one snapshot (no history)', () => {
+      seedContainerSnapshots(db, [
+        { name: 'nginx', status: 'exited', at: ts(NOW) },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const downs = triggered.filter(a => a.type === 'container_down');
+      assert.equal(downs.length, 0);
+    });
+
+    it('does not trigger when disabled', () => {
+      const t1 = ts(new Date(NOW - 600000));
+      const t2 = ts(NOW);
+      seedContainerSnapshots(db, [
+        { name: 'nginx', status: 'running', at: t1 },
+        { name: 'nginx', status: 'exited', at: t2 },
+      ]);
+
+      const disabledConfig = { ...alertsConfig, containerDown: false };
+      const { triggered } = evaluateAlerts(db, { alerts: disabledConfig });
+      const downs = triggered.filter(a => a.type === 'container_down');
+      assert.equal(downs.length, 0);
+    });
+  });
+
+  describe('high_cpu', () => {
+    it('triggers when CPU exceeds threshold', () => {
+      seedContainerSnapshots(db, [
+        { name: 'postgres', status: 'running', cpu: 95, mem: 100, at: ts(NOW) },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const cpuAlerts = triggered.filter(a => a.type === 'high_cpu');
+      assert.equal(cpuAlerts.length, 1);
+      assert.equal(cpuAlerts[0].target, 'postgres');
+    });
+
+    it('does not trigger below threshold', () => {
+      seedContainerSnapshots(db, [
+        { name: 'postgres', status: 'running', cpu: 50, mem: 100, at: ts(NOW) },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const cpuAlerts = triggered.filter(a => a.type === 'high_cpu');
+      assert.equal(cpuAlerts.length, 0);
+    });
+
+    it('does not trigger when disabled (threshold 0)', () => {
+      seedContainerSnapshots(db, [
+        { name: 'postgres', status: 'running', cpu: 95, mem: 100, at: ts(NOW) },
+      ]);
+
+      const disabledConfig = { ...alertsConfig, cpuPercent: 0 };
+      const { triggered } = evaluateAlerts(db, { alerts: disabledConfig });
+      const cpuAlerts = triggered.filter(a => a.type === 'high_cpu');
+      assert.equal(cpuAlerts.length, 0);
+    });
+  });
+
+  describe('high_memory', () => {
+    it('triggers when memory exceeds threshold', () => {
+      seedContainerSnapshots(db, [
+        { name: 'postgres', status: 'running', cpu: 10, mem: 2048, at: ts(NOW) },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const memAlerts = triggered.filter(a => a.type === 'high_memory');
+      assert.equal(memAlerts.length, 1);
+    });
+
+    it('does not trigger below threshold', () => {
+      seedContainerSnapshots(db, [
+        { name: 'postgres', status: 'running', cpu: 10, mem: 512, at: ts(NOW) },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const memAlerts = triggered.filter(a => a.type === 'high_memory');
+      assert.equal(memAlerts.length, 0);
+    });
+  });
+
+  describe('disk_full', () => {
+    it('triggers when disk exceeds threshold', () => {
+      seedDiskSnapshots(db, [
+        { mount: '/', total: 100, used: 95, percent: 95, at: ts(NOW) },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const diskAlerts = triggered.filter(a => a.type === 'disk_full');
+      assert.equal(diskAlerts.length, 1);
+    });
+
+    it('does not trigger below threshold', () => {
+      seedDiskSnapshots(db, [
+        { mount: '/', total: 100, used: 50, percent: 50, at: ts(NOW) },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const diskAlerts = triggered.filter(a => a.type === 'disk_full');
+      assert.equal(diskAlerts.length, 0);
+    });
+  });
+
+  describe('resolutions', () => {
+    it('resolves container_down when container is running again', () => {
+      seedContainerSnapshots(db, [
+        { name: 'nginx', status: 'running', at: ts(NOW) },
+      ]);
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: ts(new Date(NOW - 3600000)), lastNotified: ts(new Date(NOW - 3600000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+      assert.equal(resolved.length, 1);
+      assert.equal(resolved[0].type, 'container_down');
+      assert.equal(resolved[0].isResolution, true);
+    });
+
+    it('resolves high_cpu when CPU drops below threshold', () => {
+      seedContainerSnapshots(db, [
+        { name: 'postgres', status: 'running', cpu: 50, mem: 100, at: ts(NOW) },
+      ]);
+      seedAlertState(db, [
+        { type: 'high_cpu', target: 'postgres', triggeredAt: ts(new Date(NOW - 3600000)), lastNotified: ts(new Date(NOW - 3600000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+      assert.equal(resolved.length, 1);
+      assert.equal(resolved[0].type, 'high_cpu');
+    });
+  });
+});
+
+describe('processAlerts', () => {
+  let db;
+  let processAlerts;
+  let restore;
+
+  beforeEach(() => {
+    restore = suppressConsole();
+    mock.method(nodemailer, 'createTransport', () => ({ sendMail: mock.fn(async () => ({ messageId: 't' })) }));
+    db = createTestDb();
+    delete require.cache[require.resolve('../../src/alerts/evaluator')];
+    delete require.cache[require.resolve('../../src/alerts/sender')];
+    processAlerts = require('../../src/alerts/evaluator').processAlerts;
+  });
+
+  afterEach(() => {
+    db.close();
+    restore();
+    mock.restoreAll();
+  });
+
+  const config = { alerts: { cooldownMinutes: 60 } };
+
+  it('inserts new alert and returns it for sending', () => {
+    const triggered = [{ type: 'container_down', target: 'nginx', message: 'test' }];
+    const toSend = processAlerts(db, config, { triggered, resolved: [] });
+    assert.equal(toSend.length, 1);
+    assert.equal(toSend[0].reminderNumber, 0);
+
+    const rows = db.prepare('SELECT * FROM alert_state').all();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].alert_type, 'container_down');
+  });
+
+  it('suppresses alert within cooldown period', () => {
+    seedAlertState(db, [
+      { type: 'container_down', target: 'nginx', triggeredAt: ts(NOW), lastNotified: ts(NOW) },
+    ]);
+
+    const triggered = [{ type: 'container_down', target: 'nginx', message: 'test' }];
+    const toSend = processAlerts(db, config, { triggered, resolved: [] });
+    assert.equal(toSend.length, 0); // suppressed
+  });
+
+  it('sends reminder when cooldown expired', () => {
+    const oldTime = ts(new Date(NOW - 2 * 60 * 60 * 1000)); // 2 hours ago
+    seedAlertState(db, [
+      { type: 'container_down', target: 'nginx', triggeredAt: oldTime, lastNotified: oldTime },
+    ]);
+
+    const triggered = [{ type: 'container_down', target: 'nginx', message: 'test' }];
+    const toSend = processAlerts(db, config, { triggered, resolved: [] });
+    assert.equal(toSend.length, 1);
+    assert.equal(toSend[0].reminderNumber, 1); // reminder #1
+  });
+
+  it('marks resolved alerts in database', () => {
+    seedAlertState(db, [
+      { type: 'container_down', target: 'nginx', triggeredAt: ts(NOW), lastNotified: ts(NOW) },
+    ]);
+
+    const resolved = [{ type: 'container_down', target: 'nginx', message: 'resolved', isResolution: true }];
+    const toSend = processAlerts(db, config, { triggered: [], resolved });
+    assert.equal(toSend.length, 1);
+
+    const row = db.prepare('SELECT resolved_at FROM alert_state WHERE target = ?').get('nginx');
+    assert.ok(row.resolved_at !== null);
+  });
+});

@@ -40,4 +40,14 @@ function seedUpdateChecks(db, rows) {
   }
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks };
+function seedAlertState(db, rows) {
+  const insert = db.prepare(`
+    INSERT INTO alert_state (alert_type, target, triggered_at, resolved_at, last_notified, notify_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const r of rows) {
+    insert.run(r.type, r.target, r.triggeredAt, r.resolvedAt || null, r.lastNotified || r.triggeredAt, r.notifyCount ?? 1);
+  }
+}
+
+module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState };
