@@ -25,12 +25,16 @@ function startWebServer(db, config, context) {
   router.add('GET', '/api/health', handlers.handleHealth);
   router.add('GET', '/api/hosts', handlers.handleHosts);
   router.add('GET', '/api/hosts/:hostId', handlers.handleHostDetail);
+  router.add('GET', '/api/hosts/:hostId/timeline', handlers.handleTimeline);
+  router.add('GET', '/api/hosts/:hostId/trends', handlers.handleTrends);
+  router.add('GET', '/api/hosts/:hostId/events', handlers.handleEvents);
   router.add('GET', '/api/hosts/:hostId/metrics', handlers.handleHostMetrics);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/logs', handlers.handleContainerLogs);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName', handlers.handleContainerDetail);
   router.add('GET', '/api/hosts/:hostId/containers', handlers.handleHostContainers);
   router.add('GET', '/api/hosts/:hostId/disk', handlers.handleHostDisk);
   router.add('GET', '/api/dashboard', handlers.handleDashboard);
+  router.add('GET', '/api/rankings', handlers.handleRankings);
   router.add('GET', '/api/alerts', handlers.handleAlerts);
   router.add('GET', '/api/agent-setup', handlers.handleAgentSetup);
   router.add('POST', '/api/auth', handlers.handleLogin);

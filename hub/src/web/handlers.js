@@ -167,4 +167,26 @@ function handleAgentSetup(req, res, db, config) {
   };
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup };
+function handleTimeline(req, res, db, config, params) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get('days') || '7', 10) || 7));
+  return queries.getUptimeTimeline(db, params.hostId, days);
+}
+
+function handleRankings(req, res, db, config) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const limit = Math.max(1, Math.min(50, parseInt(url.searchParams.get('limit') || '10', 10) || 10));
+  return queries.getResourceRankings(db, limit);
+}
+
+function handleTrends(req, res, db, config, params) {
+  return queries.getTrends(db, params.hostId);
+}
+
+function handleEvents(req, res, db, config, params) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get('days') || '7', 10) || 7));
+  return queries.getEvents(db, params.hostId, days);
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents };

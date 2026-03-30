@@ -80,8 +80,25 @@
   }
 
   // --- Views ---
+  function renderRankingList(items, valueKey, fmtFn) {
+    if (!items || items.length === 0) return '<div class="empty">No data</div>';
+    const max = Math.max(...items.map(r => r[valueKey] || 0), 1);
+    return items.map(r => {
+      const pct = Math.round(((r[valueKey] || 0) / max) * 100);
+      return `<div class="ranking-row">
+        <div class="ranking-name">${esc(r.container_name)} <span class="ranking-host">${esc(r.host_id)}</span></div>
+        <div class="ranking-bar-bg"><div class="ranking-bar-fill" style="width:${pct}%"></div></div>
+        <div class="ranking-value">${fmtFn(r[valueKey])}</div>
+      </div>`;
+    }).join('');
+  }
+
   async function renderDashboard() {
-    const data = await api('/dashboard');
+    const [data, rankings] = await Promise.all([api('/dashboard'), api('/rankings?limit=5')]);
+
+    const cpuList = renderRankingList(rankings.byCpu, 'cpu_percent', v => v != null ? v.toFixed(1) + '%' : '-');
+    const memList = renderRankingList(rankings.byMemory, 'memory_mb', v => v != null ? v.toFixed(0) + ' MB' : '-');
+
     app.innerHTML = `
       <div class="stats">
         <div class="stat">
@@ -105,6 +122,15 @@
           <div class="label">Updates Available</div>
         </div>
       </div>
+
+      <div class="card">
+        <h2>Top Consumers</h2>
+        <div class="rankings-grid">
+          <div><h2 style="margin-bottom:0.5rem">CPU</h2>${cpuList}</div>
+          <div><h2 style="margin-bottom:0.5rem">Memory</h2>${memList}</div>
+        </div>
+      </div>
+
       <div class="refresh-info">Auto-refreshes every 30s</div>
     `;
   }
@@ -144,11 +170,39 @@
     `;
   }
 
+  function trendArrow(change) {
+    if (change == null) return '<span class="trend-flat">-</span>';
+    if (change > 0) return `<span class="trend-up">+${change}%</span>`;
+    if (change < 0) return `<span class="trend-down">${change}%</span>`;
+    return '<span class="trend-flat">0%</span>';
+  }
+
   async function renderHostDetail(hostId) {
-    const data = await api(`/hosts/${encodeURIComponent(hostId)}`);
+    const hid = encodeURIComponent(hostId);
+    const [data, timeline, trends, events] = await Promise.all([
+      api(`/hosts/${hid}`),
+      api(`/hosts/${hid}/timeline?days=7`).catch(() => []),
+      api(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })),
+      api(`/hosts/${hid}/events?days=7`).catch(() => []),
+    ]);
     if (!data || data.error) {
       app.innerHTML = `<a class="back" href="#/hosts">&larr; Back</a><div class="empty">Host not found</div>`;
       return;
+    }
+
+    // Uptime timeline
+    let timelineHtml = '';
+    if (timeline.length > 0) {
+      const rows = timeline.map(t => {
+        const slots = t.slots.map(s => `<div class="timeline-slot ${s}" title="${s}"></div>`).join('');
+        const pct = t.uptimePercent != null ? `${t.uptimePercent}%` : '-';
+        return `<div class="timeline-row">
+          <div class="timeline-name">${esc(t.name)}</div>
+          <div class="timeline-bar">${slots}</div>
+          <div class="timeline-pct">${pct}</div>
+        </div>`;
+      }).join('');
+      timelineHtml = `<div class="card"><h2>Uptime (7 days)</h2>${rows}</div>`;
     }
 
     // Containers table
@@ -224,11 +278,55 @@
       </div>`;
     }
 
+    // Trends card
+    let trendsHtml = '';
+    if (trends.containers.length > 0) {
+      const trendRows = trends.containers.map(t => {
+        const cls = t.flagged ? ' class="trend-flagged"' : '';
+        return `<tr${cls}>
+          <td>${esc(t.name)}</td>
+          <td>${t.cpuNow != null ? t.cpuNow + '%' : '-'} ${trendArrow(t.cpuChange)}</td>
+          <td>${t.memNow != null ? t.memNow + ' MB' : '-'} ${trendArrow(t.memChange)}</td>
+        </tr>`;
+      }).join('');
+      const hostRow = trends.host ? `<tr style="font-weight:600">
+        <td>Host</td>
+        <td>${trends.host.cpuNow != null ? trends.host.cpuNow + '%' : '-'} ${trendArrow(trends.host.cpuChange)}</td>
+        <td>${trends.host.memNow != null ? trends.host.memNow + ' MB' : '-'} ${trendArrow(trends.host.memChange)}</td>
+      </tr>` : '';
+      trendsHtml = `<div class="card"><h2>Trends (vs last week)</h2>${tableWrap(`<table>
+        <thead><tr><th>Name</th><th>CPU Avg</th><th>Memory Avg</th></tr></thead>
+        <tbody>${hostRow}${trendRows}</tbody>
+      </table>`)}</div>`;
+    }
+
+    // Disk forecast
+    let diskForecastHtml = '';
+    if (data.diskForecast) {
+      diskForecastHtml = data.diskForecast.map(f => {
+        if (f.daysUntilFull == null) return `<div class="forecast-text stable">${esc(f.mountPoint)}: Stable — no significant growth</div>`;
+        const cls = f.daysUntilFull < 30 ? 'warning' : f.daysUntilFull < 90 ? 'caution' : 'stable';
+        return `<div class="forecast-text ${cls}">${esc(f.mountPoint)}: ~${f.daysUntilFull} days until full (${f.dailyGrowthGb} GB/day)</div>`;
+      }).join('');
+    }
+
+    // Events timeline
+    let eventsHtml = '';
+    if (events.length > 0) {
+      const items = events.slice(0, 30).map(e => `<div class="event-item">
+        <div class="event-time">${timeAgo(e.time)}</div>
+        <div class="event-dot ${e.good ? 'good' : 'bad'}"></div>
+        <div class="event-msg">${esc(e.message)}</div>
+      </div>`).join('');
+      eventsHtml = `<div class="card"><h2>Events (7 days)</h2>${items}</div>`;
+    }
+
     app.innerHTML = `
       <a class="back" href="#/hosts">&larr; Back to hosts</a>
       <div class="section-title">${statusDot(data.is_online ? 'online' : 'offline')} ${esc(data.host_id)}</div>
 
       ${hostMetricsCard}
+      ${timelineHtml}
 
       <div class="card">
         <h2>Containers (${data.containers.length})</h2>
@@ -238,12 +336,15 @@
         </table>`) : '<div class="empty">No containers</div>'}
       </div>
 
+      ${trendsHtml}
+
       <div class="card">
         <h2>Disk Usage</h2>
         ${data.disk.length > 0 ? tableWrap(`<table>
           <thead><tr><th>Mount</th><th>Usage</th><th>Percent</th></tr></thead>
           <tbody>${diskRows}</tbody>
         </table>`) : '<div class="empty">No disk data</div>'}
+        ${diskForecastHtml}
       </div>
 
       ${data.alerts.length > 0 ? `<div class="card">
@@ -253,6 +354,8 @@
           <tbody>${alertRows}</tbody>
         </table>`)}
       </div>` : ''}
+
+      ${eventsHtml}
 
       ${data.updates.length > 0 ? `<div class="card">
         <h2>Updates Available (${data.updates.length})</h2>
