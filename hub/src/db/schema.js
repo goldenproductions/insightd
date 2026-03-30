@@ -1,6 +1,6 @@
 const logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function bootstrap(db) {
   db.exec(`
@@ -94,6 +94,12 @@ function bootstrap(db) {
 
     CREATE INDEX IF NOT EXISTS idx_alert_host_active
       ON alert_state (host_id, alert_type, target);
+
+    CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Track schema version and run migrations
@@ -147,6 +153,9 @@ function migrate(db, fromVersion) {
       }
     }
     // host_snapshots table is created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 5) {
+    // settings table is created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 

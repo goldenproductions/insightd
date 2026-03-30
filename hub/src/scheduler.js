@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const logger = require('../../shared/utils/logger');
 const { safeCollect } = require('../../shared/utils/errors');
 const { pruneOldData } = require('./db/schema');
+const { getEffectiveConfig } = require('./db/settings');
 
 /**
  * Hub scheduler — runs digest and alert jobs.
@@ -14,24 +15,24 @@ function startHubScheduler(db, config) {
   // Schedule digest delivery
   cron.schedule(config.digestCron, async () => {
     logger.info('scheduler', 'Building digest...');
-    const data = await safeCollect('digest-build', () => buildDigest(db, config));
+    const liveConfig = getEffectiveConfig(db, config);
+    const data = await safeCollect('digest-build', () => buildDigest(db, liveConfig));
     if (data) {
-      await safeCollect('digest-send', () => sendDigest(data, config));
+      await safeCollect('digest-send', () => sendDigest(data, liveConfig));
       pruneOldData(db);
     }
   }, { timezone: config.timezone });
   logger.info('scheduler', `Digest scheduled: ${config.digestCron} (${config.timezone})`);
 
-  // Schedule alert evaluation after each MQTT message is processed
-  // In hub mode, alerts run on a timer since we don't control collection timing
-  if (config.alerts.enabled) {
-    const alertCron = `*/${Math.max(1, config.collectIntervalMinutes || 5)} * * * *`;
-    cron.schedule(alertCron, async () => {
-      const { runAlerts } = require('./alerts/evaluator');
-      await safeCollect('alerts', () => runAlerts(db, config));
-    }, { timezone: config.timezone });
-    logger.info('scheduler', `Alert evaluation scheduled: ${alertCron}`);
-  }
+  // Schedule alert evaluation — always run, check enabled at runtime (hot-reload)
+  const alertCron = `*/${Math.max(1, config.collectIntervalMinutes || 5)} * * * *`;
+  cron.schedule(alertCron, async () => {
+    const liveConfig = getEffectiveConfig(db, config);
+    if (!liveConfig.alerts.enabled) return;
+    const { runAlerts } = require('./alerts/evaluator');
+    await safeCollect('alerts', () => runAlerts(db, liveConfig));
+  }, { timezone: config.timezone });
+  logger.info('scheduler', `Alert evaluation scheduled: ${alertCron}`);
 }
 
 /**
@@ -79,8 +80,9 @@ function startStandaloneScheduler(db, docker, config) {
 
     logger.info('scheduler', 'Collection cycle complete');
 
-    if (alerts) {
-      await safeCollect('alerts', () => alerts.runAlerts(db, config));
+    const liveConfig = getEffectiveConfig(db, config);
+    if (liveConfig.alerts.enabled) {
+      await safeCollect('alerts', () => require('./alerts/evaluator').runAlerts(db, liveConfig));
     }
   }
 
@@ -92,9 +94,10 @@ function startStandaloneScheduler(db, docker, config) {
 
   cron.schedule(config.digestCron, async () => {
     logger.info('scheduler', 'Building digest...');
-    const data = await safeCollect('digest-build', () => buildDigest(db, config));
+    const liveConfig = getEffectiveConfig(db, config);
+    const data = await safeCollect('digest-build', () => buildDigest(db, liveConfig));
     if (data) {
-      await safeCollect('digest-send', () => sendDigest(data, config));
+      await safeCollect('digest-send', () => sendDigest(data, liveConfig));
       pruneOldData(db);
     }
   }, { timezone: config.timezone });

@@ -1,7 +1,28 @@
 const queries = require('./queries');
+const { isAuthEnabled, authenticate, requireAuth } = require('./auth');
+const { getSettings, putSettings } = require('../db/settings');
+
+function readBody(req, maxBytes = 65536) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    let size = 0;
+    req.on('data', chunk => {
+      size += chunk.length;
+      if (size > maxBytes) { req.destroy(); reject(new Error('Body too large')); return; }
+      data += chunk;
+    });
+    req.on('end', () => {
+      try { resolve(JSON.parse(data)); }
+      catch { reject(new Error('Invalid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
 
 function handleHealth(req, res, db, config, params) {
-  return queries.getHealth(db);
+  const health = queries.getHealth(db);
+  health.authEnabled = isAuthEnabled();
+  return health;
 }
 
 function handleHosts(req, res, db, config, params) {
@@ -100,4 +121,38 @@ function handleHostMetrics(req, res, db, config, params) {
   return queries.getHostMetricsHistory(db, params.hostId, hours);
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics };
+async function handleLogin(req, res, db, config) {
+  const body = await readBody(req);
+  const token = authenticate(body.password || '');
+  if (!token) {
+    res.statusCode = 401;
+    return { error: 'Invalid password' };
+  }
+  return { token };
+}
+
+function handleGetSettings(req, res, db) {
+  if (!requireAuth(req)) {
+    res.statusCode = 401;
+    return { error: 'Unauthorized' };
+  }
+  const settings = getSettings(db);
+  // Group by category
+  const grouped = {};
+  for (const s of settings) {
+    if (!grouped[s.category]) grouped[s.category] = [];
+    grouped[s.category].push(s);
+  }
+  return { categories: grouped };
+}
+
+async function handlePutSettings(req, res, db) {
+  if (!requireAuth(req)) {
+    res.statusCode = 401;
+    return { error: 'Unauthorized' };
+  }
+  const body = await readBody(req);
+  return putSettings(db, body);
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings };

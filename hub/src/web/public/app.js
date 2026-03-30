@@ -2,12 +2,23 @@
   const $ = (sel) => document.querySelector(sel);
   const app = $('#app');
   let refreshTimer = null;
+  let authToken = null;
 
   // --- API ---
   async function api(path) {
     const res = await fetch(`/api${path}`);
     if (!res.ok) throw new Error(`API ${res.status}`);
     return res.json();
+  }
+
+  async function apiAuth(method, path, body) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (authToken) opts.headers['Authorization'] = `Bearer ${authToken}`;
+    if (body) opts.body = JSON.stringify(body);
+    const res = await fetch(`/api${path}`, opts);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `API ${res.status}`);
+    return data;
   }
 
   // --- Helpers ---
@@ -508,6 +519,107 @@
     logRefresh.addEventListener('click', loadLogs);
   }
 
+  // --- Settings ---
+  async function renderSettings() {
+    if (!authToken) {
+      renderLogin();
+      return;
+    }
+
+    try {
+      const data = await apiAuth('GET', '/settings');
+      const categories = data.categories;
+      let html = '<div class="section-title">Settings</div>';
+
+      for (const [category, settings] of Object.entries(categories)) {
+        let fields = '';
+        for (const s of settings) {
+          const restart = s.hotReload ? '' : '<span class="form-hint">(requires restart)</span>';
+          const src = `<span class="form-source">${s.source}</span>`;
+          let input;
+          if (s.type === 'bool') {
+            input = `<select name="${esc(s.key)}" data-key="${esc(s.key)}">
+              <option value="true"${s.value === 'true' ? ' selected' : ''}>true</option>
+              <option value="false"${s.value !== 'true' ? ' selected' : ''}>false</option>
+            </select>`;
+          } else if (s.sensitive) {
+            input = `<input type="password" name="${esc(s.key)}" data-key="${esc(s.key)}" value="${esc(s.value)}" placeholder="unchanged">`;
+          } else if (s.type === 'int' || s.type === 'float') {
+            input = `<input type="number" name="${esc(s.key)}" data-key="${esc(s.key)}" value="${esc(s.value)}" step="${s.type === 'float' ? '0.1' : '1'}">`;
+          } else {
+            input = `<input type="text" name="${esc(s.key)}" data-key="${esc(s.key)}" value="${esc(s.value)}">`;
+          }
+          fields += `<div class="form-group">
+            <label>${esc(s.label)} ${restart} ${src}</label>
+            ${input}
+          </div>`;
+        }
+        html += `<div class="card"><h2>${esc(category)}</h2>${fields}</div>`;
+      }
+
+      html += '<div class="form-actions"><button id="settings-save" class="btn-primary">Save Settings</button></div>';
+      html += '<div id="settings-msg"></div>';
+
+      app.innerHTML = html;
+
+      document.getElementById('settings-save').addEventListener('click', async () => {
+        const entries = {};
+        document.querySelectorAll('[data-key]').forEach(el => {
+          entries[el.dataset.key] = el.value;
+        });
+        const msgEl = document.getElementById('settings-msg');
+        try {
+          const result = await apiAuth('PUT', '/settings', entries);
+          if (result.restartRequired) {
+            msgEl.innerHTML = '<div class="alert-banner yellow">Settings saved. Some changes require a restart to take effect.</div>';
+          } else {
+            msgEl.innerHTML = '<div class="alert-banner green">Settings saved.</div>';
+          }
+        } catch (err) {
+          msgEl.innerHTML = `<div class="alert-banner red">${esc(err.message)}</div>`;
+        }
+      });
+    } catch (err) {
+      if (err.message.includes('401')) {
+        authToken = null;
+        renderLogin();
+      } else {
+        app.innerHTML = `<div class="empty">Error: ${esc(err.message)}</div>`;
+      }
+    }
+  }
+
+  function renderLogin() {
+    app.innerHTML = `
+      <div class="section-title">Settings</div>
+      <div class="card" style="max-width:400px;margin:2rem auto">
+        <h2>Admin Login</h2>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="login-pass" placeholder="Admin password">
+        </div>
+        <div id="login-msg"></div>
+        <div class="form-actions"><button id="login-btn" class="btn-primary">Login</button></div>
+      </div>
+    `;
+
+    const doLogin = async () => {
+      const pass = document.getElementById('login-pass').value;
+      try {
+        const result = await apiAuth('POST', '/auth', { password: pass });
+        authToken = result.token;
+        renderSettings();
+      } catch (err) {
+        document.getElementById('login-msg').innerHTML = `<div class="alert-banner red">Invalid password</div>`;
+      }
+    };
+
+    document.getElementById('login-btn').addEventListener('click', doLogin);
+    document.getElementById('login-pass').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doLogin();
+    });
+  }
+
   // --- Router ---
   async function route() {
     clearInterval(refreshTimer);
@@ -529,6 +641,8 @@
         await renderHosts();
       } else if (parts[0] === 'alerts') {
         await renderAlerts();
+      } else if (parts[0] === 'settings') {
+        await renderSettings();
       } else {
         await renderDashboard();
       }
@@ -536,9 +650,19 @@
       app.innerHTML = `<div class="empty">Error loading data: ${esc(err.message)}</div>`;
     }
 
-    // Auto-refresh
-    refreshTimer = setInterval(() => route(), 30000);
+    // Auto-refresh (not for settings page)
+    if (parts[0] !== 'settings') {
+      refreshTimer = setInterval(() => route(), 30000);
+    }
   }
+
+  // Check if auth is enabled to show/hide settings nav
+  api('/health').then(h => {
+    if (h.authEnabled) {
+      const navSettings = document.getElementById('nav-settings');
+      if (navSettings) navSettings.style.display = '';
+    }
+  }).catch(() => {});
 
   window.addEventListener('hashchange', route);
   route();
