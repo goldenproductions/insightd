@@ -50,4 +50,6 @@ async function collectResources(db, docker, containers) {
   }
 }
 
-module.exports = { collectResources };
+function _resetPrevStats() { prevStats.clear(); }
+
+module.exports = { collectResources, _resetPrevStats };

@@ -124,4 +124,4 @@ async function checkUpdates(db, docker) {
   logger.info('updates', `Checked ${checked} images, ${updatesFound} updates available`);
 }
 
-module.exports = { checkUpdates };
+module.exports = { checkUpdates, parseImage };
