@@ -15,34 +15,31 @@ No critical issues. Good week.
 
 ## Quick Start
 
-**1. Clone and configure**
+**Option A: Docker Hub (recommended)**
+
+```bash
+docker run -d \
+  --name insightd \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  -v /:/host:ro \
+  -v insightd-data:/data \
+  -e INSIGHTD_SMTP_HOST=smtp.gmail.com \
+  -e INSIGHTD_SMTP_USER=you@gmail.com \
+  -e INSIGHTD_SMTP_PASS=your-app-password \
+  -e INSIGHTD_DIGEST_TO=you@gmail.com \
+  -e TZ=UTC \
+  andreas404/insightd-hub:latest
+```
+
+**Option B: Clone and build**
 
 ```bash
 git clone https://github.com/goldenproductions/insightd.git
 cd insightd
-cp .env.example .env
-```
-
-Edit `.env` with your SMTP credentials and preferences.
-
-**2. Run with Docker Compose**
-
-```bash
+cp .env.example .env   # edit with your settings
 docker compose up -d
-```
-
-**Or with `docker run`:**
-
-```bash
-docker build -t insightd .
-docker run -d \
-  --name insightd \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock:ro \
-  -v /:/host:ro \
-  -v insightd-data:/data \
-  --env-file .env \
-  insightd
 ```
 
 That's it. Insightd will start collecting data immediately, serve the web UI at `http://localhost:3000`, and send your first digest on schedule.
