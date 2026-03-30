@@ -17,13 +17,15 @@ const MIME_TYPES = {
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
-function startWebServer(db, config) {
+function startWebServer(db, config, context) {
+  const ctx = context || {};
   const router = createRouter();
 
   router.add('GET', '/api/health', handlers.handleHealth);
   router.add('GET', '/api/hosts', handlers.handleHosts);
   router.add('GET', '/api/hosts/:hostId', handlers.handleHostDetail);
   router.add('GET', '/api/hosts/:hostId/metrics', handlers.handleHostMetrics);
+  router.add('GET', '/api/hosts/:hostId/containers/:containerName/logs', handlers.handleContainerLogs);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName', handlers.handleContainerDetail);
   router.add('GET', '/api/hosts/:hostId/containers', handlers.handleHostContainers);
   router.add('GET', '/api/hosts/:hostId/disk', handlers.handleHostDisk);
@@ -44,8 +46,17 @@ function startWebServer(db, config) {
         return;
       }
       try {
-        const result = match.handler(req, res, db, config, match.params);
-        res.end(JSON.stringify(result));
+        Promise.resolve(match.handler(req, res, db, config, match.params, ctx))
+          .then(data => {
+            if (!res.writableEnded) res.end(JSON.stringify(data));
+          })
+          .catch(err => {
+            logger.error('web', 'API error', err);
+            if (!res.writableEnded) {
+              res.statusCode = 500;
+              res.end(JSON.stringify({ error: 'Internal server error' }));
+            }
+          });
       } catch (err) {
         logger.error('web', 'API error', err);
         res.statusCode = 500;

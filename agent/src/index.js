@@ -24,7 +24,7 @@ async function main() {
 
   // Connect to MQTT
   try {
-    await connect(config);
+    await connect(config, docker);
   } catch (err) {
     logger.error('mqtt', 'Cannot connect to MQTT broker', err);
     process.exit(1);

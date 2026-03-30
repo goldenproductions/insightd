@@ -297,6 +297,72 @@ tr.clickable td { padding-top: 0.75rem; padding-bottom: 0.75rem; }
   margin-top: 0.25rem;
 }
 
+/* Log viewer */
+.log-controls {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+
+.log-controls select,
+.log-controls input {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.log-controls input[type="number"] {
+  width: 70px;
+}
+
+.log-controls button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.log-controls button:hover {
+  background: var(--bg);
+}
+
+.log-viewer {
+  background: #1a1a2e;
+  color: #e0e0e0;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.75rem;
+  border-radius: var(--radius);
+  overflow: auto;
+  max-height: 500px;
+  margin: 0;
+  white-space: pre;
+}
+
+.log-line {
+  padding: 1px 0;
+}
+
+.log-line.stderr {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.log-ts {
+  color: #6b7280;
+  margin-right: 0.5rem;
+}
+
 /* Auto-refresh indicator */
 .refresh-info {
   font-size: 0.75rem;

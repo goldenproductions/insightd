@@ -24,6 +24,10 @@ const config = Object.freeze({
 
   // Disk warn threshold (used for logging only on agent side)
   diskWarnPercent: parseInt(process.env.INSIGHTD_DISK_WARN_THRESHOLD || '85', 10),
+
+  // Log tailing
+  logLines: parseInt(process.env.INSIGHTD_LOG_LINES || '100', 10),
+  logMaxLines: parseInt(process.env.INSIGHTD_LOG_MAX_LINES || '1000', 10),
 });
 
 function validate() {

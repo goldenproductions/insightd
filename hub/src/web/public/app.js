@@ -447,6 +447,21 @@
       ${alertSection}
 
       <div class="card">
+        <h2>Logs</h2>
+        <div class="log-controls">
+          <select id="log-stream">
+            <option value="both">All streams</option>
+            <option value="stdout">stdout</option>
+            <option value="stderr">stderr</option>
+          </select>
+          <input id="log-lines" type="number" value="100" min="1" max="1000" title="Lines">
+          <button id="log-load">Load Logs</button>
+          <button id="log-refresh" style="display:none">Refresh</button>
+        </div>
+        <div id="log-output"></div>
+      </div>
+
+      <div class="card">
         <h2>History (${history.length} snapshots)</h2>
         ${historyRows ? tableWrap(`<table>
           <thead><tr><th>Time</th><th>Status</th><th>CPU</th><th>Memory</th><th>Restarts</th></tr></thead>
@@ -456,6 +471,41 @@
 
       <div class="refresh-info">Auto-refreshes every 30s</div>
     `;
+
+    // Wire up log buttons
+    const logLoad = document.getElementById('log-load');
+    const logRefresh = document.getElementById('log-refresh');
+    const logOutput = document.getElementById('log-output');
+
+    async function loadLogs() {
+      const stream = document.getElementById('log-stream').value;
+      const lines = document.getElementById('log-lines').value || '100';
+      logOutput.innerHTML = '<div class="empty">Loading logs...</div>';
+      logLoad.disabled = true;
+      try {
+        const result = await api(`/hosts/${encodeURIComponent(hostId)}/containers/${encodeURIComponent(containerName)}/logs?lines=${lines}&stream=${stream}`);
+        if (result.error) {
+          logOutput.innerHTML = `<div class="empty">${esc(result.error)}</div>`;
+        } else if (!result.logs || result.logs.length === 0) {
+          logOutput.innerHTML = '<div class="empty">No logs available</div>';
+        } else {
+          const html = result.logs.map(l => {
+            const ts = l.timestamp ? `<span class="log-ts">${esc(l.timestamp.slice(11, 23))}</span> ` : '';
+            const cls = l.stream === 'stderr' ? ' stderr' : '';
+            return `<div class="log-line${cls}">${ts}${esc(l.message)}</div>`;
+          }).join('');
+          logOutput.innerHTML = `<pre class="log-viewer">${html}</pre>`;
+          logOutput.querySelector('.log-viewer').scrollTop = logOutput.querySelector('.log-viewer').scrollHeight;
+        }
+        logRefresh.style.display = '';
+      } catch (err) {
+        logOutput.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+      }
+      logLoad.disabled = false;
+    }
+
+    logLoad.addEventListener('click', loadLogs);
+    logRefresh.addEventListener('click', loadLogs);
   }
 
   // --- Router ---

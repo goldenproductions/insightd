@@ -202,4 +202,13 @@ function getContainerAlerts(db, hostId, containerName) {
   `).all(hostId, containerName);
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory };
+function getContainerId(db, hostId, containerName) {
+  const row = db.prepare(`
+    SELECT container_id FROM container_snapshots
+    WHERE host_id = ? AND container_name = ?
+    ORDER BY collected_at DESC LIMIT 1
+  `).get(hostId, containerName);
+  return row?.container_id || null;
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId };
