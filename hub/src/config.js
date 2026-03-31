@@ -1,6 +1,6 @@
 const path = require('path');
 
-const VERSION = '0.1.1';
+const VERSION = process.env.INSIGHTD_VERSION || '0.2.0';
 
 const config = Object.freeze({
   // Data storage

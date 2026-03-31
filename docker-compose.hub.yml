@@ -5,6 +5,8 @@ services:
     image: eclipse-mosquitto:2
     container_name: insightd-mqtt
     restart: unless-stopped
+    labels:
+      insightd.internal: "true"
     volumes:
       - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - ./mosquitto-passwd:/mosquitto/config/passwd:ro
@@ -19,6 +21,8 @@ services:
     image: insightd-hub:latest
     container_name: insightd-hub
     restart: unless-stopped
+    labels:
+      insightd.internal: "true"
     depends_on:
       - mosquitto
     ports:
@@ -37,6 +41,8 @@ services:
     image: insightd-agent:latest
     container_name: insightd-agent
     restart: unless-stopped
+    labels:
+      insightd.internal: "true"
     depends_on:
       - mosquitto
     volumes:

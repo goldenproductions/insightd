@@ -105,6 +105,7 @@ export interface ContainerSnapshot {
   blkio_read_bytes: number | null;
   blkio_write_bytes: number | null;
   health_status: string | null;
+  labels: string | null;
   collected_at: string;
 }
 
