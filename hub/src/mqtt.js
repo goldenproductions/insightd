@@ -229,11 +229,21 @@ function requestAgentUpdate(hostId, target, image) {
 
     const topic = `insightd/${hostId}/update/request`;
     const payload = JSON.stringify({ requestId, target, image });
+    logger.info('mqtt', `Publishing update request to ${topic}: target=${target}, image=${image}`);
+    if (!client || !client.connected) {
+      clearTimeout(timer);
+      pendingUpdateRequests.delete(requestId);
+      reject(new Error('MQTT client not connected'));
+      return;
+    }
     client.publish(topic, payload, { qos: 1 }, (err) => {
       if (err) {
+        logger.error('mqtt', `Failed to publish update request: ${err.message}`);
         clearTimeout(timer);
         pendingUpdateRequests.delete(requestId);
         reject(err);
+      } else {
+        logger.info('mqtt', `Update request published to ${topic}`);
       }
     });
   });
