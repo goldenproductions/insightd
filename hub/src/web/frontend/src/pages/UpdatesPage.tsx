@@ -31,7 +31,7 @@ export function UpdatesPage() {
     mutationFn: async (hostId: string) => {
       setResults(prev => ({ ...prev, [hostId]: { status: 'updating' } }));
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000);
+      const timeout = setTimeout(() => controller.abort(), 120000);
       try {
         const res = await fetch(`/api/update/agent/${encodeURIComponent(hostId)}`, {
           method: 'POST', signal: controller.signal,
@@ -41,7 +41,7 @@ export function UpdatesPage() {
         return await res.json() as { status: string; message?: string; error?: string };
       } catch {
         clearTimeout(timeout);
-        return { status: 'failed', error: 'Timed out — agent may not support remote updates (needs v0.2.0+)' };
+        return { status: 'failed', error: 'Timed out — image pull may be slow, or agent doesn\'t support remote updates (needs v0.2.0+)' };
       }
     },
     onSuccess: (data, hostId) => setResults(prev => ({ ...prev, [hostId]: data })),
