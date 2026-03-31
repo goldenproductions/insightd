@@ -4,11 +4,14 @@ import { api } from '@/lib/api';
 import type { ServiceGroupSummary } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/Badge';
+import { useShowInternal } from '@/lib/useShowInternal';
 
 export function ServicesPage() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { data: groups } = useQuery({ queryKey: ['groups'], queryFn: () => api<ServiceGroupSummary[]>('/groups') });
+  const { showInternal } = useShowInternal();
+  const si = showInternal ? '?showInternal=true' : '';
+  const { data: groups } = useQuery({ queryKey: ['groups', showInternal], queryFn: () => api<ServiceGroupSummary[]>(`/groups${si}`) });
 
   return (
     <div className="space-y-6">

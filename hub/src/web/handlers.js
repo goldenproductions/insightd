@@ -405,7 +405,9 @@ async function handleTestWebhookUnsaved(req, res, db) {
 const groupQueries = require('./group-queries');
 
 function handleGetGroups(req, res, db) {
-  return groupQueries.getGroups(db);
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const showInternal = url.searchParams.get('showInternal') === 'true';
+  return groupQueries.getGroups(db, showInternal);
 }
 
 async function handleCreateGroup(req, res, db) {

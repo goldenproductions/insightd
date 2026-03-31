@@ -172,7 +172,7 @@ function getDashboard(db, onlineThresholdMinutes, showInternal = false) {
   let groups = [];
   try {
     const groupQueries = require('./group-queries');
-    groups = groupQueries.getGroups(db);
+    groups = groupQueries.getGroups(db, showInternal);
   } catch { /* group queries not available */ }
 
   return {

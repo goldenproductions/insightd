@@ -2,8 +2,8 @@
  * Database queries for service groups.
  */
 
-function getGroups(db) {
-  return db.prepare(`
+function getGroups(db, showInternal = false) {
+  const groups = db.prepare(`
     SELECT sg.*,
       COUNT(sgm.id) as member_count,
       SUM(CASE WHEN cs.status = 'running' THEN 1 ELSE 0 END) as running_count,
@@ -12,13 +12,32 @@ function getGroups(db) {
     FROM service_groups sg
     LEFT JOIN service_group_members sgm ON sg.id = sgm.group_id
     LEFT JOIN (
-      SELECT host_id, container_name, status, cpu_percent, memory_mb,
+      SELECT host_id, container_name, status, cpu_percent, memory_mb, labels,
         ROW_NUMBER() OVER (PARTITION BY host_id, container_name ORDER BY collected_at DESC) as rn
       FROM container_snapshots
     ) cs ON cs.host_id = sgm.host_id AND cs.container_name = sgm.container_name AND cs.rn = 1
     GROUP BY sg.id
     ORDER BY sg.name
   `).all();
+  if (showInternal) return groups;
+  // Hide groups where ALL members are internal (e.g. the "insightd" compose group)
+  return groups.filter(g => {
+    const members = db.prepare(`
+      SELECT cs.labels FROM service_group_members sgm
+      LEFT JOIN (
+        SELECT host_id, container_name, labels,
+          ROW_NUMBER() OVER (PARTITION BY host_id, container_name ORDER BY collected_at DESC) as rn
+        FROM container_snapshots
+      ) cs ON cs.host_id = sgm.host_id AND cs.container_name = sgm.container_name AND cs.rn = 1
+      WHERE sgm.group_id = ?
+    `).all(g.id);
+    if (members.length === 0) return true;
+    const allInternal = members.every(m => {
+      if (!m.labels) return false;
+      try { return JSON.parse(m.labels)['insightd.internal'] === 'true'; } catch { return false; }
+    });
+    return !allInternal;
+  });
 }
 
 function getGroup(db, id) {
