@@ -121,6 +121,10 @@
           <div class="value">${data.updatesAvailable}</div>
           <div class="label">Updates Available</div>
         </div>
+        ${data.endpointsTotal > 0 ? `<div class="stat">
+          <div class="value" style="color:${data.endpointsDown > 0 ? 'var(--red)' : 'var(--green)'}">${data.endpointsUp}<span style="font-size:0.9rem;color:var(--text-muted)">/${data.endpointsTotal}</span></div>
+          <div class="label">Endpoints Up</div>
+        </div>` : ''}
       </div>
 
       <div class="card">
@@ -622,6 +626,249 @@
     logRefresh.addEventListener('click', loadLogs);
   }
 
+  // --- Endpoints ---
+  async function renderEndpoints() {
+    const endpoints = await api('/endpoints');
+
+    let addBtn = '';
+    if (authToken) {
+      addBtn = '<a href="#/endpoints/new" class="btn-primary" style="float:right;text-decoration:none;margin-top:-0.5rem">Add Endpoint</a>';
+    }
+
+    if (endpoints.length === 0) {
+      app.innerHTML = `
+        <div class="section-title">Endpoints ${addBtn}</div>
+        <div class="empty">No endpoints configured. ${authToken ? '<a href="#/endpoints/new">Add one</a>.' : 'Log in to add endpoints.'}</div>
+      `;
+      return;
+    }
+
+    let rows = '';
+    for (const ep of endpoints) {
+      const isUp = ep.lastCheck ? ep.lastCheck.is_up : null;
+      const statusClass = isUp === null ? 'none' : isUp ? 'running' : 'exited';
+      const uptime = ep.uptimePercent24h != null ? ep.uptimePercent24h + '%' : '-';
+      const avgMs = ep.avgResponseMs != null ? ep.avgResponseMs + 'ms' : '-';
+      const lastChecked = ep.lastCheck ? timeAgo(ep.lastCheck.checked_at) : 'never';
+      rows += `<tr style="cursor:pointer" onclick="location.hash='#/endpoints/${ep.id}'">
+        <td>${statusDot(statusClass)} ${esc(ep.name)}</td>
+        <td class="url-cell">${esc(ep.url)}</td>
+        <td>${uptime}</td>
+        <td>${avgMs}</td>
+        <td>${lastChecked}</td>
+        <td>${ep.enabled ? badge('on', 'green') : badge('off', 'red')}</td>
+      </tr>`;
+    }
+
+    app.innerHTML = `
+      <div class="section-title">Endpoints ${addBtn}</div>
+      <div class="card">
+        ${tableWrap(`<table>
+          <thead><tr><th>Name</th><th>URL</th><th>Uptime (24h)</th><th>Avg Response</th><th>Last Check</th><th>Status</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`)}
+      </div>
+      <div class="refresh-info">Auto-refreshes every 30s</div>
+    `;
+  }
+
+  async function renderEndpointDetail(id) {
+    const data = await api(`/endpoints/${id}`);
+    if (data.error) {
+      app.innerHTML = `<a class="back" href="#/endpoints">&larr; Back</a><div class="empty">Endpoint not found</div>`;
+      return;
+    }
+
+    const checks = await api(`/endpoints/${id}/checks?hours=24`);
+
+    const isUp = data.lastCheck ? data.lastCheck.is_up : null;
+    const statusClass = isUp === null ? 'none' : isUp ? 'running' : 'exited';
+    const statusText = isUp === null ? 'No data' : isUp ? 'Up' : 'Down';
+
+    // Response time chart
+    let rtChart = '';
+    const rtValues = checks.filter(c => c.response_time_ms != null).reverse().map(c => c.response_time_ms);
+    if (rtValues.length > 1) {
+      const maxVal = Math.max(...rtValues, 1);
+      const barCount = Math.min(rtValues.length, 60);
+      const step = Math.max(1, Math.floor(rtValues.length / barCount));
+      const sampled = [];
+      for (let i = 0; i < rtValues.length; i += step) sampled.push(rtValues[i]);
+      rtChart = `<div class="card"><h2>Response Time (last 24h)</h2><div class="chart">${
+        sampled.map(v => {
+          const h = Math.max(2, Math.round((v / maxVal) * 40));
+          const color = v > 2000 ? 'var(--red)' : v > 500 ? 'var(--yellow)' : 'var(--green)';
+          return `<span class="chart-bar" style="height:${h}px;background:${color}" title="${v}ms"></span>`;
+        }).join('')
+      }</div><div class="chart-label"><span>0ms</span><span>${maxVal}ms</span></div></div>`;
+    }
+
+    // Check history table
+    let historyRows = '';
+    for (const c of checks.slice(0, 50)) {
+      const dot = c.is_up ? statusDot('running') : statusDot('exited');
+      historyRows += `<tr>
+        <td>${timeAgo(c.checked_at)}</td>
+        <td>${dot} ${c.status_code || '-'}</td>
+        <td>${c.response_time_ms != null ? c.response_time_ms + 'ms' : '-'}</td>
+        <td>${c.error ? esc(c.error) : '-'}</td>
+      </tr>`;
+    }
+
+    let editBtn = '';
+    if (authToken) {
+      editBtn = `<a href="#/endpoints/${id}/edit" class="btn-primary" style="text-decoration:none;margin-left:1rem">Edit</a>`;
+    }
+
+    app.innerHTML = `
+      <a class="back" href="#/endpoints">&larr; Back to Endpoints</a>
+      <div class="section-title">${statusDot(statusClass)} ${esc(data.name)} ${editBtn}</div>
+      <div style="color:var(--text-muted);margin-bottom:1rem">${esc(data.url)} &middot; ${esc(data.method)} &middot; Expects ${data.expected_status} &middot; Every ${data.interval_seconds}s</div>
+
+      <div class="stats">
+        <div class="stat">
+          <div class="value" style="color:${isUp ? 'var(--green)' : 'var(--red)'}">${statusText}</div>
+          <div class="label">Current</div>
+        </div>
+        <div class="stat">
+          <div class="value">${data.uptimePercent24h != null ? data.uptimePercent24h + '%' : '-'}</div>
+          <div class="label">Uptime (24h)</div>
+        </div>
+        <div class="stat">
+          <div class="value">${data.uptimePercent7d != null ? data.uptimePercent7d + '%' : '-'}</div>
+          <div class="label">Uptime (7d)</div>
+        </div>
+        <div class="stat">
+          <div class="value">${data.avgResponseMs != null ? data.avgResponseMs + 'ms' : '-'}</div>
+          <div class="label">Avg Response (24h)</div>
+        </div>
+        <div class="stat">
+          <div class="value">${data.lastCheck ? (data.lastCheck.response_time_ms || '-') + 'ms' : '-'}</div>
+          <div class="label">Last Response</div>
+        </div>
+      </div>
+
+      ${rtChart}
+
+      <div class="card">
+        <h2>Check History (${checks.length} checks)</h2>
+        ${historyRows ? tableWrap(`<table>
+          <thead><tr><th>Time</th><th>Status</th><th>Response</th><th>Error</th></tr></thead>
+          <tbody>${historyRows}</tbody>
+        </table>`) : '<div class="empty">No checks yet</div>'}
+      </div>
+
+      <div class="refresh-info">Auto-refreshes every 30s</div>
+    `;
+  }
+
+  async function renderEndpointForm(id) {
+    if (!authToken) {
+      renderLogin();
+      return;
+    }
+
+    let existing = null;
+    if (id) {
+      existing = await api(`/endpoints/${id}`);
+      if (existing.error) {
+        app.innerHTML = `<a class="back" href="#/endpoints">&larr; Back</a><div class="empty">Endpoint not found</div>`;
+        return;
+      }
+    }
+
+    const title = existing ? 'Edit Endpoint' : 'Add Endpoint';
+    const backHref = existing ? `#/endpoints/${id}` : '#/endpoints';
+
+    app.innerHTML = `
+      <a class="back" href="${backHref}">&larr; Back</a>
+      <div class="section-title">${title}</div>
+      <div class="card" style="max-width:600px">
+        <div class="form-group">
+          <label>Name</label>
+          <input type="text" id="ep-name" value="${esc(existing ? existing.name : '')}" placeholder="e.g. My API Health Check" maxlength="100">
+        </div>
+        <div class="form-group">
+          <label>URL</label>
+          <input type="text" id="ep-url" value="${esc(existing ? existing.url : '')}" placeholder="https://api.example.com/health">
+        </div>
+        <div class="form-group">
+          <label>Method</label>
+          <select id="ep-method">
+            <option value="GET"${!existing || existing.method === 'GET' ? ' selected' : ''}>GET</option>
+            <option value="HEAD"${existing && existing.method === 'HEAD' ? ' selected' : ''}>HEAD</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Expected Status Code</label>
+          <input type="number" id="ep-status" value="${existing ? existing.expected_status : 200}" min="100" max="599">
+        </div>
+        <div class="form-group">
+          <label>Check Interval (seconds)</label>
+          <input type="number" id="ep-interval" value="${existing ? existing.interval_seconds : 60}" min="10" max="3600">
+        </div>
+        <div class="form-group">
+          <label>Timeout (ms)</label>
+          <input type="number" id="ep-timeout" value="${existing ? existing.timeout_ms : 10000}" min="1000" max="30000">
+        </div>
+        <div class="form-group">
+          <label>Custom Headers (JSON, optional)</label>
+          <input type="text" id="ep-headers" value="${esc(existing && existing.headers ? existing.headers : '')}" placeholder='{"Authorization":"Bearer ..."}'>
+        </div>
+        <div class="form-group">
+          <label>Enabled</label>
+          <select id="ep-enabled">
+            <option value="1"${!existing || existing.enabled ? ' selected' : ''}>Yes</option>
+            <option value="0"${existing && !existing.enabled ? ' selected' : ''}>No</option>
+          </select>
+        </div>
+        <div id="ep-msg"></div>
+        <div class="form-actions">
+          <button id="ep-save" class="btn-primary">${existing ? 'Update' : 'Create'}</button>
+          ${existing ? '<button id="ep-delete" class="btn-danger">Delete</button>' : ''}
+        </div>
+      </div>
+    `;
+
+    document.getElementById('ep-save').addEventListener('click', async () => {
+      const body = {
+        name: document.getElementById('ep-name').value,
+        url: document.getElementById('ep-url').value,
+        method: document.getElementById('ep-method').value,
+        expectedStatus: parseInt(document.getElementById('ep-status').value, 10),
+        intervalSeconds: parseInt(document.getElementById('ep-interval').value, 10),
+        timeoutMs: parseInt(document.getElementById('ep-timeout').value, 10),
+        headers: document.getElementById('ep-headers').value || null,
+        enabled: document.getElementById('ep-enabled').value === '1',
+      };
+      const msgEl = document.getElementById('ep-msg');
+      try {
+        if (existing) {
+          await apiAuth('PUT', `/endpoints/${id}`, body);
+          msgEl.innerHTML = '<div class="alert-banner green">Endpoint updated.</div>';
+        } else {
+          const result = await apiAuth('POST', '/endpoints', body);
+          msgEl.innerHTML = '<div class="alert-banner green">Endpoint created.</div>';
+          setTimeout(() => { location.hash = `#/endpoints/${result.id}`; }, 500);
+        }
+      } catch (err) {
+        msgEl.innerHTML = `<div class="alert-banner red">${esc(err.message)}</div>`;
+      }
+    });
+
+    if (existing) {
+      document.getElementById('ep-delete').addEventListener('click', async () => {
+        if (!confirm('Delete this endpoint and all its check history?')) return;
+        try {
+          await apiAuth('DELETE', `/endpoints/${id}`);
+          location.hash = '#/endpoints';
+        } catch (err) {
+          document.getElementById('ep-msg').innerHTML = `<div class="alert-banner red">${esc(err.message)}</div>`;
+        }
+      });
+    }
+  }
+
   // --- Settings ---
   async function renderSettings() {
     if (!authToken) {
@@ -823,6 +1070,14 @@
         await renderHosts();
       } else if (parts[0] === 'alerts') {
         await renderAlerts();
+      } else if (parts[0] === 'endpoints' && parts[1] === 'new') {
+        await renderEndpointForm(null);
+      } else if (parts[0] === 'endpoints' && parts[1] && parts[2] === 'edit') {
+        await renderEndpointForm(parts[1]);
+      } else if (parts[0] === 'endpoints' && parts[1]) {
+        await renderEndpointDetail(parts[1]);
+      } else if (parts[0] === 'endpoints') {
+        await renderEndpoints();
       } else if (parts[0] === 'add-agent') {
         await renderAddAgent();
       } else if (parts[0] === 'settings') {

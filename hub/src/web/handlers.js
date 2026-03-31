@@ -189,4 +189,113 @@ function handleEvents(req, res, db, config, params) {
   return queries.getEvents(db, params.hostId, days);
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents };
+// --- HTTP Endpoint Monitoring ---
+
+const endpointQueries = require('../http-monitor/queries');
+
+function validateEndpointBody(body) {
+  const errors = [];
+  if (!body.name || typeof body.name !== 'string' || body.name.length > 100) {
+    errors.push('name is required (max 100 characters)');
+  }
+  if (!body.url || typeof body.url !== 'string' || !/^https?:\/\//.test(body.url)) {
+    errors.push('url is required and must start with http:// or https://');
+  }
+  if (body.method && !['GET', 'HEAD'].includes(body.method)) {
+    errors.push('method must be GET or HEAD');
+  }
+  if (body.expectedStatus !== undefined) {
+    const s = parseInt(body.expectedStatus, 10);
+    if (isNaN(s) || s < 100 || s > 599) errors.push('expectedStatus must be 100-599');
+  }
+  if (body.intervalSeconds !== undefined) {
+    const i = parseInt(body.intervalSeconds, 10);
+    if (isNaN(i) || i < 10 || i > 3600) errors.push('intervalSeconds must be 10-3600');
+  }
+  if (body.timeoutMs !== undefined) {
+    const t = parseInt(body.timeoutMs, 10);
+    if (isNaN(t) || t < 1000 || t > 30000) errors.push('timeoutMs must be 1000-30000');
+  }
+  if (body.headers !== undefined && body.headers !== null && body.headers !== '') {
+    try { JSON.parse(body.headers); } catch { errors.push('headers must be valid JSON'); }
+  }
+  return errors;
+}
+
+function handleGetEndpoints(req, res, db) {
+  return endpointQueries.getEndpointsSummary(db);
+}
+
+async function handleCreateEndpoint(req, res, db) {
+  if (!requireAuth(req)) {
+    res.statusCode = 401;
+    return { error: 'Unauthorized' };
+  }
+  const body = await readBody(req);
+  const errors = validateEndpointBody(body);
+  if (errors.length > 0) {
+    res.statusCode = 400;
+    return { error: errors.join('; ') };
+  }
+  const result = endpointQueries.createEndpoint(db, body);
+  res.statusCode = 201;
+  return result;
+}
+
+function handleGetEndpoint(req, res, db, config, params) {
+  const endpoint = endpointQueries.getEndpoint(db, parseInt(params.endpointId, 10));
+  if (!endpoint) {
+    res.statusCode = 404;
+    return { error: 'Endpoint not found' };
+  }
+  const summary = endpointQueries.getEndpointSummary(db, endpoint.id);
+  return { ...endpoint, ...summary };
+}
+
+async function handleUpdateEndpoint(req, res, db, config, params) {
+  if (!requireAuth(req)) {
+    res.statusCode = 401;
+    return { error: 'Unauthorized' };
+  }
+  const id = parseInt(params.endpointId, 10);
+  const existing = endpointQueries.getEndpoint(db, id);
+  if (!existing) {
+    res.statusCode = 404;
+    return { error: 'Endpoint not found' };
+  }
+  const body = await readBody(req);
+  const errors = validateEndpointBody({ ...existing, name: existing.name, url: existing.url, ...body });
+  if (errors.length > 0) {
+    res.statusCode = 400;
+    return { error: errors.join('; ') };
+  }
+  return endpointQueries.updateEndpoint(db, id, body);
+}
+
+async function handleDeleteEndpoint(req, res, db, config, params) {
+  if (!requireAuth(req)) {
+    res.statusCode = 401;
+    return { error: 'Unauthorized' };
+  }
+  const id = parseInt(params.endpointId, 10);
+  const result = endpointQueries.deleteEndpoint(db, id);
+  if (!result.deleted) {
+    res.statusCode = 404;
+    return { error: 'Endpoint not found' };
+  }
+  return result;
+}
+
+function handleEndpointChecks(req, res, db, config, params) {
+  const id = parseInt(params.endpointId, 10);
+  const endpoint = endpointQueries.getEndpoint(db, id);
+  if (!endpoint) {
+    res.statusCode = 404;
+    return { error: 'Endpoint not found' };
+  }
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
+  return endpointQueries.getChecks(db, id, hours);
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks };

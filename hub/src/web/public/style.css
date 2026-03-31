@@ -680,3 +680,8 @@ tr.clickable td { padding-top: 0.75rem; padding-bottom: 0.75rem; }
   .timeline-name { width: 80px; font-size: 0.7rem; }
   .timeline-slot { height: 10px; }
 }
+
+/* Endpoint URL cell */
+.url-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); font-size: 0.85rem; }
+.btn-danger { background: var(--red); color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; }
+.btn-danger:hover { opacity: 0.9; }

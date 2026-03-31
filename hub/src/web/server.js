@@ -40,6 +40,12 @@ function startWebServer(db, config, context) {
   router.add('POST', '/api/auth', handlers.handleLogin);
   router.add('GET', '/api/settings', handlers.handleGetSettings);
   router.add('PUT', '/api/settings', handlers.handlePutSettings);
+  router.add('GET', '/api/endpoints', handlers.handleGetEndpoints);
+  router.add('POST', '/api/endpoints', handlers.handleCreateEndpoint);
+  router.add('GET', '/api/endpoints/:endpointId/checks', handlers.handleEndpointChecks);
+  router.add('GET', '/api/endpoints/:endpointId', handlers.handleGetEndpoint);
+  router.add('PUT', '/api/endpoints/:endpointId', handlers.handleUpdateEndpoint);
+  router.add('DELETE', '/api/endpoints/:endpointId', handlers.handleDeleteEndpoint);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);

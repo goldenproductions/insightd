@@ -58,6 +58,11 @@ function evaluateAlerts(db, config) {
     triggered.push(...checkDiskFull(db, alerts.diskPercent));
   }
 
+  // HTTP endpoints — hub-level checks
+  if (alerts.endpointDown !== false) {
+    triggered.push(...checkEndpointDown(db, alerts.endpointFailureThreshold || 3));
+  }
+
   // Check for resolutions of active alerts
   resolved.push(...checkResolutions(db, alerts));
 
@@ -231,6 +236,27 @@ function checkContainerUnhealthy(db, hostId) {
   }));
 }
 
+function checkEndpointDown(db, failureThreshold) {
+  const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
+  const endpoints = getEndpoints(db).filter(ep => ep.enabled);
+  const alerts = [];
+
+  for (const ep of endpoints) {
+    const checks = getLastNChecks(db, ep.id, failureThreshold);
+    if (checks.length < failureThreshold) continue;
+    if (checks.every(c => c.is_up === 0)) {
+      alerts.push({
+        type: 'endpoint_down',
+        hostId: 'hub',
+        target: ep.name,
+        message: `Endpoint "${ep.name}" (${ep.url}) is down (${failureThreshold} consecutive failures)`,
+        value: ep.url,
+      });
+    }
+  }
+  return alerts;
+}
+
 function checkResolutions(db, alertsConfig) {
   const resolved = [];
   const activeAlerts = db.prepare(
@@ -272,6 +298,13 @@ function checkResolutions(db, alertsConfig) {
     } else if (alert.alert_type === 'container_unhealthy') {
       const latest = db.prepare('SELECT health_status FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target);
       isResolved = latest && latest.health_status !== 'unhealthy';
+    } else if (alert.alert_type === 'endpoint_down') {
+      const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
+      const ep = getEndpoints(db).find(e => e.name === alert.target);
+      if (ep) {
+        const checks = getLastNChecks(db, ep.id, 1);
+        isResolved = checks.length > 0 && checks[0].is_up === 1;
+      }
     }
 
     if (isResolved) {
@@ -300,6 +333,7 @@ function getResolutionMessage(type, target, hostId) {
     case 'low_host_memory': return `Host${on} memory back to normal`;
     case 'high_load': return `Host${on} load back to normal`;
     case 'container_unhealthy': return `Container "${target}"${on} is healthy again`;
+    case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

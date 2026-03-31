@@ -33,6 +33,11 @@ function evaluateAlerts(db, config) {
     triggered.push(...checkDiskFull(db, alerts.diskPercent));
   }
 
+  // HTTP endpoints — hub-level checks
+  if (alerts.endpointDown !== false) {
+    triggered.push(...checkEndpointDown(db, alerts.endpointFailureThreshold || 3));
+  }
+
   // Check for resolutions of active alerts
   resolved.push(...checkResolutions(db, alerts));
 
@@ -155,6 +160,34 @@ function checkDiskFull(db, threshold) {
     }));
 }
 
+function checkEndpointDown(db, failureThreshold) {
+  let getEndpoints, getLastNChecks;
+  try {
+    const queries = require('../../hub/src/http-monitor/queries');
+    getEndpoints = queries.getEndpoints;
+    getLastNChecks = queries.getLastNChecks;
+  } catch {
+    return []; // http-monitor module not available in standalone mode without hub
+  }
+  const endpoints = getEndpoints(db).filter(ep => ep.enabled);
+  const alerts = [];
+
+  for (const ep of endpoints) {
+    const checks = getLastNChecks(db, ep.id, failureThreshold);
+    if (checks.length < failureThreshold) continue;
+    if (checks.every(c => c.is_up === 0)) {
+      alerts.push({
+        type: 'endpoint_down',
+        hostId: 'hub',
+        target: ep.name,
+        message: `Endpoint "${ep.name}" (${ep.url}) is down (${failureThreshold} consecutive failures)`,
+        value: ep.url,
+      });
+    }
+  }
+  return alerts;
+}
+
 function checkResolutions(db, alertsConfig) {
   const resolved = [];
   const activeAlerts = db.prepare(
@@ -184,6 +217,17 @@ function checkResolutions(db, alertsConfig) {
     } else if (alert.alert_type === 'disk_full') {
       const latest = db.prepare('SELECT used_percent FROM disk_snapshots WHERE host_id = ? AND mount_point = ? ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target);
       isResolved = latest && latest.used_percent <= alertsConfig.diskPercent;
+    } else if (alert.alert_type === 'endpoint_down') {
+      try {
+        const { getEndpoints, getLastNChecks } = require('../../hub/src/http-monitor/queries');
+        const ep = getEndpoints(db).find(e => e.name === alert.target);
+        if (ep) {
+          const checks = getLastNChecks(db, ep.id, 1);
+          isResolved = checks.length > 0 && checks[0].is_up === 1;
+        }
+      } catch {
+        // http-monitor module not available
+      }
     }
 
     if (isResolved) {
@@ -208,6 +252,7 @@ function getResolutionMessage(type, target, hostId) {
     case 'high_cpu': return `Container "${target}"${on} CPU back to normal`;
     case 'high_memory': return `Container "${target}"${on} memory back to normal`;
     case 'disk_full': return `Disk "${target}"${on} usage back to normal`;
+    case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

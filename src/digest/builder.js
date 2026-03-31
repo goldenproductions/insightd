@@ -107,12 +107,23 @@ function buildDigest(db, config) {
       AND has_update = 1
   `).all();
 
+  // --- HTTP endpoint stats ---
+  let endpoints = [];
+  try {
+    const { getEndpointsForDigest } = require('../../hub/src/http-monitor/queries');
+    endpoints = getEndpointsForDigest(db);
+  } catch {
+    // http-monitor module not available
+  }
+
   // --- Build summary ---
   const issues = [];
   if (containers.some(c => c.status === 'red')) issues.push('container downtime');
   if (totalRestarts > 0) issues.push(`${totalRestarts} restart${totalRestarts > 1 ? 's' : ''}`);
   if (diskWarnings.length > 0) issues.push('disk space warning');
   if (trends.length > 0) issues.push('resource changes');
+  const endpointsWithDowntime = endpoints.filter(e => e.uptimePercent != null && e.uptimePercent < 99);
+  if (endpointsWithDowntime.length > 0) issues.push(`${endpointsWithDowntime.length} endpoint${endpointsWithDowntime.length > 1 ? 's' : ''} had downtime`);
 
   const weekNumber = getWeekNumber(now);
   const summaryLine = issues.length === 0
@@ -135,6 +146,7 @@ function buildDigest(db, config) {
     diskWarnings,
     updatesAvailable: latestUpdates,
     hostCount: hostRows.length,
+    endpoints,
   };
 
   logger.info('digest', `Built digest for week ${weekNumber} (${hostRows.length} host${hostRows.length !== 1 ? 's' : ''}): ${summaryLine}`);
