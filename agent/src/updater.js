@@ -57,7 +57,7 @@ async function performUpdate(docker, target, image) {
   const createOpts = {
     name: oldName,
     Image: image,
-    Env: info.Config.Env,
+    Env: (info.Config.Env || []).filter(e => !e.startsWith('INSIGHTD_VERSION=')),
     Labels: { ...(info.Config.Labels || {}), 'insightd.updated-from': containerId.slice(0, 12) },
     HostConfig: {
       Binds: info.HostConfig.Binds,
