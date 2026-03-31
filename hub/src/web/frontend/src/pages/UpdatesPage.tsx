@@ -42,33 +42,6 @@ export function UpdatesPage() {
     },
   });
 
-  const [hubUpdating, setHubUpdating] = useState(false);
-
-  const updateHub = useMutation({
-    mutationFn: () => apiAuth<{ status: string; message?: string; error?: string }>('POST', '/update/hub', undefined, token),
-    onMutate: () => setHubUpdating(true),
-    onError: () => {
-      // Expected — hub goes down during update. Start polling for it to come back.
-      setHubUpdating(true);
-      const poll = setInterval(async () => {
-        try {
-          const res = await fetch('/api/health');
-          if (res.ok) {
-            clearInterval(poll);
-            window.location.reload();
-          }
-        } catch { /* hub still down */ }
-      }, 3000);
-      // Stop polling after 2 minutes
-      setTimeout(() => clearInterval(poll), 120000);
-    },
-    onSuccess: () => {
-      // Hub responded before going down — it will restart shortly
-      setHubUpdating(true);
-      setTimeout(() => window.location.reload(), 10000);
-    },
-  });
-
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Updates</h1>
@@ -98,20 +71,15 @@ export function UpdatesPage() {
       </Card>
 
       {/* Hub update */}
-      {isAuthenticated && version?.updateAvailable && (
+      {version?.updateAvailable && (
         <Card title="Hub">
-          {hubUpdating ? (
-            <AlertBanner message="Hub is updating and restarting. This page will reload automatically when it's back..." color="yellow" />
-          ) : (
-            <div className="flex items-center justify-between">
-              <span className="text-sm" style={{ color: 'var(--text)' }}>
-                Update hub to v{version.latestVersion}
-              </span>
-              <Button onClick={() => updateHub.mutate()} disabled={updateHub.isPending}>
-                {updateHub.isPending ? 'Updating...' : 'Update Hub'}
-              </Button>
-            </div>
-          )}
+          <p className="mb-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            The hub must be updated manually since it can't restart itself. Run on the hub host:
+          </p>
+          <pre className="overflow-x-auto rounded-lg p-3 text-sm" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+{`docker pull andreas404/insightd-hub:${version.latestVersion}
+docker compose up -d hub`}
+          </pre>
         </Card>
       )}
 
