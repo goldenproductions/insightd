@@ -518,15 +518,17 @@ async function handleUpdateHub(req, res, db, config, params, ctx) {
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   const { snoozeAlerts } = require('../alert-snooze');
   snoozeAlerts(10);
+  // Find the agent on the same host as the hub
+  const hubHostId = config.hostId || 'local';
   const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
-  if (hosts.length === 0) { res.statusCode = 400; return { error: 'No agents connected' }; }
+  const localAgent = hosts.find(h => h.host_id === hubHostId && h.is_online);
+  if (!localAgent) { res.statusCode = 400; return { error: `No online agent found on hub host (${hubHostId}). Ensure an agent is running on the same host.` }; }
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
   const tag = vi.latestVersion || vi.currentVersion;
   const image = `andreas404/insightd-hub:${tag}`;
   try {
-    // Send to first online agent — it will update the hub container on its host
-    const result = await ctx.requestUpdate(hosts[0].host_id, 'hub', image);
+    const result = await ctx.requestUpdate(localAgent.host_id, 'hub', image);
     return result;
   } catch (err) {
     res.statusCode = 504;
