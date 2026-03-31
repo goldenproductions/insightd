@@ -66,6 +66,11 @@ export function HostDetailPage() {
 
       {/* Containers */}
       <Card title="Containers">
+        <div className="mb-3 flex justify-end">
+          <Link to={`/hosts/${hid}/logs`} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600">
+            Split Logs
+          </Link>
+        </div>
         <DataTable
           columns={containerCols}
           data={data.containers}

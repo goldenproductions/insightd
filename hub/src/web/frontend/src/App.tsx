@@ -15,6 +15,7 @@ import { EndpointFormPage } from '@/pages/EndpointFormPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { AddAgentPage } from '@/pages/AddAgentPage';
+import { LogSplitPage } from '@/pages/LogSplitPage';
 
 export function App() {
   return (
@@ -27,6 +28,7 @@ export function App() {
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/hosts" element={<HostsPage />} />
                 <Route path="/hosts/:hostId" element={<HostDetailPage />} />
+                <Route path="/hosts/:hostId/logs" element={<LogSplitPage />} />
                 <Route path="/hosts/:hostId/containers/:containerName" element={<ContainerDetailPage />} />
                 <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/endpoints" element={<EndpointsPage />} />
