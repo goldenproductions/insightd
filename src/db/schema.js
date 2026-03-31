@@ -1,6 +1,6 @@
 const logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 function bootstrap(db) {
   db.exec(`
@@ -162,6 +162,54 @@ function bootstrap(db) {
     CREATE INDEX IF NOT EXISTS idx_group_members_container
       ON service_group_members (host_id, container_name);
 
+    CREATE TABLE IF NOT EXISTS baselines (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type  TEXT NOT NULL,
+      entity_id    TEXT NOT NULL,
+      metric       TEXT NOT NULL,
+      time_bucket  TEXT NOT NULL,
+      p50          REAL,
+      p75          REAL,
+      p90          REAL,
+      p95          REAL,
+      p99          REAL,
+      min_val      REAL,
+      max_val      REAL,
+      sample_count INTEGER NOT NULL DEFAULT 0,
+      computed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(entity_type, entity_id, metric, time_bucket)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_baselines_entity
+      ON baselines (entity_type, entity_id);
+
+    CREATE TABLE IF NOT EXISTS health_scores (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type  TEXT NOT NULL,
+      entity_id    TEXT NOT NULL,
+      score        INTEGER NOT NULL,
+      factors      TEXT NOT NULL,
+      computed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(entity_type, entity_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS insights (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type   TEXT NOT NULL,
+      entity_id     TEXT NOT NULL,
+      category      TEXT NOT NULL,
+      severity      TEXT NOT NULL,
+      title         TEXT NOT NULL,
+      message       TEXT NOT NULL,
+      metric        TEXT,
+      current_value REAL,
+      baseline_value REAL,
+      computed_at   TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_insights_entity
+      ON insights (entity_type, entity_id);
+
     CREATE TABLE IF NOT EXISTS webhooks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL,
@@ -255,6 +303,9 @@ function migrate(db, fromVersion) {
     for (const col of newCols) {
       try { db.exec(`ALTER TABLE host_snapshots ADD COLUMN ${col}`); } catch { /* already exists */ }
     }
+  }
+  if (fromVersion < 10) {
+    // baselines, health_scores, insights tables created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 

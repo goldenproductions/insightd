@@ -23,6 +23,8 @@ export interface DashboardData {
   endpointsUp: number;
   endpointsDown: number;
   groups: ServiceGroupSummary[];
+  systemHealthScore: { score: number; factors: Record<string, unknown>; computedAt: string } | null;
+  topInsights: { entity_type: string; entity_id: string; category: string; severity: string; title: string; message: string }[];
 }
 
 export interface RankingItem {

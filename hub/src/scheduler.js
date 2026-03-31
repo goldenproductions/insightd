@@ -48,6 +48,24 @@ function startHubScheduler(db, config) {
     await safeCollect('http-checks', () => runChecks(db));
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'HTTP endpoint checks scheduled: every minute');
+
+  // Schedule insights engine — hourly baseline computation + health scores
+  scheduledTasks.push(cron.schedule('0 * * * *', async () => {
+    logger.info('scheduler', 'Computing insights...');
+    await safeCollect('baselines', () => {
+      const { computeBaselines } = require('./insights/baselines');
+      computeBaselines(db);
+    });
+    await safeCollect('health-scores', () => {
+      const { computeHealthScores } = require('./insights/health');
+      computeHealthScores(db);
+    });
+    await safeCollect('insights', () => {
+      const { generateInsights } = require('./insights/detector');
+      generateInsights(db);
+    });
+  }, { timezone: config.timezone }));
+  logger.info('scheduler', 'Insights engine scheduled: hourly');
 }
 
 /**

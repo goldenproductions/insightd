@@ -5,6 +5,8 @@ import type { DashboardData, Rankings } from '@/types/api';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
 import { RankingList } from '@/components/RankingList';
+import { HealthBadge } from '@/components/HealthBadge';
+import { InsightsFeed } from '@/components/InsightsFeed';
 
 export function DashboardPage() {
   const { data } = useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardData>('/dashboard') });
@@ -14,7 +16,10 @@ export function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Dashboard</h1>
+      <div className="flex items-center gap-4">
+        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Dashboard</h1>
+        {data.systemHealthScore && <HealthBadge score={data.systemHealthScore.score} size="md" />}
+      </div>
 
       <StatsGrid>
         <StatCard value={`${data.hostsOnline}/${data.hostCount}`} label="Hosts Online" color={data.hostsOffline > 0 ? 'var(--color-danger)' : 'var(--color-success)'} />
@@ -42,6 +47,12 @@ export function DashboardPage() {
               </Link>
             ))}
           </div>
+        </Card>
+      )}
+
+      {data.topInsights && data.topInsights.length > 0 && (
+        <Card title="Insights">
+          <InsightsFeed insights={data.topInsights as { entity_type: string; entity_id: string; category: string; severity: 'info' | 'warning' | 'critical'; title: string; message: string }[]} />
         </Card>
       )}
 

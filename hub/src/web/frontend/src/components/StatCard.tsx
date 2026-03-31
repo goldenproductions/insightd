@@ -1,3 +1,6 @@
+import type { MetricRating } from '@/lib/ratings';
+import { ratingColors } from '@/lib/ratings';
+
 export function StatsGrid({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
@@ -6,14 +9,19 @@ export function StatsGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function StatCard({ value, label, color }: { value: React.ReactNode; label: string; color?: string }) {
+export function StatCard({ value, label, color, rating }: { value: React.ReactNode; label: string; color?: string; rating?: MetricRating | null }) {
   return (
     <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-      <div className="text-2xl font-bold" style={{ color: color || 'var(--text)' }}>
+      <div className="text-2xl font-bold" style={{ color: color || (rating ? ratingColors[rating.rating] : undefined) || 'var(--text)' }}>
         {value}
       </div>
-      <div className="mt-0.5 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
-        {label}
+      <div className="mt-0.5 flex items-center gap-2">
+        <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        {rating && (
+          <span className="rounded-full px-1.5 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${ratingColors[rating.rating]}20`, color: ratingColors[rating.rating] }}>
+            {rating.label} {rating.rating}
+          </span>
+        )}
       </div>
     </div>
   );
