@@ -2,7 +2,9 @@ const logger = require('../../shared/utils/logger');
 const { config } = require('./config');
 
 /**
- * Perform a container self-update: pull new image, recreate with same config.
+ * Perform a container update: pull new image, recreate with same config.
+ * For self-updates (target=agent): the old container is left stopped —
+ * cleanup happens on next agent startup via cleanupOldContainers().
  */
 async function performUpdate(docker, target, image) {
   if (!config.allowUpdates) {
@@ -13,7 +15,6 @@ async function performUpdate(docker, target, image) {
     throw new Error(`Invalid image: ${image}. Only andreas404/insightd-* images allowed.`);
   }
 
-  // Determine which container to update
   let containerId;
   if (target === 'agent') {
     containerId = process.env.HOSTNAME;
@@ -29,12 +30,11 @@ async function performUpdate(docker, target, image) {
 
   logger.info('updater', `Updating ${target} container ${containerId.slice(0, 12)} to ${image}`);
 
-  // 1. Inspect current container to capture config
   const container = docker.getContainer(containerId);
   const info = await container.inspect();
   const oldName = info.Name.replace(/^\//, '');
 
-  // 2. Pull new image
+  // 1. Pull new image
   logger.info('updater', `Pulling ${image}...`);
   await new Promise((resolve, reject) => {
     docker.pull(image, (err, stream) => {
@@ -47,27 +47,18 @@ async function performUpdate(docker, target, image) {
   });
   logger.info('updater', `Pull complete: ${image}`);
 
-  // 3. Stop old container first
-  logger.info('updater', `Stopping old container ${oldName}...`);
-  try {
-    await container.stop({ t: 5 });
-  } catch {
-    // Already stopped
-  }
+  // 2. Stop old container
+  try { await container.stop({ t: 5 }); } catch { /* already stopped */ }
 
-  // 4. Rename old container
-  try {
-    await container.rename({ name: oldName + '-removing' });
-  } catch {
-    // Rename failed, continue anyway
-  }
+  // 3. Rename old container to free the name
+  try { await container.rename({ name: oldName + '-old' }); } catch { /* rename failed */ }
 
-  // 5. Create new container with same config
+  // 4. Create and start new container with same config
   const createOpts = {
     name: oldName,
     Image: image,
     Env: info.Config.Env,
-    Labels: info.Config.Labels || {},
+    Labels: { ...(info.Config.Labels || {}), 'insightd.updated-from': containerId.slice(0, 12) },
     HostConfig: {
       Binds: info.HostConfig.Binds,
       RestartPolicy: info.HostConfig.RestartPolicy,
@@ -77,20 +68,42 @@ async function performUpdate(docker, target, image) {
     },
   };
 
-  logger.info('updater', `Creating new container with image ${image}`);
   const newContainer = await docker.createContainer(createOpts);
   await newContainer.start();
   logger.info('updater', `New container started: ${newContainer.id.slice(0, 12)}`);
 
-  // 6. Remove old container
-  try {
-    await container.remove({ force: true });
-    logger.info('updater', `Old container removed`);
-  } catch (err) {
-    logger.warn('updater', `Failed to remove old container: ${err.message}`);
+  // 5. For non-self updates, remove old container. For self-updates, we're about to die.
+  if (target !== 'agent') {
+    try {
+      await container.remove({ force: true });
+      logger.info('updater', `Old container removed`);
+    } catch (err) {
+      logger.warn('updater', `Failed to remove old container: ${err.message}`);
+    }
   }
 
   return { status: 'success', message: `Updated to ${image}` };
 }
 
-module.exports = { performUpdate };
+/**
+ * Clean up leftover containers from previous updates.
+ * Called on agent startup.
+ */
+async function cleanupOldContainers(docker) {
+  try {
+    const containers = await docker.listContainers({ all: true });
+    for (const c of containers) {
+      const name = (c.Names[0] || '').replace(/^\//, '');
+      if (name.endsWith('-old') && name.startsWith('insightd-')) {
+        logger.info('updater', `Cleaning up old container: ${name}`);
+        try {
+          await docker.getContainer(c.Id).remove({ force: true });
+        } catch (err) {
+          logger.warn('updater', `Failed to remove ${name}: ${err.message}`);
+        }
+      }
+    }
+  } catch { /* ignore cleanup errors */ }
+}
+
+module.exports = { performUpdate, cleanupOldContainers };

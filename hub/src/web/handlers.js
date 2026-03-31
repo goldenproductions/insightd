@@ -475,6 +475,9 @@ function handleVersionCheck(req, res) {
 async function handleUpdateAgent(req, res, db, config, params, ctx) {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
+  // Snooze alerts during update
+  const { snoozeAlerts } = require('../alert-snooze');
+  snoozeAlerts(10);
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
   const tag = vi.latestVersion || vi.currentVersion;
@@ -491,6 +494,8 @@ async function handleUpdateAgent(req, res, db, config, params, ctx) {
 async function handleUpdateAllAgents(req, res, db, config, params, ctx) {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
+  const { snoozeAlerts } = require('../alert-snooze');
+  snoozeAlerts(15);
   const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
@@ -511,6 +516,8 @@ async function handleUpdateAllAgents(req, res, db, config, params, ctx) {
 async function handleUpdateHub(req, res, db, config, params, ctx) {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
+  const { snoozeAlerts } = require('../alert-snooze');
+  snoozeAlerts(10);
   const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
   if (hosts.length === 0) { res.statusCode = 400; return { error: 'No agents connected' }; }
   const { getVersionInfo } = require('../version-check');

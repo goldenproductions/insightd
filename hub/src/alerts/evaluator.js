@@ -386,6 +386,15 @@ function processAlerts(db, config, { triggered, resolved }) {
 async function runAlerts(db, config) {
   if (!config.alerts.enabled) return;
 
+  // Check if alerts are snoozed (e.g. during updates)
+  try {
+    const { isSnoozed } = require('../alert-snooze');
+    if (isSnoozed()) {
+      logger.info('alerts', 'Alerts snoozed — skipping evaluation');
+      return;
+    }
+  } catch { /* alert-snooze module not available */ }
+
   const evaluation = evaluateAlerts(db, config);
   const toSend = processAlerts(db, config, evaluation);
 

@@ -30,6 +30,10 @@ async function main() {
     process.exit(1);
   }
 
+  // Clean up old containers from previous updates
+  const { cleanupOldContainers } = require('./updater');
+  await cleanupOldContainers(docker);
+
   // Start collection scheduler
   startAgentScheduler(docker, config);
 
