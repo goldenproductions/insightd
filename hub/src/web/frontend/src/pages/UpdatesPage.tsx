@@ -42,8 +42,31 @@ export function UpdatesPage() {
     },
   });
 
+  const [hubUpdating, setHubUpdating] = useState(false);
+
   const updateHub = useMutation({
     mutationFn: () => apiAuth<{ status: string; message?: string; error?: string }>('POST', '/update/hub', undefined, token),
+    onMutate: () => setHubUpdating(true),
+    onError: () => {
+      // Expected — hub goes down during update. Start polling for it to come back.
+      setHubUpdating(true);
+      const poll = setInterval(async () => {
+        try {
+          const res = await fetch('/api/health');
+          if (res.ok) {
+            clearInterval(poll);
+            window.location.reload();
+          }
+        } catch { /* hub still down */ }
+      }, 3000);
+      // Stop polling after 2 minutes
+      setTimeout(() => clearInterval(poll), 120000);
+    },
+    onSuccess: () => {
+      // Hub responded before going down — it will restart shortly
+      setHubUpdating(true);
+      setTimeout(() => window.location.reload(), 10000);
+    },
   });
 
   return (
@@ -77,16 +100,18 @@ export function UpdatesPage() {
       {/* Hub update */}
       {isAuthenticated && version?.updateAvailable && (
         <Card title="Hub">
-          <div className="flex items-center justify-between">
-            <span className="text-sm" style={{ color: 'var(--text)' }}>
-              Update hub to v{version.latestVersion}
-            </span>
-            <Button onClick={() => updateHub.mutate()} disabled={updateHub.isPending}>
-              {updateHub.isPending ? 'Updating...' : 'Update Hub'}
-            </Button>
-          </div>
-          {updateHub.isSuccess && <AlertBanner message={updateHub.data?.message || 'Hub updated. It will restart shortly.'} color="green" />}
-          {updateHub.isError && <AlertBanner message={updateHub.error instanceof Error ? updateHub.error.message : 'Failed'} color="red" />}
+          {hubUpdating ? (
+            <AlertBanner message="Hub is updating and restarting. This page will reload automatically when it's back..." color="yellow" />
+          ) : (
+            <div className="flex items-center justify-between">
+              <span className="text-sm" style={{ color: 'var(--text)' }}>
+                Update hub to v{version.latestVersion}
+              </span>
+              <Button onClick={() => updateHub.mutate()} disabled={updateHub.isPending}>
+                {updateHub.isPending ? 'Updating...' : 'Update Hub'}
+              </Button>
+            </div>
+          )}
         </Card>
       )}
 
