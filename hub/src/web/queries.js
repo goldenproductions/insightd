@@ -149,6 +149,17 @@ function getDashboard(db, onlineThresholdMinutes) {
     WHERE uc.has_update = 1
   `).get();
 
+  // Endpoint monitoring stats
+  const endpointTotal = db.prepare('SELECT COUNT(*) as count FROM http_endpoints WHERE enabled = 1').get();
+  const endpointsUp = db.prepare(`
+    SELECT COUNT(DISTINCT hc.endpoint_id) as count FROM http_checks hc
+    INNER JOIN (
+      SELECT endpoint_id, MAX(checked_at) as max_at FROM http_checks GROUP BY endpoint_id
+    ) latest ON hc.endpoint_id = latest.endpoint_id AND hc.checked_at = latest.max_at
+    INNER JOIN http_endpoints he ON he.id = hc.endpoint_id AND he.enabled = 1
+    WHERE hc.is_up = 1
+  `).get();
+
   return {
     hostCount: hosts.length,
     hostsOnline: hosts.filter(h => h.is_online).length,
@@ -159,6 +170,9 @@ function getDashboard(db, onlineThresholdMinutes) {
     activeAlerts: activeAlerts?.count || 0,
     diskWarnings: diskWarnings?.count || 0,
     updatesAvailable: updatesAvailable?.count || 0,
+    endpointsTotal: endpointTotal?.count || 0,
+    endpointsUp: endpointsUp?.count || 0,
+    endpointsDown: (endpointTotal?.count || 0) - (endpointsUp?.count || 0),
   };
 }
 

@@ -69,6 +69,7 @@ const GREEN_DIGEST = {
   disk: [{ mount_point: '/', total_gb: 100, used_gb: 50, used_percent: 50 }],
   diskWarnings: [],
   updatesAvailable: [],
+  endpoints: [],
 };
 
 const RED_DIGEST = {
@@ -90,6 +91,9 @@ const RED_DIGEST = {
   disk: [{ mount_point: '/', total_gb: 100, used_gb: 90, used_percent: 90 }],
   diskWarnings: [{ mount_point: '/', total_gb: 100, used_gb: 90, used_percent: 90 }],
   updatesAvailable: [{ container_name: 'nginx', image: 'nginx:alpine', has_update: 1 }],
+  endpoints: [
+    { name: 'My API', url: 'https://api.example.com', uptimePercent: 95.5, avgResponseMs: 120, totalChecks: 100 },
+  ],
 };
 
 module.exports = {

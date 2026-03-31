@@ -30,6 +30,8 @@ const SETTING_DEFS = [
   { key: 'alerts.hostLoadThreshold', env: 'INSIGHTD_ALERT_LOAD', type: 'float', category: 'Alerts', label: 'Host Load Threshold', hotReload: true, default: '0' },
   { key: 'alerts.containerUnhealthy', env: 'INSIGHTD_ALERT_UNHEALTHY', type: 'bool', category: 'Alerts', label: 'Unhealthy Container Alerts', hotReload: true, default: 'true' },
   { key: 'alerts.excludeContainers', env: 'INSIGHTD_ALERT_EXCLUDE', type: 'string', category: 'Alerts', label: 'Exclude Containers (patterns)', hotReload: true, default: '', description: 'Comma-separated patterns. Use * as wildcard. E.g. dev-*,test-*,insightd-*' },
+  { key: 'alerts.endpointDown', env: 'INSIGHTD_ALERT_ENDPOINT_DOWN', type: 'bool', category: 'Alerts', label: 'Endpoint Down Alerts', hotReload: true, default: 'true' },
+  { key: 'alerts.endpointFailureThreshold', env: 'INSIGHTD_ALERT_ENDPOINT_FAILURES', type: 'int', category: 'Alerts', label: 'Endpoint Failure Threshold', hotReload: true, default: '3', description: 'Consecutive failures before alerting' },
 
   // Collection
   { key: 'collectIntervalMinutes', env: 'INSIGHTD_COLLECT_INTERVAL', type: 'int', category: 'Collection', label: 'Collection Interval (minutes)', hotReload: false, default: '5' },
@@ -146,6 +148,8 @@ function getEffectiveConfig(db, baseConfig) {
       hostLoadThreshold: get('alerts.hostLoadThreshold'),
       containerUnhealthy: get('alerts.containerUnhealthy'),
       excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts.excludeContainers,
+      endpointDown: get('alerts.endpointDown'),
+      endpointFailureThreshold: get('alerts.endpointFailureThreshold') || baseConfig.alerts.endpointFailureThreshold,
     },
   };
 }

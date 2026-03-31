@@ -43,6 +43,7 @@ function renderHtml(digest) {
   </div>
 
   ${digest.containers.length > 0 ? renderContainersSection(digest) : ''}
+  ${digest.endpoints && digest.endpoints.length > 0 ? renderEndpointsSection(digest) : ''}
   ${digest.trends.length > 0 ? renderTrendsSection(digest) : ''}
   ${digest.disk.length > 0 ? renderDiskSection(digest) : ''}
   ${digest.updatesAvailable.length > 0 ? renderUpdatesSection(digest) : ''}
@@ -78,6 +79,21 @@ function renderContainersSection(d) {
     </div>`).join('');
 
   return `<div class="section"><h2>Containers</h2>${rows}</div>`;
+}
+
+function renderEndpointsSection(d) {
+  const rows = d.endpoints.map(ep => {
+    const status = ep.uptimePercent == null ? 'yellow' : ep.uptimePercent >= 99 ? 'green' : ep.uptimePercent >= 90 ? 'yellow' : 'red';
+    const uptime = ep.uptimePercent != null ? `${ep.uptimePercent}%` : 'No data';
+    const avgMs = ep.avgResponseMs != null ? `${ep.avgResponseMs}ms` : '-';
+    return `
+    <div class="metric">
+      <span class="label"><span class="status-dot ${status}"></span>${ep.name}</span>
+      <span class="value">${uptime} uptime · ${avgMs} avg</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="section"><h2>Endpoint Uptime</h2>${rows}</div>`;
 }
 
 function renderTrendsSection(d) {
@@ -135,6 +151,16 @@ function renderPlainText(digest) {
       if (t.cpuChange) parts.push(`${Math.abs(t.cpuChange)}% ${t.cpuChange > 0 ? 'more' : 'less'} CPU`);
       return `${t.name} using ${parts.join(', ')}`;
     }).join('; ')}`);
+  }
+
+  if (digest.endpoints && digest.endpoints.length > 0) {
+    lines.push('');
+    lines.push('Endpoints:');
+    for (const ep of digest.endpoints) {
+      const uptime = ep.uptimePercent != null ? `${ep.uptimePercent}%` : 'No data';
+      const avgMs = ep.avgResponseMs != null ? `${ep.avgResponseMs}ms avg` : '';
+      lines.push(`  ${ep.name}: ${uptime} uptime${avgMs ? ` · ${avgMs}` : ''}`);
+    }
   }
 
   if (digest.diskWarnings.length > 0) {

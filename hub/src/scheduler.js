@@ -41,6 +41,13 @@ function startHubScheduler(db, config) {
     await safeCollect('alerts', () => runAlerts(db, liveConfig));
   }, { timezone: config.timezone }));
   logger.info('scheduler', `Alert evaluation scheduled: ${alertCron}`);
+
+  // Schedule HTTP endpoint checks — every minute, checker decides per-endpoint if due
+  scheduledTasks.push(cron.schedule('* * * * *', async () => {
+    const { runChecks } = require('./http-monitor/checker');
+    await safeCollect('http-checks', () => runChecks(db));
+  }, { timezone: config.timezone }));
+  logger.info('scheduler', 'HTTP endpoint checks scheduled: every minute');
 }
 
 /**
@@ -119,6 +126,13 @@ function startStandaloneScheduler(db, docker, config) {
     }
   }, { timezone: config.timezone }));
   logger.info('scheduler', `Update checks scheduled: ${config.updateCheckCron}`);
+
+  // Schedule HTTP endpoint checks — every minute, checker decides per-endpoint if due
+  scheduledTasks.push(cron.schedule('* * * * *', async () => {
+    const { runChecks } = require('./http-monitor/checker');
+    await safeCollect('http-checks', () => runChecks(db));
+  }, { timezone: config.timezone }));
+  logger.info('scheduler', 'HTTP endpoint checks scheduled: every minute');
 }
 
 module.exports = { startHubScheduler, startStandaloneScheduler, stopScheduler };

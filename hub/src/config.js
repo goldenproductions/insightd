@@ -72,6 +72,8 @@ const config = Object.freeze({
     hostLoadThreshold: parseFloat(process.env.INSIGHTD_ALERT_LOAD || '0'),
     containerUnhealthy: process.env.INSIGHTD_ALERT_UNHEALTHY !== 'false',
     excludeContainers: process.env.INSIGHTD_ALERT_EXCLUDE || '',
+    endpointDown: process.env.INSIGHTD_ALERT_ENDPOINT_DOWN !== 'false',
+    endpointFailureThreshold: parseInt(process.env.INSIGHTD_ALERT_ENDPOINT_FAILURES || '3', 10),
   }),
 });
 

@@ -1,6 +1,6 @@
 const { describe, it, beforeEach, afterEach, mock } = require('node:test');
 const assert = require('node:assert/strict');
-const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState } = require('../helpers/db');
+const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedHttpEndpoints, seedHttpChecks } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
 
@@ -164,6 +164,53 @@ describe('evaluateAlerts', () => {
     });
   });
 
+  describe('endpoint_down', () => {
+    const endpointConfig = {
+      ...alertsConfig, endpointDown: true, endpointFailureThreshold: 3,
+    };
+
+    it('triggers after N consecutive failures', () => {
+      const [id] = seedHttpEndpoints(db, [{ name: 'My API', url: 'https://api.example.com' }]);
+      seedHttpChecks(db, [
+        { endpointId: id, statusCode: null, isUp: false, error: 'timeout', at: '2026-03-31 10:00:00' },
+        { endpointId: id, statusCode: null, isUp: false, error: 'timeout', at: '2026-03-31 10:01:00' },
+        { endpointId: id, statusCode: null, isUp: false, error: 'timeout', at: '2026-03-31 10:02:00' },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: endpointConfig });
+      const epAlerts = triggered.filter(a => a.type === 'endpoint_down');
+      assert.equal(epAlerts.length, 1);
+      assert.equal(epAlerts[0].target, 'My API');
+    });
+
+    it('does not trigger with fewer than N failures', () => {
+      const [id] = seedHttpEndpoints(db, [{ name: 'My API', url: 'https://api.example.com' }]);
+      seedHttpChecks(db, [
+        { endpointId: id, statusCode: 200, isUp: true, at: '2026-03-31 10:00:00' },
+        { endpointId: id, statusCode: null, isUp: false, error: 'timeout', at: '2026-03-31 10:01:00' },
+        { endpointId: id, statusCode: null, isUp: false, error: 'timeout', at: '2026-03-31 10:02:00' },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: endpointConfig });
+      const epAlerts = triggered.filter(a => a.type === 'endpoint_down');
+      assert.equal(epAlerts.length, 0);
+    });
+
+    it('does not trigger when disabled', () => {
+      const [id] = seedHttpEndpoints(db, [{ name: 'My API', url: 'https://api.example.com' }]);
+      seedHttpChecks(db, [
+        { endpointId: id, statusCode: null, isUp: false, at: '2026-03-31 10:00:00' },
+        { endpointId: id, statusCode: null, isUp: false, at: '2026-03-31 10:01:00' },
+        { endpointId: id, statusCode: null, isUp: false, at: '2026-03-31 10:02:00' },
+      ]);
+
+      const disabledConfig = { ...endpointConfig, endpointDown: false };
+      const { triggered } = evaluateAlerts(db, { alerts: disabledConfig });
+      const epAlerts = triggered.filter(a => a.type === 'endpoint_down');
+      assert.equal(epAlerts.length, 0);
+    });
+  });
+
   describe('resolutions', () => {
     it('resolves container_down when container is running again', () => {
       seedContainerSnapshots(db, [
@@ -177,6 +224,21 @@ describe('evaluateAlerts', () => {
       assert.equal(resolved.length, 1);
       assert.equal(resolved[0].type, 'container_down');
       assert.equal(resolved[0].isResolution, true);
+    });
+
+    it('resolves endpoint_down when endpoint recovers', () => {
+      const [id] = seedHttpEndpoints(db, [{ name: 'My API', url: 'https://api.example.com' }]);
+      seedHttpChecks(db, [
+        { endpointId: id, statusCode: 200, isUp: true, at: ts(NOW) },
+      ]);
+      seedAlertState(db, [
+        { hostId: 'hub', type: 'endpoint_down', target: 'My API', triggeredAt: ts(new Date(NOW - 3600000)), lastNotified: ts(new Date(NOW - 3600000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+      const epResolved = resolved.filter(a => a.type === 'endpoint_down');
+      assert.equal(epResolved.length, 1);
+      assert.ok(epResolved[0].message.includes('reachable again'));
     });
 
     it('resolves high_cpu when CPU drops below threshold', () => {

@@ -1,6 +1,6 @@
 const logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 
 function bootstrap(db) {
   db.exec(`
@@ -100,6 +100,33 @@ function bootstrap(db) {
       value      TEXT NOT NULL,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS http_endpoints (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      name             TEXT NOT NULL,
+      url              TEXT NOT NULL,
+      method           TEXT NOT NULL DEFAULT 'GET',
+      expected_status  INTEGER NOT NULL DEFAULT 200,
+      interval_seconds INTEGER NOT NULL DEFAULT 60,
+      timeout_ms       INTEGER NOT NULL DEFAULT 10000,
+      headers          TEXT,
+      enabled          INTEGER NOT NULL DEFAULT 1,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS http_checks (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      endpoint_id      INTEGER NOT NULL REFERENCES http_endpoints(id) ON DELETE CASCADE,
+      status_code      INTEGER,
+      response_time_ms INTEGER,
+      is_up            INTEGER NOT NULL,
+      error            TEXT,
+      checked_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_http_checks_endpoint_time
+      ON http_checks (endpoint_id, checked_at);
   `);
 
   // Track schema version and run migrations
@@ -157,6 +184,9 @@ function migrate(db, fromVersion) {
   if (fromVersion < 5) {
     // settings table is created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
+  if (fromVersion < 6) {
+    // http_endpoints and http_checks tables are created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
 }
 
 /**
@@ -169,11 +199,12 @@ function pruneOldData(db) {
   const r3 = db.prepare(`DELETE FROM update_checks WHERE checked_at < ${cutoff}`).run();
   const r4 = db.prepare(`DELETE FROM alert_state WHERE resolved_at IS NOT NULL AND resolved_at < ${cutoff}`).run();
   const r5 = db.prepare(`DELETE FROM host_snapshots WHERE collected_at < ${cutoff}`).run();
+  const r7 = db.prepare(`DELETE FROM http_checks WHERE checked_at < ${cutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${cutoff}
     UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${cutoff}
   )`).run();
-  const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes + r6.changes;
+  const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes + r6.changes + r7.changes;
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows older than 30 days`);
   }

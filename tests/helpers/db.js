@@ -63,4 +63,28 @@ function seedAlertState(db, rows) {
   }
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots };
+function seedHttpEndpoints(db, rows) {
+  const insert = db.prepare(`
+    INSERT INTO http_endpoints (name, url, method, expected_status, interval_seconds, timeout_ms, headers, enabled)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const ids = [];
+  for (const r of rows) {
+    const result = insert.run(r.name, r.url, r.method || 'GET', r.expectedStatus || 200,
+      r.intervalSeconds || 60, r.timeoutMs || 10000, r.headers || null, r.enabled !== false ? 1 : 0);
+    ids.push(result.lastInsertRowid);
+  }
+  return ids;
+}
+
+function seedHttpChecks(db, rows) {
+  const insert = db.prepare(`
+    INSERT INTO http_checks (endpoint_id, status_code, response_time_ms, is_up, error, checked_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `);
+  for (const r of rows) {
+    insert.run(r.endpointId, r.statusCode ?? null, r.responseTimeMs ?? null, r.isUp ? 1 : 0, r.error || null, r.at);
+  }
+}
+
+module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks };
