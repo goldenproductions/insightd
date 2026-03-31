@@ -67,7 +67,7 @@ function validateToken(token) {
 }
 
 function requireAuth(req) {
-  if (!isAuthEnabled()) return false;
+  if (!isAuthEnabled()) return true;
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   return validateToken(token);
