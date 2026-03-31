@@ -47,6 +47,16 @@ function connect(config, docker) {
       if (topic.endsWith('/update/request')) {
         try {
           const req = JSON.parse(message.toString());
+
+          // Ignore stale update messages (older than 60 seconds)
+          if (req.timestamp) {
+            const age = Date.now() - new Date(req.timestamp).getTime();
+            if (age > 60000) {
+              logger.info('mqtt', `Ignoring stale update request (${Math.round(age / 1000)}s old)`);
+              return;
+            }
+          }
+
           logger.info('mqtt', `Update request: target=${req.target}, image=${req.image}`);
 
           const { performUpdate } = require('./updater');

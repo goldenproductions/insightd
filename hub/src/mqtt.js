@@ -228,7 +228,7 @@ function requestAgentUpdate(hostId, target, image) {
     pendingUpdateRequests.set(requestId, { resolve, reject, timer });
 
     const topic = `insightd/${hostId}/update/request`;
-    const payload = JSON.stringify({ requestId, target, image });
+    const payload = JSON.stringify({ requestId, target, image, timestamp: new Date().toISOString() });
     logger.info('mqtt', `Publishing update request to ${topic}: target=${target}, image=${image}`);
     if (!client || !client.connected) {
       clearTimeout(timer);
