@@ -1,5 +1,7 @@
 const path = require('path');
 
+const VERSION = '0.1.1';
+
 const config = Object.freeze({
   // Data storage
   dataDir: process.env.INSIGHTD_DATA_DIR || '/data',
@@ -86,4 +88,4 @@ function validate() {
   return warnings;
 }
 
-module.exports = { config, validate };
+module.exports = { config, validate, VERSION };

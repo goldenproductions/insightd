@@ -1,3 +1,5 @@
+const VERSION = '0.1.1';
+
 const config = Object.freeze({
   // Host identification (required)
   hostId: process.env.INSIGHTD_HOST_ID || 'local',
@@ -22,6 +24,9 @@ const config = Object.freeze({
   // Timezone
   timezone: process.env.TZ || 'UTC',
 
+  // Updates
+  allowUpdates: process.env.INSIGHTD_ALLOW_UPDATES === 'true',
+
   // Disk warn threshold (used for logging only on agent side)
   diskWarnPercent: parseInt(process.env.INSIGHTD_DISK_WARN_THRESHOLD || '85', 10),
 
@@ -39,4 +44,4 @@ function validate() {
   return errors;
 }
 
-module.exports = { config, validate };
+module.exports = { config, validate, VERSION };

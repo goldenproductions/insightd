@@ -65,6 +65,10 @@ function startWebServer(db, config, context) {
   router.add('GET', '/api/health-scores/:entityType/:entityId', handlers.handleGetHealthScore);
   router.add('GET', '/api/insights', handlers.handleGetInsights);
   router.add('GET', '/api/hosts/:hostId/insights', handlers.handleGetHostInsights);
+  router.add('GET', '/api/version-check', handlers.handleVersionCheck);
+  router.add('POST', '/api/update/agent/:hostId', handlers.handleUpdateAgent);
+  router.add('POST', '/api/update/agents', handlers.handleUpdateAllAgents);
+  router.add('POST', '/api/update/hub', handlers.handleUpdateHub);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);

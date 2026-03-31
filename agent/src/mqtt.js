@@ -24,11 +24,16 @@ function connect(config, docker) {
     client.on('connect', () => {
       logger.info('mqtt', `${connected ? 'Reconnected' : 'Connected'} to ${config.mqttUrl}`);
 
-      // Subscribe to log requests (re-subscribes on reconnect)
+      // Subscribe to log requests and update commands (re-subscribes on reconnect)
       const logRequestTopic = `insightd/${config.hostId}/logs/request`;
+      const updateRequestTopic = `insightd/${config.hostId}/update/request`;
       client.subscribe(logRequestTopic, { qos: 1 }, (err) => {
         if (err) logger.error('mqtt', 'Failed to subscribe to log request topic');
         else logger.info('mqtt', `Subscribed to ${logRequestTopic}`);
+      });
+      client.subscribe(updateRequestTopic, { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to update request topic');
+        else logger.info('mqtt', `Subscribed to ${updateRequestTopic}`);
       });
 
       if (!connected) {
@@ -38,6 +43,28 @@ function connect(config, docker) {
     });
 
     client.on('message', async (topic, message) => {
+      // Handle update requests
+      if (topic.endsWith('/update/request')) {
+        try {
+          const req = JSON.parse(message.toString());
+          logger.info('mqtt', `Update request: target=${req.target}, image=${req.image}`);
+
+          const { performUpdate } = require('./updater');
+          const result = await performUpdate(dockerInstance, req.target, req.image);
+
+          const responseTopic = `insightd/${config.hostId}/update/response`;
+          client.publish(responseTopic, JSON.stringify({ requestId: req.requestId, ...result }), { qos: 1 });
+        } catch (err) {
+          logger.error('mqtt', `Update failed: ${err.message}`);
+          try {
+            const req = JSON.parse(message.toString());
+            const responseTopic = `insightd/${config.hostId}/update/response`;
+            client.publish(responseTopic, JSON.stringify({ requestId: req.requestId, status: 'failed', error: err.message }), { qos: 1 });
+          } catch { /* can't even parse the request */ }
+        }
+        return;
+      }
+
       if (!topic.endsWith('/logs/request')) return;
       try {
         const req = JSON.parse(message.toString());
@@ -86,9 +113,11 @@ function connect(config, docker) {
 
 function publishCollection(hostId, data) {
   const topic = `insightd/${hostId}/collection`;
+  const { VERSION } = require('./config');
   const msg = {
     version: 3,
     host_id: hostId,
+    agent_version: VERSION,
     collected_at: new Date().toISOString(),
     containers: data.containers.map(c => ({
       name: c.name,

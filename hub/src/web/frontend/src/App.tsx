@@ -17,6 +17,7 @@ import { LoginPage } from '@/pages/LoginPage';
 import { AddAgentPage } from '@/pages/AddAgentPage';
 import { LogSplitPage } from '@/pages/LogSplitPage';
 import { WebhooksPage } from '@/pages/WebhooksPage';
+import { UpdatesPage } from '@/pages/UpdatesPage';
 import { WebhookFormPage } from '@/pages/WebhookFormPage';
 import { ServicesPage } from '@/pages/ServicesPage';
 import { ServiceDetailPage } from '@/pages/ServiceDetailPage';
@@ -47,6 +48,7 @@ export function App() {
                 <Route path="/webhooks" element={<WebhooksPage />} />
                 <Route path="/webhooks/new" element={<WebhookFormPage />} />
                 <Route path="/webhooks/:webhookId/edit" element={<WebhookFormPage />} />
+                <Route path="/updates" element={<UpdatesPage />} />
                 <Route path="/add-agent" element={<AddAgentPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/login" element={<LoginPage />} />
