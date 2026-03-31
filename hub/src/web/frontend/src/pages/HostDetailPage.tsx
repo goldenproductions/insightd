@@ -12,7 +12,7 @@ import { DiskForecast } from '@/components/DiskForecast';
 import { TrendArrow } from '@/components/TrendArrow';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { EventTimeline } from '@/components/EventTimeline';
-import { timeAgo, fmtUptime, fmtPercent } from '@/lib/formatters';
+import { timeAgo, fmtUptime, fmtPercent, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -48,13 +48,27 @@ export function HostDetailPage() {
 
       {/* Host system metrics */}
       {hm && (
-        <StatsGrid>
-          <StatCard value={fmtPercent(hm.cpu_percent)} label="CPU" />
-          <StatCard value={hm.memory_total_mb ? `${Math.round((hm.memory_used_mb || 0) / hm.memory_total_mb * 100)}%` : '-'} label="Memory" />
-          <StatCard value={hm.load_1 != null ? String(hm.load_1.toFixed(2)) : '-'} label="Load 1m" />
-          <StatCard value={hm.load_5 != null ? String(hm.load_5.toFixed(2)) : '-'} label="Load 5m" />
-          <StatCard value={fmtUptime(hm.uptime_seconds)} label="Uptime" />
-        </StatsGrid>
+        <>
+          <StatsGrid>
+            <StatCard value={fmtPercent(hm.cpu_percent)} label="CPU" />
+            <StatCard value={hm.memory_total_mb ? `${Math.round((hm.memory_used_mb || 0) / hm.memory_total_mb * 100)}%` : '-'} label="Memory" />
+            <StatCard value={hm.load_1 != null ? String(hm.load_1.toFixed(2)) : '-'} label="Load 1m" />
+            <StatCard value={hm.load_5 != null ? String(hm.load_5.toFixed(2)) : '-'} label="Load 5m" />
+            <StatCard value={fmtUptime(hm.uptime_seconds)} label="Uptime" />
+          </StatsGrid>
+          {(hm.cpu_temperature_celsius != null || hm.gpu_utilization_percent != null || hm.disk_read_bytes_per_sec != null || hm.net_rx_bytes_per_sec != null) && (
+            <StatsGrid>
+              {hm.cpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.cpu_temperature_celsius)} label="CPU Temp" color={hm.cpu_temperature_celsius > 80 ? 'var(--color-danger)' : hm.cpu_temperature_celsius > 60 ? 'var(--color-warning)' : undefined} />}
+              {hm.gpu_utilization_percent != null && <StatCard value={fmtPercent(hm.gpu_utilization_percent)} label="GPU" />}
+              {hm.gpu_memory_total_mb != null && <StatCard value={`${Math.round(hm.gpu_memory_used_mb || 0)}/${Math.round(hm.gpu_memory_total_mb)} MB`} label="GPU Memory" />}
+              {hm.gpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.gpu_temperature_celsius)} label="GPU Temp" color={hm.gpu_temperature_celsius > 85 ? 'var(--color-danger)' : hm.gpu_temperature_celsius > 70 ? 'var(--color-warning)' : undefined} />}
+              {hm.disk_read_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_read_bytes_per_sec)} label="Disk Read" />}
+              {hm.disk_write_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_write_bytes_per_sec)} label="Disk Write" />}
+              {hm.net_rx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_rx_bytes_per_sec)} label="Net RX" />}
+              {hm.net_tx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_tx_bytes_per_sec)} label="Net TX" />}
+            </StatsGrid>
+          )}
+        </>
       )}
 
       {/* Uptime Timeline */}

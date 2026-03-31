@@ -186,7 +186,11 @@ function getDashboard(db, onlineThresholdMinutes) {
 function getLatestHostMetrics(db, hostId) {
   return db.prepare(`
     SELECT cpu_percent, memory_total_mb, memory_used_mb, memory_available_mb,
-           swap_total_mb, swap_used_mb, load_1, load_5, load_15, uptime_seconds, collected_at
+           swap_total_mb, swap_used_mb, load_1, load_5, load_15, uptime_seconds,
+           gpu_utilization_percent, gpu_memory_used_mb, gpu_memory_total_mb,
+           gpu_temperature_celsius, cpu_temperature_celsius,
+           disk_read_bytes_per_sec, disk_write_bytes_per_sec,
+           net_rx_bytes_per_sec, net_tx_bytes_per_sec, collected_at
     FROM host_snapshots WHERE host_id = ?
     ORDER BY collected_at DESC LIMIT 1
   `).get(hostId) || null;
@@ -196,7 +200,10 @@ function getHostMetricsHistory(db, hostId, hours) {
   const cutoff = `datetime('now', '-${Math.floor(hours)} hours')`;
   return db.prepare(`
     SELECT cpu_percent, memory_total_mb, memory_used_mb, memory_available_mb,
-           load_1, load_5, load_15, collected_at
+           load_1, load_5, load_15,
+           gpu_utilization_percent, gpu_temperature_celsius, cpu_temperature_celsius,
+           disk_read_bytes_per_sec, disk_write_bytes_per_sec,
+           net_rx_bytes_per_sec, net_tx_bytes_per_sec, collected_at
     FROM host_snapshots WHERE host_id = ? AND collected_at >= ${cutoff}
     ORDER BY collected_at ASC
   `).all(hostId);

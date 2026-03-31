@@ -78,8 +78,11 @@ function upsertHost(db, hostId) {
 function ingestHost(db, hostId, hostData) {
   if (!hostData) return;
   db.prepare(`
-    INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, memory_available_mb, swap_total_mb, swap_used_mb, load_1, load_5, load_15, uptime_seconds, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, memory_available_mb,
+      swap_total_mb, swap_used_mb, load_1, load_5, load_15, uptime_seconds,
+      gpu_utilization_percent, gpu_memory_used_mb, gpu_memory_total_mb, gpu_temperature_celsius, cpu_temperature_celsius,
+      disk_read_bytes_per_sec, disk_write_bytes_per_sec, net_rx_bytes_per_sec, net_tx_bytes_per_sec, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     hostId,
     hostData.cpuPercent ?? null,
@@ -91,7 +94,16 @@ function ingestHost(db, hostId, hostData) {
     hostData.load?.load1 ?? null,
     hostData.load?.load5 ?? null,
     hostData.load?.load15 ?? null,
-    hostData.uptimeSeconds ?? null
+    hostData.uptimeSeconds ?? null,
+    hostData.gpuUtilizationPercent ?? null,
+    hostData.gpuMemoryUsedMb ?? null,
+    hostData.gpuMemoryTotalMb ?? null,
+    hostData.gpuTemperatureCelsius ?? null,
+    hostData.cpuTemperatureCelsius ?? null,
+    hostData.diskReadBytesPerSec ?? null,
+    hostData.diskWriteBytesPerSec ?? null,
+    hostData.netRxBytesPerSec ?? null,
+    hostData.netTxBytesPerSec ?? null
   );
 }
 

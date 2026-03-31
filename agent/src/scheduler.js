@@ -9,6 +9,10 @@ function startAgentScheduler(docker, config) {
   const { collectResources } = require('./collectors/resources');
   const { collectDisk } = require('./collectors/disk');
   const { collectHost } = require('./collectors/host');
+  const { collectGpu } = require('./collectors/gpu');
+  const { collectTemperature } = require('./collectors/temperature');
+  const { collectDiskIO } = require('./collectors/disk-io');
+  const { collectNetworkIO } = require('./collectors/network-io');
   const { checkUpdates } = require('./collectors/updates');
 
   async function runCollection() {
@@ -21,13 +25,17 @@ function startAgentScheduler(docker, config) {
 
     const disk = await safeCollect('disk', () => collectDisk(config)) || [];
     const host = await safeCollect('host', () => collectHost(config));
+    const gpu = safeCollect('gpu', () => collectGpu());
+    const temperature = safeCollect('temperature', () => collectTemperature(config));
+    const diskIO = safeCollect('disk-io', () => collectDiskIO(config));
+    const networkIO = safeCollect('network-io', () => collectNetworkIO(config));
 
     logger.info('scheduler', 'Collection cycle complete');
 
     // Publish to MQTT
     if (containers) {
       await safeCollect('mqtt-publish', () =>
-        publishCollection(config.hostId, { containers, disk, host })
+        publishCollection(config.hostId, { containers, disk, host, gpu, temperature, diskIO, networkIO })
       );
     }
 
