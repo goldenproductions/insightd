@@ -5,6 +5,8 @@ import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { ShowInternalProvider } from '@/lib/useShowInternal';
 import { Layout } from '@/components/Layout';
+import { SetupWizardPage } from '@/pages/SetupWizardPage';
+import { useState, useEffect } from 'react';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { HostsPage } from '@/pages/HostsPage';
 import { HostDetailPage } from '@/pages/HostDetailPage';
@@ -25,6 +27,29 @@ import { ServiceDetailPage } from '@/pages/ServiceDetailPage';
 import { ServiceFormPage } from '@/pages/ServiceFormPage';
 
 export function App() {
+  const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
+  const [mode, setMode] = useState('hub');
+
+  useEffect(() => {
+    fetch('/api/setup/status')
+      .then(r => r.json())
+      .then((d: { setupComplete: boolean; mode: string }) => {
+        setSetupComplete(d.setupComplete);
+        setMode(d.mode);
+      })
+      .catch(() => setSetupComplete(true)); // If API fails, skip wizard
+  }, []);
+
+  if (setupComplete === null) return null; // Loading
+
+  if (!setupComplete) {
+    return (
+      <ThemeProvider>
+        <SetupWizardPage mode={mode} onComplete={() => setSetupComplete(true)} />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>

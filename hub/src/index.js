@@ -15,6 +15,16 @@ async function main() {
   const db = getDb(config.dbPath);
   bootstrap(db);
 
+  // Give auth module access to DB for password-in-settings
+  const { setDb: setAuthDb } = require('./web/auth');
+  setAuthDb(db);
+
+  // Set setup_complete for existing installs (has hosts = not first run)
+  const hasHosts = db.prepare('SELECT COUNT(*) as c FROM hosts').get();
+  if (hasHosts.c > 0) {
+    db.prepare("INSERT OR IGNORE INTO meta (key, value) VALUES ('setup_complete', 'true')").run();
+  }
+
   if (mode === 'hub') {
     // Hub mode: receive data via MQTT, run digest + alerts
     const mqttModule = require('./mqtt');
