@@ -3,6 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
+import { ShowInternalProvider } from '@/lib/useShowInternal';
 import { Layout } from '@/components/Layout';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { HostsPage } from '@/pages/HostsPage';
@@ -28,6 +29,7 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ThemeProvider>
+          <ShowInternalProvider>
           <HashRouter>
             <Routes>
               <Route element={<Layout />}>
@@ -55,6 +57,7 @@ export function App() {
               </Route>
             </Routes>
           </HashRouter>
+          </ShowInternalProvider>
         </ThemeProvider>
       </AuthProvider>
     </QueryClientProvider>
