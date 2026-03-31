@@ -1,6 +1,6 @@
 const logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 
 function bootstrap(db) {
   db.exec(`
@@ -29,6 +29,7 @@ function bootstrap(db) {
       blkio_read_bytes INTEGER,
       blkio_write_bytes INTEGER,
       health_status   TEXT,
+      labels          TEXT,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -128,6 +129,30 @@ function bootstrap(db) {
     CREATE INDEX IF NOT EXISTS idx_http_checks_endpoint_time
       ON http_checks (endpoint_id, checked_at);
 
+    CREATE TABLE IF NOT EXISTS service_groups (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL UNIQUE,
+      description TEXT,
+      icon        TEXT,
+      color       TEXT,
+      source      TEXT NOT NULL DEFAULT 'manual',
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS service_group_members (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id        INTEGER NOT NULL REFERENCES service_groups(id) ON DELETE CASCADE,
+      host_id         TEXT NOT NULL,
+      container_name  TEXT NOT NULL,
+      source          TEXT NOT NULL DEFAULT 'manual',
+      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(group_id, host_id, container_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_group_members_container
+      ON service_group_members (host_id, container_name);
+
     CREATE TABLE IF NOT EXISTS webhooks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL,
@@ -202,6 +227,14 @@ function migrate(db, fromVersion) {
   }
   if (fromVersion < 7) {
     // webhooks table is created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 8) {
+    try {
+      db.exec('ALTER TABLE container_snapshots ADD COLUMN labels TEXT');
+    } catch {
+      // Column already exists
+    }
+    // service_groups and service_group_members tables created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 

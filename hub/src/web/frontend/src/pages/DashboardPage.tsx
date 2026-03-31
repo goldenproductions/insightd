@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { Link } from 'react-router-dom';
 import type { DashboardData, Rankings } from '@/types/api';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
@@ -25,6 +26,24 @@ export function DashboardPage() {
           <StatCard value={`${data.endpointsUp}/${data.endpointsTotal}`} label="Endpoints Up" color={data.endpointsDown > 0 ? 'var(--color-danger)' : 'var(--color-success)'} />
         )}
       </StatsGrid>
+
+      {data.groups && data.groups.length > 0 && (
+        <Card title="Services">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {data.groups.map(g => (
+              <Link key={g.id} to={`/services/${g.id}`} className="block rounded-lg p-3 transition-colors" style={{ border: '1px solid var(--border)', borderLeft: `3px solid ${g.color || 'var(--color-info)'}` }}
+                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--surface-hover)')}
+                onMouseLeave={e => (e.currentTarget.style.backgroundColor = '')}
+              >
+                <div className="font-medium text-sm" style={{ color: 'var(--text)' }}>{g.icon && <span className="mr-1">{g.icon}</span>}{g.name}</div>
+                <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>
+                  <span className={g.running_count === g.member_count ? 'text-emerald-500' : 'text-red-500'}>{g.running_count}/{g.member_count}</span> running
+                </div>
+              </Link>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {rankings && (
         <div className="grid gap-4 md:grid-cols-2">

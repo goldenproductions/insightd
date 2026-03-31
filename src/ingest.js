@@ -5,13 +5,14 @@ const logger = require('./utils/logger');
  */
 function ingestContainers(db, hostId, containers) {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, labels, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `);
 
   const insertMany = db.transaction((items) => {
     for (const c of items) {
-      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount);
+      const labels = typeof c.labels === 'object' ? JSON.stringify(c.labels) : (c.labels || null);
+      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount, labels);
     }
   });
 

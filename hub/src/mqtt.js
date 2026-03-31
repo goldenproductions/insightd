@@ -93,6 +93,7 @@ function handleCollection(db, hostId, payload) {
     blkioReadBytes: c.blkio_read_bytes,
     blkioWriteBytes: c.blkio_write_bytes,
     healthStatus: c.health_status,
+    labels: c.labels || null,
   }));
 
   const disk = (payload.disk || []).map(d => ({
@@ -103,7 +104,11 @@ function handleCollection(db, hostId, payload) {
   }));
 
   upsertHost(db, hostId);
-  if (containers.length > 0) ingestContainers(db, hostId, containers);
+  if (containers.length > 0) {
+    ingestContainers(db, hostId, containers);
+    const { autoAssignGroups } = require('./web/group-queries');
+    autoAssignGroups(db, hostId, containers);
+  }
   if (disk.length > 0) ingestDisk(db, hostId, disk);
 
   // Host metrics (v2 payloads)

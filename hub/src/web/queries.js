@@ -160,6 +160,12 @@ function getDashboard(db, onlineThresholdMinutes) {
     WHERE hc.is_up = 1
   `).get();
 
+  let groups = [];
+  try {
+    const groupQueries = require('./group-queries');
+    groups = groupQueries.getGroups(db);
+  } catch { /* group queries not available */ }
+
   return {
     hostCount: hosts.length,
     hostsOnline: hosts.filter(h => h.is_online).length,
@@ -173,6 +179,7 @@ function getDashboard(db, onlineThresholdMinutes) {
     endpointsTotal: endpointTotal?.count || 0,
     endpointsUp: endpointsUp?.count || 0,
     endpointsDown: (endpointTotal?.count || 0) - (endpointsUp?.count || 0),
+    groups,
   };
 }
 

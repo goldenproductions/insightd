@@ -18,6 +18,9 @@ import { AddAgentPage } from '@/pages/AddAgentPage';
 import { LogSplitPage } from '@/pages/LogSplitPage';
 import { WebhooksPage } from '@/pages/WebhooksPage';
 import { WebhookFormPage } from '@/pages/WebhookFormPage';
+import { ServicesPage } from '@/pages/ServicesPage';
+import { ServiceDetailPage } from '@/pages/ServiceDetailPage';
+import { ServiceFormPage } from '@/pages/ServiceFormPage';
 
 export function App() {
   return (
@@ -37,6 +40,10 @@ export function App() {
                 <Route path="/endpoints/new" element={<EndpointFormPage />} />
                 <Route path="/endpoints/:endpointId" element={<EndpointDetailPage />} />
                 <Route path="/endpoints/:endpointId/edit" element={<EndpointFormPage />} />
+                <Route path="/services" element={<ServicesPage />} />
+                <Route path="/services/new" element={<ServiceFormPage />} />
+                <Route path="/services/:groupId" element={<ServiceDetailPage />} />
+                <Route path="/services/:groupId/edit" element={<ServiceFormPage />} />
                 <Route path="/webhooks" element={<WebhooksPage />} />
                 <Route path="/webhooks/new" element={<WebhookFormPage />} />
                 <Route path="/webhooks/:webhookId/edit" element={<WebhookFormPage />} />
