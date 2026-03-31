@@ -9,7 +9,7 @@ import { FormField, Input, Select, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
 
 export function SettingsPage() {
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated, token, logout } = useAuth();
   const navigate = useNavigate();
   const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
   const formRef = useRef<Record<string, string>>({});
@@ -27,6 +27,12 @@ export function SettingsPage() {
   }
 
   if (error) {
+    // Token might be stale after hub restart — clear it and redirect to login
+    if (error instanceof Error && (error.message.includes('401') || error.message.includes('Unauthorized'))) {
+      logout();
+      navigate('/login');
+      return null;
+    }
     return <AlertBanner message={error instanceof Error ? error.message : 'Failed to load settings'} color="red" />;
   }
 
