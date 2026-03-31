@@ -1,6 +1,6 @@
 const logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 
 function bootstrap(db) {
   db.exec(`
@@ -49,6 +49,15 @@ function bootstrap(db) {
       load_5              REAL,
       load_15             REAL,
       uptime_seconds      REAL,
+      gpu_utilization_percent REAL,
+      gpu_memory_used_mb  REAL,
+      gpu_memory_total_mb REAL,
+      gpu_temperature_celsius REAL,
+      cpu_temperature_celsius REAL,
+      disk_read_bytes_per_sec REAL,
+      disk_write_bytes_per_sec REAL,
+      net_rx_bytes_per_sec REAL,
+      net_tx_bytes_per_sec REAL,
       collected_at        TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -235,6 +244,17 @@ function migrate(db, fromVersion) {
       // Column already exists
     }
     // service_groups and service_group_members tables created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 9) {
+    const newCols = [
+      'gpu_utilization_percent REAL', 'gpu_memory_used_mb REAL', 'gpu_memory_total_mb REAL',
+      'gpu_temperature_celsius REAL', 'cpu_temperature_celsius REAL',
+      'disk_read_bytes_per_sec REAL', 'disk_write_bytes_per_sec REAL',
+      'net_rx_bytes_per_sec REAL', 'net_tx_bytes_per_sec REAL',
+    ];
+    for (const col of newCols) {
+      try { db.exec(`ALTER TABLE host_snapshots ADD COLUMN ${col}`); } catch { /* already exists */ }
+    }
   }
 }
 

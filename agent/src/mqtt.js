@@ -123,6 +123,15 @@ function publishCollection(hostId, data) {
       load_5: data.host.load?.load5 ?? null,
       load_15: data.host.load?.load15 ?? null,
       uptime_seconds: data.host.uptimeSeconds ?? null,
+      gpu_utilization_percent: data.gpu?.gpus?.[0]?.utilizationPercent ?? null,
+      gpu_memory_used_mb: data.gpu?.gpus?.[0]?.memoryUsedMb ?? null,
+      gpu_memory_total_mb: data.gpu?.gpus?.[0]?.memoryTotalMb ?? null,
+      gpu_temperature_celsius: data.gpu?.gpus?.[0]?.temperatureCelsius ?? null,
+      cpu_temperature_celsius: data.temperature?.sensors?.[0]?.temperatureCelsius ?? null,
+      disk_read_bytes_per_sec: data.diskIO?.readBytesPerSec ?? null,
+      disk_write_bytes_per_sec: data.diskIO?.writeBytesPerSec ?? null,
+      net_rx_bytes_per_sec: data.networkIO?.rxBytesPerSec ?? null,
+      net_tx_bytes_per_sec: data.networkIO?.txBytesPerSec ?? null,
     };
   }
   const payload = JSON.stringify(msg);

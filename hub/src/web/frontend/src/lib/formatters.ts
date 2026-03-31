@@ -40,3 +40,16 @@ export function fmtMb(value: number | null | undefined): string {
   if (value == null) return '-';
   return Math.round(value) + ' MB';
 }
+
+export function fmtBytesPerSec(value: number | null | undefined): string {
+  if (value == null) return '-';
+  if (value < 1024) return value + ' B/s';
+  if (value < 1048576) return (value / 1024).toFixed(1) + ' KB/s';
+  if (value < 1073741824) return (value / 1048576).toFixed(1) + ' MB/s';
+  return (value / 1073741824).toFixed(2) + ' GB/s';
+}
+
+export function fmtCelsius(value: number | null | undefined): string {
+  if (value == null) return '-';
+  return value.toFixed(1) + '\u00B0C';
+}

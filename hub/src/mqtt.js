@@ -125,6 +125,15 @@ function handleCollection(db, hostId, payload) {
       },
       load: { load1: h.load_1, load5: h.load_5, load15: h.load_15 },
       uptimeSeconds: h.uptime_seconds,
+      gpuUtilizationPercent: h.gpu_utilization_percent ?? null,
+      gpuMemoryUsedMb: h.gpu_memory_used_mb ?? null,
+      gpuMemoryTotalMb: h.gpu_memory_total_mb ?? null,
+      gpuTemperatureCelsius: h.gpu_temperature_celsius ?? null,
+      cpuTemperatureCelsius: h.cpu_temperature_celsius ?? null,
+      diskReadBytesPerSec: h.disk_read_bytes_per_sec ?? null,
+      diskWriteBytesPerSec: h.disk_write_bytes_per_sec ?? null,
+      netRxBytesPerSec: h.net_rx_bytes_per_sec ?? null,
+      netTxBytesPerSec: h.net_tx_bytes_per_sec ?? null,
     });
   }
 
