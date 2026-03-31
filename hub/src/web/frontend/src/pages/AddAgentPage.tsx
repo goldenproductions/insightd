@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { AgentSetup } from '@/types/api';
 import { Card } from '@/components/Card';
-import { FormField, Input } from '@/components/FormField';
+import { FormField, Input, Select } from '@/components/FormField';
 import { CommandBlock } from '@/components/CommandBlock';
 
 export function AddAgentPage() {
@@ -18,6 +18,7 @@ export function AddAgentPage() {
   const [mqttUser, setMqttUser] = useState('');
   const [mqttPass, setMqttPass] = useState('');
   const [image, setImage] = useState('');
+  const [allowUpdates, setAllowUpdates] = useState(true);
 
   const effectiveMqttUrl = mqttUrl || defaults?.mqttUrl || '';
   const effectiveMqttUser = mqttUser || defaults?.mqttUser || '';
@@ -28,12 +29,13 @@ export function AddAgentPage() {
     'docker run -d \\',
     '  --name insightd-agent \\',
     '  --restart unless-stopped \\',
-    '  -v /var/run/docker.sock:/var/run/docker.sock:ro \\',
+    `  -v /var/run/docker.sock:/var/run/docker.sock${allowUpdates ? '' : ':ro'} \\`,
     '  -v /:/host:ro \\',
     `  -e INSIGHTD_HOST_ID=${hostId || '<host-id>'} \\`,
     `  -e INSIGHTD_MQTT_URL=${effectiveMqttUrl} \\`,
     effectiveMqttUser ? `  -e INSIGHTD_MQTT_USER=${effectiveMqttUser} \\` : null,
     effectiveMqttPass ? `  -e INSIGHTD_MQTT_PASS=${effectiveMqttPass} \\` : null,
+    allowUpdates ? '  -e INSIGHTD_ALLOW_UPDATES=true \\' : null,
     `  ${effectiveImage}`,
   ].filter(Boolean).join('\n');
 
@@ -60,6 +62,12 @@ export function AddAgentPage() {
           </FormField>
           <FormField label="Docker Image">
             <Input value={image} onChange={e => setImage(e.target.value)} placeholder={defaults?.image} />
+          </FormField>
+          <FormField label="Remote Updates" description="Allow the hub to update this agent remotely">
+            <Select value={allowUpdates ? '1' : '0'} onChange={e => setAllowUpdates(e.target.value === '1')}>
+              <option value="1">Enabled</option>
+              <option value="0">Disabled</option>
+            </Select>
           </FormField>
         </div>
       </Card>
