@@ -48,8 +48,10 @@ async function handleDeleteHost(req, res, db, config, params) {
 }
 
 function handleHostDetail(req, res, db, config, params) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const showInternal = url.searchParams.get('showInternal') === 'true';
   const threshold = config.collectIntervalMinutes * 2;
-  const detail = queries.getHostDetail(db, params.hostId, threshold);
+  const detail = queries.getHostDetail(db, params.hostId, threshold, showInternal);
   if (!detail) {
     res.statusCode = 404;
     return { error: 'Host not found' };
@@ -58,7 +60,9 @@ function handleHostDetail(req, res, db, config, params) {
 }
 
 function handleHostContainers(req, res, db, config, params) {
-  return queries.getLatestContainers(db, params.hostId);
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const showInternal = url.searchParams.get('showInternal') === 'true';
+  return queries.getLatestContainers(db, params.hostId, showInternal);
 }
 
 function handleHostDisk(req, res, db, config, params) {
@@ -66,8 +70,10 @@ function handleHostDisk(req, res, db, config, params) {
 }
 
 function handleDashboard(req, res, db, config, params) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const showInternal = url.searchParams.get('showInternal') === 'true';
   const threshold = config.collectIntervalMinutes * 2;
-  return queries.getDashboard(db, threshold);
+  return queries.getDashboard(db, threshold, showInternal);
 }
 
 function handleAlerts(req, res, db, config, params) {

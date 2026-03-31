@@ -13,26 +13,25 @@ import { TrendArrow } from '@/components/TrendArrow';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { EventTimeline } from '@/components/EventTimeline';
 import { timeAgo, fmtUptime, fmtPercent, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
-import { useShowInternal, isInternalContainer } from '@/lib/useShowInternal';
+import { useShowInternal } from '@/lib/useShowInternal';
 import { useAuth } from '@/context/AuthContext';
 import { apiAuth } from '@/lib/api';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
   const navigate = useNavigate();
+  const { showInternal } = useShowInternal();
   const hid = encodeURIComponent(hostId!);
+  const si = showInternal ? '?showInternal=true' : '';
 
-  const { data } = useQuery({ queryKey: ['host', hostId], queryFn: () => api<HostDetail>(`/hosts/${hid}`) });
+  const { data } = useQuery({ queryKey: ['host', hostId, showInternal], queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`) });
   const { data: timeline } = useQuery({ queryKey: ['timeline', hostId], queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
   const { data: trends } = useQuery({ queryKey: ['trends', hostId], queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
   const { data: events } = useQuery({ queryKey: ['events', hostId], queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
 
-  const { showInternal } = useShowInternal();
-
   if (!data) return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
 
   const hm = data.hostMetrics;
-  const filteredContainers = showInternal ? data.containers : data.containers.filter(c => !isInternalContainer(c.labels));
 
   const containerCols: Column<typeof data.containers[number]>[] = [
     { header: 'Name', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.status} />{r.container_name}</span> },
@@ -96,7 +95,7 @@ export function HostDetailPage() {
         </div>
         <DataTable
           columns={containerCols}
-          data={filteredContainers}
+          data={data.containers}
           onRowClick={r => navigate(`/hosts/${hid}/containers/${encodeURIComponent(r.container_name)}`)}
           emptyText="No containers"
         />

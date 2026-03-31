@@ -21,7 +21,7 @@ function getHosts(db, onlineThresholdMinutes) {
   `).all(onlineThresholdMinutes);
 }
 
-function getHostDetail(db, hostId, onlineThresholdMinutes) {
+function getHostDetail(db, hostId, onlineThresholdMinutes, showInternal = false) {
   const host = db.prepare(`
     SELECT host_id, first_seen, last_seen,
       CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
@@ -33,7 +33,7 @@ function getHostDetail(db, hostId, onlineThresholdMinutes) {
 
   return {
     ...host,
-    containers: getLatestContainers(db, hostId),
+    containers: getLatestContainers(db, hostId, showInternal),
     disk: getLatestDisk(db, hostId),
     alerts: getAlerts(db, true, hostId),
     updates: getLatestUpdates(db, hostId),
@@ -42,8 +42,8 @@ function getHostDetail(db, hostId, onlineThresholdMinutes) {
   };
 }
 
-function getLatestContainers(db, hostId) {
-  return db.prepare(`
+function getLatestContainers(db, hostId, showInternal = false) {
+  const rows = db.prepare(`
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
@@ -58,6 +58,11 @@ function getLatestContainers(db, hostId) {
       AND cs.collected_at = latest.max_at
     ORDER BY cs.container_name
   `).all(hostId);
+  if (showInternal) return rows;
+  return rows.filter(r => {
+    if (!r.labels) return true;
+    try { return JSON.parse(r.labels)['insightd.internal'] !== 'true'; } catch { return true; }
+  });
 }
 
 function getLatestDisk(db, hostId) {
@@ -106,13 +111,11 @@ function getAlerts(db, activeOnly, hostId) {
   return db.prepare(sql).all(...params);
 }
 
-function getDashboard(db, onlineThresholdMinutes) {
+function getDashboard(db, onlineThresholdMinutes, showInternal = false) {
   const hosts = getHosts(db, onlineThresholdMinutes);
 
-  const containerCounts = db.prepare(`
-    SELECT
-      SUM(1) as total,
-      SUM(CASE WHEN cs.status = 'running' THEN 1 ELSE 0 END) as running
+  const allContainers = db.prepare(`
+    SELECT cs.status, cs.labels
     FROM container_snapshots cs
     INNER JOIN (
       SELECT host_id as h, container_name as cn, MAX(collected_at) as max_at
@@ -121,7 +124,12 @@ function getDashboard(db, onlineThresholdMinutes) {
     ) latest ON cs.host_id = latest.h
       AND cs.container_name = latest.cn
       AND cs.collected_at = latest.max_at
-  `).get();
+  `).all();
+  const filtered = showInternal ? allContainers : allContainers.filter(c => {
+    if (!c.labels) return true;
+    try { return JSON.parse(c.labels)['insightd.internal'] !== 'true'; } catch { return true; }
+  });
+  const containerCounts = { total: filtered.length, running: filtered.filter(c => c.status === 'running').length };
 
   const activeAlerts = db.prepare(
     'SELECT COUNT(*) as count FROM alert_state WHERE resolved_at IS NULL'

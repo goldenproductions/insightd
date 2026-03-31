@@ -5,10 +5,11 @@ import type { Host, ContainerSnapshot } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { timeAgo } from '@/lib/formatters';
-import { useShowInternal, isInternalContainer } from '@/lib/useShowInternal';
+import { useShowInternal } from '@/lib/useShowInternal';
 
 export function HostsPage() {
   const navigate = useNavigate();
+  const { showInternal } = useShowInternal();
   const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts') });
 
   if (!hosts) return <Loading />;
@@ -21,7 +22,7 @@ export function HostsPage() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {hosts.map(h => (
-            <HostCard key={h.host_id} host={h} onClick={() => navigate(`/hosts/${encodeURIComponent(h.host_id)}`)} />
+            <HostCard key={h.host_id} host={h} showInternal={showInternal} onClick={() => navigate(`/hosts/${encodeURIComponent(h.host_id)}`)} />
           ))}
         </div>
       )}
@@ -29,14 +30,13 @@ export function HostsPage() {
   );
 }
 
-function HostCard({ host, onClick }: { host: Host; onClick: () => void }) {
-  const { showInternal } = useShowInternal();
-  const { data: allContainers } = useQuery({
-    queryKey: ['host-containers', host.host_id],
-    queryFn: () => api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(host.host_id)}/containers`),
+function HostCard({ host, onClick, showInternal }: { host: Host; onClick: () => void; showInternal: boolean }) {
+  const si = showInternal ? '?showInternal=true' : '';
+  const { data: containers } = useQuery({
+    queryKey: ['host-containers', host.host_id, showInternal],
+    queryFn: () => api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(host.host_id)}/containers${si}`),
   });
 
-  const containers = showInternal ? allContainers : allContainers?.filter(c => !isInternalContainer(c.labels));
   const running = containers?.filter(c => c.status === 'running').length ?? 0;
   const total = containers?.length ?? 0;
 

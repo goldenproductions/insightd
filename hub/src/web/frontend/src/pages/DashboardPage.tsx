@@ -7,9 +7,12 @@ import { Card } from '@/components/Card';
 import { RankingList } from '@/components/RankingList';
 import { HealthBadge } from '@/components/HealthBadge';
 import { InsightsFeed } from '@/components/InsightsFeed';
+import { useShowInternal } from '@/lib/useShowInternal';
 
 export function DashboardPage() {
-  const { data } = useQuery({ queryKey: ['dashboard'], queryFn: () => api<DashboardData>('/dashboard') });
+  const { showInternal } = useShowInternal();
+  const si = showInternal ? '?showInternal=true' : '';
+  const { data } = useQuery({ queryKey: ['dashboard', showInternal], queryFn: () => api<DashboardData>(`/dashboard${si}`) });
   const { data: rankings } = useQuery({ queryKey: ['rankings'], queryFn: () => api<Rankings>('/rankings?limit=5') });
 
   if (!data) return <Loading />;
