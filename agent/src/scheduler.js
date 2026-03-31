@@ -25,10 +25,10 @@ function startAgentScheduler(docker, config) {
 
     const disk = await safeCollect('disk', () => collectDisk(config)) || [];
     const host = await safeCollect('host', () => collectHost(config));
-    const gpu = safeCollect('gpu', () => collectGpu());
-    const temperature = safeCollect('temperature', () => collectTemperature(config));
-    const diskIO = safeCollect('disk-io', () => collectDiskIO(config));
-    const networkIO = safeCollect('network-io', () => collectNetworkIO(config));
+    const gpu = await safeCollect('gpu', () => collectGpu());
+    const temperature = await safeCollect('temperature', () => collectTemperature(config));
+    const diskIO = await safeCollect('disk-io', () => collectDiskIO(config));
+    const networkIO = await safeCollect('network-io', () => collectNetworkIO(config));
 
     logger.info('scheduler', 'Collection cycle complete');
 
