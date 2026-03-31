@@ -28,7 +28,22 @@ export function UpdatesPage() {
   const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts') });
 
   const updateAgent = useMutation({
-    mutationFn: (hostId: string) => apiAuth<{ status: string; message?: string; error?: string }>('POST', `/update/agent/${encodeURIComponent(hostId)}`, undefined, token),
+    mutationFn: async (hostId: string) => {
+      setResults(prev => ({ ...prev, [hostId]: { status: 'updating' } }));
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000);
+      try {
+        const res = await fetch(`/api/update/agent/${encodeURIComponent(hostId)}`, {
+          method: 'POST', signal: controller.signal,
+          headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        });
+        clearTimeout(timeout);
+        return await res.json() as { status: string; message?: string; error?: string };
+      } catch {
+        clearTimeout(timeout);
+        return { status: 'failed', error: 'Timed out — agent may not support remote updates (needs v0.2.0+)' };
+      }
+    },
     onSuccess: (data, hostId) => setResults(prev => ({ ...prev, [hostId]: data })),
     onError: (err, hostId) => setResults(prev => ({ ...prev, [hostId]: { status: 'failed', error: err instanceof Error ? err.message : 'Failed' } })),
   });
@@ -141,8 +156,8 @@ export function UpdatesPage() {
                 </div>
                 <div className="flex items-center gap-2">
                   {result && (
-                    <span className={`text-xs ${result.status === 'success' ? 'text-emerald-500' : 'text-red-500'}`}>
-                      {result.status === 'success' ? 'Updated' : result.error || 'Failed'}
+                    <span className={`text-xs ${result.status === 'success' ? 'text-emerald-500' : result.status === 'updating' ? 'text-amber-500' : 'text-red-500'}`}>
+                      {result.status === 'success' ? 'Updated' : result.status === 'updating' ? 'Updating...' : result.error || 'Failed'}
                     </span>
                   )}
                   {isAuthenticated && isOutdated && h.is_online && (
