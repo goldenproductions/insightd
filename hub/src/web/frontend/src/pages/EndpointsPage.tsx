@@ -1,0 +1,53 @@
+import { useQuery } from '@tanstack/react-query';
+import { useNavigate, Link } from 'react-router-dom';
+import { api } from '@/lib/api';
+import type { EndpointSummary } from '@/types/api';
+import { useAuth } from '@/context/AuthContext';
+import { Card } from '@/components/Card';
+import { DataTable, type Column } from '@/components/DataTable';
+import { StatusDot } from '@/components/StatusDot';
+import { Badge } from '@/components/Badge';
+import { timeAgo } from '@/lib/formatters';
+
+export function EndpointsPage() {
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
+  const { data: endpoints } = useQuery({ queryKey: ['endpoints'], queryFn: () => api<EndpointSummary[]>('/endpoints') });
+
+  const columns: Column<EndpointSummary>[] = [
+    {
+      header: 'Name',
+      accessor: r => {
+        const isUp = r.lastCheck ? r.lastCheck.is_up : null;
+        const status = isUp === null ? 'none' : isUp ? 'running' : 'exited';
+        return <span className="flex items-center gap-2"><StatusDot status={status} /> {r.name}</span>;
+      },
+    },
+    { header: 'URL', accessor: r => <span className="max-w-[250px] truncate text-xs" style={{ color: 'var(--text-muted)' }}>{r.url}</span> },
+    { header: 'Uptime (24h)', accessor: r => r.uptimePercent24h != null ? `${r.uptimePercent24h}%` : '-' },
+    { header: 'Avg Response', accessor: r => r.avgResponseMs != null ? `${r.avgResponseMs}ms` : '-' },
+    { header: 'Last Check', accessor: r => r.lastCheck ? timeAgo(r.lastCheck.checked_at) : 'never' },
+    { header: 'Status', accessor: r => r.enabled ? <Badge text="on" color="green" /> : <Badge text="off" color="red" /> },
+  ];
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Endpoints</h1>
+        {isAuthenticated && (
+          <Link to="/endpoints/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+            Add Endpoint
+          </Link>
+        )}
+      </div>
+      <Card>
+        <DataTable
+          columns={columns}
+          data={endpoints || []}
+          onRowClick={r => navigate(`/endpoints/${r.id}`)}
+          emptyText={isAuthenticated ? 'No endpoints configured. Add one above.' : 'No endpoints configured.'}
+        />
+      </Card>
+    </div>
+  );
+}
