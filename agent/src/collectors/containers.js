@@ -17,6 +17,7 @@ async function collectContainers(docker) {
     status: c.State,
     restartCount: 0,
     healthStatus: null,
+    labels: c.Labels || {},
   }));
 
   // Enrich with restart counts via inspect

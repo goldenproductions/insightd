@@ -378,4 +378,64 @@ async function handleTestWebhookUnsaved(req, res, db) {
   return sendTestWebhook(body);
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved };
+// --- Service Groups ---
+
+const groupQueries = require('./group-queries');
+
+function handleGetGroups(req, res, db) {
+  return groupQueries.getGroups(db);
+}
+
+async function handleCreateGroup(req, res, db) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const body = await readBody(req);
+  if (!body.name || typeof body.name !== 'string' || body.name.length > 100) {
+    res.statusCode = 400; return { error: 'name is required (max 100 chars)' };
+  }
+  try {
+    res.statusCode = 201;
+    return groupQueries.createGroup(db, body);
+  } catch {
+    res.statusCode = 409; return { error: 'A group with this name already exists' };
+  }
+}
+
+function handleGetGroup(req, res, db, config, params) {
+  const detail = groupQueries.getGroupDetail(db, parseInt(params.groupId, 10));
+  if (!detail) { res.statusCode = 404; return { error: 'Group not found' }; }
+  return detail;
+}
+
+async function handleUpdateGroup(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const id = parseInt(params.groupId, 10);
+  if (!groupQueries.getGroup(db, id)) { res.statusCode = 404; return { error: 'Group not found' }; }
+  const body = await readBody(req);
+  return groupQueries.updateGroup(db, id, body);
+}
+
+async function handleDeleteGroup(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const result = groupQueries.deleteGroup(db, parseInt(params.groupId, 10));
+  if (!result.deleted) { res.statusCode = 404; return { error: 'Group not found' }; }
+  return result;
+}
+
+async function handleAddGroupMember(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const groupId = parseInt(params.groupId, 10);
+  if (!groupQueries.getGroup(db, groupId)) { res.statusCode = 404; return { error: 'Group not found' }; }
+  const body = await readBody(req);
+  if (!body.hostId || !body.containerName) { res.statusCode = 400; return { error: 'hostId and containerName are required' }; }
+  return groupQueries.addGroupMember(db, groupId, body.hostId, body.containerName);
+}
+
+async function handleRemoveGroupMember(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const groupId = parseInt(params.groupId, 10);
+  const body = await readBody(req);
+  if (!body.hostId || !body.containerName) { res.statusCode = 400; return { error: 'hostId and containerName are required' }; }
+  return groupQueries.removeGroupMember(db, groupId, body.hostId, body.containerName);
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember };

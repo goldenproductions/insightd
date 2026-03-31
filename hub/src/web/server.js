@@ -53,6 +53,13 @@ function startWebServer(db, config, context) {
   router.add('GET', '/api/webhooks/:webhookId', handlers.handleGetWebhook);
   router.add('PUT', '/api/webhooks/:webhookId', handlers.handleUpdateWebhook);
   router.add('DELETE', '/api/webhooks/:webhookId', handlers.handleDeleteWebhook);
+  router.add('GET', '/api/groups', handlers.handleGetGroups);
+  router.add('POST', '/api/groups', handlers.handleCreateGroup);
+  router.add('GET', '/api/groups/:groupId', handlers.handleGetGroup);
+  router.add('PUT', '/api/groups/:groupId', handlers.handleUpdateGroup);
+  router.add('DELETE', '/api/groups/:groupId', handlers.handleDeleteGroup);
+  router.add('POST', '/api/groups/:groupId/members', handlers.handleAddGroupMember);
+  router.add('DELETE', '/api/groups/:groupId/members', handlers.handleRemoveGroupMember);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);

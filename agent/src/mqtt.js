@@ -87,7 +87,7 @@ function connect(config, docker) {
 function publishCollection(hostId, data) {
   const topic = `insightd/${hostId}/collection`;
   const msg = {
-    version: 2,
+    version: 3,
     host_id: hostId,
     collected_at: new Date().toISOString(),
     containers: data.containers.map(c => ({
@@ -102,6 +102,7 @@ function publishCollection(hostId, data) {
       blkio_read_bytes: c.blkioReadBytes ?? null,
       blkio_write_bytes: c.blkioWriteBytes ?? null,
       health_status: c.healthStatus ?? null,
+      labels: JSON.stringify(c.labels || {}),
     })),
     disk: data.disk.map(d => ({
       mount_point: d.mountPoint,

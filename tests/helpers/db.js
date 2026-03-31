@@ -101,4 +101,21 @@ function seedWebhooks(db, rows) {
   return ids;
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks };
+function seedServiceGroups(db, rows) {
+  const insert = db.prepare('INSERT INTO service_groups (name, description, icon, color, source) VALUES (?, ?, ?, ?, ?)');
+  const ids = [];
+  for (const r of rows) {
+    const result = insert.run(r.name, r.description || null, r.icon || null, r.color || null, r.source || 'manual');
+    ids.push(result.lastInsertRowid);
+  }
+  return ids;
+}
+
+function seedGroupMembers(db, rows) {
+  const insert = db.prepare('INSERT INTO service_group_members (group_id, host_id, container_name, source) VALUES (?, ?, ?, ?)');
+  for (const r of rows) {
+    insert.run(r.groupId, r.hostId || 'local', r.containerName, r.source || 'manual');
+  }
+}
+
+module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks, seedServiceGroups, seedGroupMembers };
