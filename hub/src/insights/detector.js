@@ -30,6 +30,8 @@ function generateInsights(db) {
       for (const [metric, label, unit] of [['cpu_percent', 'CPU', '%'], ['memory_used_mb', 'Memory', ' MB'], ['load_5', 'Load', '']]) {
         const bl = baselines[metric];
         if (!bl || bl.sample_count < 288) continue;
+        const spread = (bl.p95 - (bl.p50 || 0));
+        if (spread < (bl.p50 || 1) * 0.1) continue;
         const values = recent.map(r => r[metric]).filter(v => v != null);
         if (values.length >= 6 && values.every(v => v > bl.p95)) {
           insert.run('host', host_id, 'performance', 'warning',
@@ -92,6 +94,9 @@ function generateInsights(db) {
       for (const [metric, label, unit] of [['cpu_percent', 'CPU', '%'], ['memory_mb', 'Memory', ' MB']]) {
         const bl = baselines[metric];
         if (!bl || bl.sample_count < 288) continue;
+        // Skip if the spread is too narrow (stable metric, no real elevation)
+        const spread = (bl.p95 - (bl.p50 || 0));
+        if (spread < (bl.p50 || 1) * 0.1) continue;
         const values = recent.map(r => r[metric]).filter(v => v != null);
         if (values.length >= 6 && values.every(v => v > bl.p95)) {
           insert.run('container', entityId, 'performance', 'warning',
