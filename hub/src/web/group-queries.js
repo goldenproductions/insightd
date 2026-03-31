@@ -112,6 +112,9 @@ function getContainerGroups(db, hostId, containerName) {
  */
 function autoAssignGroups(db, hostId, containers) {
   for (const c of containers) {
+    // Skip temporary containers from updates
+    if (c.name.endsWith('-old') || c.name.endsWith('-removing')) continue;
+
     let labels;
     try {
       labels = typeof c.labels === 'string' ? JSON.parse(c.labels) : (c.labels || {});
