@@ -465,4 +465,66 @@ function handleGetHostInsights(req, res, db, config, params) {
   return insightQueries.getHostInsights(db, params.hostId);
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights };
+// --- Version + Updates ---
+
+function handleVersionCheck(req, res) {
+  const { getVersionInfo } = require('../version-check');
+  return getVersionInfo();
+}
+
+async function handleUpdateAgent(req, res, db, config, params, ctx) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
+  const { getVersionInfo } = require('../version-check');
+  const vi = getVersionInfo();
+  const tag = vi.latestVersion || vi.currentVersion;
+  const image = `andreas404/insightd-agent:${tag}`;
+  try {
+    const result = await ctx.requestUpdate(params.hostId, 'agent', image);
+    return result;
+  } catch (err) {
+    res.statusCode = 504;
+    return { error: err.message };
+  }
+}
+
+async function handleUpdateAllAgents(req, res, db, config, params, ctx) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
+  const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
+  const { getVersionInfo } = require('../version-check');
+  const vi = getVersionInfo();
+  const tag = vi.latestVersion || vi.currentVersion;
+  const image = `andreas404/insightd-agent:${tag}`;
+  const results = [];
+  for (const host of hosts) {
+    try {
+      const result = await ctx.requestUpdate(host.host_id, 'agent', image);
+      results.push({ hostId: host.host_id, ...result });
+    } catch (err) {
+      results.push({ hostId: host.host_id, status: 'failed', error: err.message });
+    }
+  }
+  return { results };
+}
+
+async function handleUpdateHub(req, res, db, config, params, ctx) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
+  const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
+  if (hosts.length === 0) { res.statusCode = 400; return { error: 'No agents connected' }; }
+  const { getVersionInfo } = require('../version-check');
+  const vi = getVersionInfo();
+  const tag = vi.latestVersion || vi.currentVersion;
+  const image = `andreas404/insightd-hub:${tag}`;
+  try {
+    // Send to first online agent — it will update the hub container on its host
+    const result = await ctx.requestUpdate(hosts[0].host_id, 'hub', image);
+    return result;
+  } catch (err) {
+    res.statusCode = 504;
+    return { error: err.message };
+  }
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub };

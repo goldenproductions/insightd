@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
+import { UpdateBanner } from './UpdateBanner';
 
 const navItems = [
   { to: '/', label: 'Dashboard', icon: DashboardIcon },
@@ -98,6 +99,7 @@ export function Layout() {
 
         <main className="flex-1 overflow-auto p-4 lg:p-6">
           <div className="mx-auto max-w-6xl">
+            <UpdateBanner />
             <Outlet />
           </div>
         </main>

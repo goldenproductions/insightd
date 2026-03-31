@@ -64,12 +64,20 @@ function ingestUpdates(db, hostId, updates) {
 /**
  * Update or insert host record.
  */
-function upsertHost(db, hostId) {
-  db.prepare(`
-    INSERT INTO hosts (host_id, first_seen, last_seen)
-    VALUES (?, datetime('now'), datetime('now'))
-    ON CONFLICT(host_id) DO UPDATE SET last_seen = datetime('now')
-  `).run(hostId);
+function upsertHost(db, hostId, agentVersion) {
+  if (agentVersion) {
+    db.prepare(`
+      INSERT INTO hosts (host_id, first_seen, last_seen, agent_version)
+      VALUES (?, datetime('now'), datetime('now'), ?)
+      ON CONFLICT(host_id) DO UPDATE SET last_seen = datetime('now'), agent_version = excluded.agent_version
+    `).run(hostId, agentVersion);
+  } else {
+    db.prepare(`
+      INSERT INTO hosts (host_id, first_seen, last_seen)
+      VALUES (?, datetime('now'), datetime('now'))
+      ON CONFLICT(host_id) DO UPDATE SET last_seen = datetime('now')
+    `).run(hostId);
+  }
 }
 
 /**

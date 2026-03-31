@@ -40,6 +40,11 @@ function startSubscriber(db, config) {
         else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
       });
 
+      client.subscribe('insightd/+/update/response', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to update response topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/update/response');
+      });
+
       if (!connected) {
         connected = true;
         resolve(client);
@@ -59,6 +64,8 @@ function startSubscriber(db, config) {
           handleUpdates(db, hostId, payload);
         } else if (type === 'logs' && parts[3] === 'response') {
           handleLogResponse(payload);
+        } else if (type === 'update' && parts[3] === 'response') {
+          handleUpdateResponse(payload);
         }
       } catch (err) {
         logger.error('mqtt', `Failed to process message on ${topic}: ${err.message}`);
@@ -103,7 +110,7 @@ function handleCollection(db, hostId, payload) {
     usedPercent: d.used_percent,
   }));
 
-  upsertHost(db, hostId);
+  upsertHost(db, hostId, payload.agent_version || null);
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
     const { autoAssignGroups } = require('./web/group-queries');
@@ -197,6 +204,41 @@ function requestContainerLogs(hostId, containerId, options = {}) {
   });
 }
 
+// --- Update request/response ---
+const pendingUpdateRequests = new Map();
+
+function handleUpdateResponse(payload) {
+  const pending = pendingUpdateRequests.get(payload.requestId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingUpdateRequests.delete(payload.requestId);
+  pending.resolve({ status: payload.status, message: payload.message, error: payload.error || null });
+}
+
+function requestAgentUpdate(hostId, target, image) {
+  const requestId = crypto.randomUUID();
+  const timeoutMs = 120000; // 2 minutes (image pull can be slow)
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingUpdateRequests.delete(requestId);
+      reject(new Error('Update request timed out — agent may be offline or pull is slow'));
+    }, timeoutMs);
+
+    pendingUpdateRequests.set(requestId, { resolve, reject, timer });
+
+    const topic = `insightd/${hostId}/update/request`;
+    const payload = JSON.stringify({ requestId, target, image });
+    client.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        clearTimeout(timer);
+        pendingUpdateRequests.delete(requestId);
+        reject(err);
+      }
+    });
+  });
+}
+
 function disconnect() {
   // Reject all pending log requests
   for (const [id, pending] of pendingLogRequests) {
@@ -211,4 +253,4 @@ function disconnect() {
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate };

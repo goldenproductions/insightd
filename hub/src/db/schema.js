@@ -1,6 +1,6 @@
 const logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 function bootstrap(db) {
   db.exec(`
@@ -10,9 +10,10 @@ function bootstrap(db) {
     );
 
     CREATE TABLE IF NOT EXISTS hosts (
-      host_id    TEXT PRIMARY KEY,
-      first_seen TEXT NOT NULL DEFAULT (datetime('now')),
-      last_seen  TEXT NOT NULL DEFAULT (datetime('now'))
+      host_id       TEXT PRIMARY KEY,
+      first_seen    TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen     TEXT NOT NULL DEFAULT (datetime('now')),
+      agent_version TEXT
     );
 
     CREATE TABLE IF NOT EXISTS container_snapshots (
@@ -306,6 +307,9 @@ function migrate(db, fromVersion) {
   }
   if (fromVersion < 10) {
     // baselines, health_scores, insights tables created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 11) {
+    try { db.exec('ALTER TABLE hosts ADD COLUMN agent_version TEXT'); } catch { /* already exists */ }
   }
 }
 

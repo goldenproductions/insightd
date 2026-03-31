@@ -66,6 +66,14 @@ function startHubScheduler(db, config) {
     });
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'Insights engine scheduled: hourly');
+
+  // Schedule version check — daily + run once on startup
+  const { checkForUpdates } = require('./version-check');
+  checkForUpdates();
+  scheduledTasks.push(cron.schedule('0 6 * * *', () => {
+    safeCollect('version-check', () => checkForUpdates());
+  }, { timezone: config.timezone }));
+  logger.info('scheduler', 'Version check scheduled: daily at 06:00');
 }
 
 /**

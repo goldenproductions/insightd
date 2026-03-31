@@ -1,4 +1,5 @@
 const { SCHEMA_VERSION } = require('../db/schema');
+const { VERSION } = require('../config');
 
 const startTime = Date.now();
 
@@ -6,14 +7,14 @@ function getHealth(db) {
   return {
     status: 'ok',
     uptime: Math.floor((Date.now() - startTime) / 1000),
-    version: '1.0.0',
+    version: VERSION,
     schemaVersion: SCHEMA_VERSION,
   };
 }
 
 function getHosts(db, onlineThresholdMinutes) {
   return db.prepare(`
-    SELECT host_id, first_seen, last_seen,
+    SELECT host_id, first_seen, last_seen, agent_version,
       CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
         THEN 1 ELSE 0 END as is_online
     FROM hosts ORDER BY host_id

@@ -40,13 +40,14 @@ services:
     depends_on:
       - mosquitto
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
       - /:/host:ro
     environment:
       INSIGHTD_HOST_ID: ${INSIGHTD_HOST_ID:-local}
       INSIGHTD_MQTT_URL: mqtt://mosquitto:1883
       INSIGHTD_MQTT_USER: ${INSIGHTD_MQTT_USER:-insightd}
       INSIGHTD_MQTT_PASS: ${INSIGHTD_MQTT_PASS:-}
+      INSIGHTD_ALLOW_UPDATES: ${INSIGHTD_ALLOW_UPDATES:-false}
 
 volumes:
   mosquitto-data:
