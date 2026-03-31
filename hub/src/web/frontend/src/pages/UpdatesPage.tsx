@@ -42,6 +42,31 @@ export function UpdatesPage() {
     },
   });
 
+  const [hubStatus, setHubStatus] = useState<'idle' | 'updating' | 'restarting' | 'done' | 'failed'>('idle');
+  const [hubError] = useState('');
+
+  const startHubUpdate = async () => {
+    setHubStatus('updating');
+    try {
+      await apiAuth('POST', '/update/hub', undefined, token);
+    } catch {
+      // Expected — hub may go down during the request
+    }
+    // Hub will restart — poll for it to come back
+    setHubStatus('restarting');
+    const poll = setInterval(async () => {
+      try {
+        const res = await fetch('/api/health');
+        if (res.ok) {
+          clearInterval(poll);
+          setHubStatus('done');
+          setTimeout(() => window.location.reload(), 2000);
+        }
+      } catch { /* hub still down */ }
+    }, 3000);
+    setTimeout(() => clearInterval(poll), 120000);
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Updates</h1>
@@ -71,15 +96,18 @@ export function UpdatesPage() {
       </Card>
 
       {/* Hub update */}
-      {version?.updateAvailable && (
+      {isAuthenticated && version?.updateAvailable && (
         <Card title="Hub">
-          <p className="mb-3 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            The hub must be updated manually since it can't restart itself. Run on the hub host:
-          </p>
-          <pre className="overflow-x-auto rounded-lg p-3 text-sm" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)' }}>
-{`docker pull andreas404/insightd-hub:${version.latestVersion}
-docker compose up -d hub`}
-          </pre>
+          {hubStatus === 'idle' && (
+            <div className="flex items-center justify-between">
+              <span className="text-sm" style={{ color: 'var(--text)' }}>Update hub to v{version.latestVersion}</span>
+              <Button onClick={startHubUpdate}>Update Hub</Button>
+            </div>
+          )}
+          {hubStatus === 'updating' && <AlertBanner message="Sending update command to agent..." color="yellow" />}
+          {hubStatus === 'restarting' && <AlertBanner message="Hub is restarting. This page will reload automatically when it's back..." color="yellow" />}
+          {hubStatus === 'done' && <AlertBanner message="Hub updated! Reloading..." color="green" />}
+          {hubStatus === 'failed' && <AlertBanner message={hubError || 'Hub update failed'} color="red" />}
         </Card>
       )}
 
