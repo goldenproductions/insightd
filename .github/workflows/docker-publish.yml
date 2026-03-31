@@ -48,6 +48,8 @@ jobs:
           tags: ${{ steps.meta-hub.outputs.tags }}
           labels: ${{ steps.meta-hub.outputs.labels }}
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            INSIGHTD_VERSION=${{ steps.meta-hub.outputs.version }}
 
       - name: Build and push agent
         uses: docker/build-push-action@v5
@@ -58,3 +60,5 @@ jobs:
           tags: ${{ steps.meta-agent.outputs.tags }}
           labels: ${{ steps.meta-agent.outputs.labels }}
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            INSIGHTD_VERSION=${{ steps.meta-agent.outputs.version }}

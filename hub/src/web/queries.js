@@ -47,7 +47,7 @@ function getLatestContainers(db, hostId) {
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
-           cs.health_status, cs.collected_at
+           cs.health_status, cs.labels, cs.collected_at
     FROM container_snapshots cs
     INNER JOIN (
       SELECT host_id, container_name, MAX(collected_at) as max_at

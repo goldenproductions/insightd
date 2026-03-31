@@ -26,6 +26,9 @@ COPY src/ ./src/
 # Copy built frontend assets (overwrites source public/ files)
 COPY --from=frontend /app/hub/src/web/public/ ./hub/src/web/public/
 
+ARG INSIGHTD_VERSION=dev
+ENV INSIGHTD_VERSION=$INSIGHTD_VERSION
+
 RUN mkdir -p /data
 
 ENV NODE_OPTIONS="--max-old-space-size=40"
