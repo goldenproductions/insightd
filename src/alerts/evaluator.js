@@ -318,6 +318,14 @@ async function runAlerts(db, config) {
     } catch (err) {
       logger.error('alerts', `Failed to send alert: ${alert.message}`, err);
     }
+
+    // Dispatch to webhooks (independent of email)
+    try {
+      const { dispatchAlertWebhooks } = require('../../shared/webhooks/sender');
+      await dispatchAlertWebhooks(db, alert);
+    } catch (err) {
+      logger.error('alerts', `Webhook dispatch failed: ${alert.message}`, err);
+    }
   }
 }
 

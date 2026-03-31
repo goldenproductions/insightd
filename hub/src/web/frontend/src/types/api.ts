@@ -250,3 +250,23 @@ export interface LogResponse {
   logs: LogLine[];
   error?: string;
 }
+
+// Webhooks
+export interface Webhook {
+  id: number;
+  name: string;
+  type: 'slack' | 'discord' | 'telegram' | 'ntfy' | 'generic';
+  url: string;
+  secret: string | null;
+  on_alert: number;
+  on_digest: number;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WebhookTestResult {
+  ok: boolean;
+  status?: number;
+  error?: string;
+}

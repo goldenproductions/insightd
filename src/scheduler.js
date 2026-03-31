@@ -50,7 +50,7 @@ function startScheduler({ db, docker, config, collectors, digest, alerts }) {
     logger.info('scheduler', 'Building digest...');
     const data = await safeCollect('digest-build', () => buildDigest(db, config));
     if (data) {
-      await safeCollect('digest-send', () => sendDigest(data, config));
+      await safeCollect('digest-send', () => sendDigest(data, config, db));
       pruneOldData(db);
     }
   }, { timezone: config.timezone });

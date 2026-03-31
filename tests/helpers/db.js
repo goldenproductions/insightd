@@ -87,4 +87,18 @@ function seedHttpChecks(db, rows) {
   }
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks };
+function seedWebhooks(db, rows) {
+  const insert = db.prepare(`
+    INSERT INTO webhooks (name, type, url, secret, on_alert, on_digest, enabled)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  const ids = [];
+  for (const r of rows) {
+    const result = insert.run(r.name, r.type, r.url, r.secret || null,
+      r.onAlert !== false ? 1 : 0, r.onDigest !== false ? 1 : 0, r.enabled !== false ? 1 : 0);
+    ids.push(result.lastInsertRowid);
+  }
+  return ids;
+}
+
+module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks };

@@ -26,7 +26,7 @@ function startHubScheduler(db, config) {
     const liveConfig = getEffectiveConfig(db, config);
     const data = await safeCollect('digest-build', () => buildDigest(db, liveConfig));
     if (data) {
-      await safeCollect('digest-send', () => sendDigest(data, liveConfig));
+      await safeCollect('digest-send', () => sendDigest(data, liveConfig, db));
       pruneOldData(db);
     }
   }, { timezone: config.timezone }));
@@ -112,7 +112,7 @@ function startStandaloneScheduler(db, docker, config) {
     const liveConfig = getEffectiveConfig(db, config);
     const data = await safeCollect('digest-build', () => buildDigest(db, liveConfig));
     if (data) {
-      await safeCollect('digest-send', () => sendDigest(data, liveConfig));
+      await safeCollect('digest-send', () => sendDigest(data, liveConfig, db));
       pruneOldData(db);
     }
   }, { timezone: config.timezone }));
