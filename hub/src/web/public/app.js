@@ -1089,8 +1089,9 @@
       app.innerHTML = `<div class="empty">Error loading data: ${esc(err.message)}</div>`;
     }
 
-    // Auto-refresh (not for settings page)
-    if (parts[0] !== 'settings' && parts[0] !== 'add-agent') {
+    // Auto-refresh (not for form pages)
+    const isEndpointForm = parts[0] === 'endpoints' && (parts[1] === 'new' || parts[2] === 'edit');
+    if (parts[0] !== 'settings' && parts[0] !== 'add-agent' && !isEndpointForm) {
       refreshTimer = setInterval(() => route(), 30000);
     }
   }
