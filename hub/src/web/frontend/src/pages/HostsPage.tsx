@@ -5,6 +5,7 @@ import type { Host, ContainerSnapshot } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { timeAgo } from '@/lib/formatters';
+import { useShowInternal, isInternalContainer } from '@/lib/useShowInternal';
 
 export function HostsPage() {
   const navigate = useNavigate();
@@ -29,11 +30,13 @@ export function HostsPage() {
 }
 
 function HostCard({ host, onClick }: { host: Host; onClick: () => void }) {
-  const { data: containers } = useQuery({
+  const { showInternal } = useShowInternal();
+  const { data: allContainers } = useQuery({
     queryKey: ['host-containers', host.host_id],
     queryFn: () => api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(host.host_id)}/containers`),
   });
 
+  const containers = showInternal ? allContainers : allContainers?.filter(c => !isInternalContainer(c.labels));
   const running = containers?.filter(c => c.status === 'running').length ?? 0;
   const total = containers?.length ?? 0;
 
