@@ -1,0 +1,252 @@
+// Health
+export interface HealthData {
+  status: string;
+  uptime: number;
+  version: string;
+  schemaVersion: number;
+  authEnabled: boolean;
+  mode: 'hub' | 'standalone';
+}
+
+// Dashboard
+export interface DashboardData {
+  hostCount: number;
+  hostsOnline: number;
+  hostsOffline: number;
+  totalContainers: number;
+  containersRunning: number;
+  containersDown: number;
+  activeAlerts: number;
+  diskWarnings: number;
+  updatesAvailable: number;
+  endpointsTotal: number;
+  endpointsUp: number;
+  endpointsDown: number;
+}
+
+export interface RankingItem {
+  host_id: string;
+  container_name: string;
+  cpu_percent: number | null;
+  memory_mb: number | null;
+}
+
+export interface Rankings {
+  byCpu: RankingItem[];
+  byMemory: RankingItem[];
+}
+
+// Hosts
+export interface Host {
+  host_id: string;
+  first_seen: string;
+  last_seen: string;
+  is_online: number;
+}
+
+export interface HostMetrics {
+  cpu_percent: number | null;
+  memory_total_mb: number | null;
+  memory_used_mb: number | null;
+  memory_available_mb: number | null;
+  swap_total_mb: number | null;
+  swap_used_mb: number | null;
+  load_1: number | null;
+  load_5: number | null;
+  load_15: number | null;
+  uptime_seconds: number | null;
+  collected_at: string;
+}
+
+export interface DiskSnapshot {
+  mount_point: string;
+  total_gb: number;
+  used_gb: number;
+  used_percent: number;
+  collected_at: string;
+}
+
+export interface DiskForecastItem {
+  mountPoint: string;
+  daysUntilFull: number | null;
+  dailyGrowthGb: number;
+  currentPercent?: number;
+}
+
+export interface UpdateCheck {
+  container_name: string;
+  image: string;
+  has_update: number;
+  checked_at: string;
+}
+
+// Containers
+export interface ContainerSnapshot {
+  container_name: string;
+  container_id: string;
+  status: string;
+  cpu_percent: number | null;
+  memory_mb: number | null;
+  restart_count: number;
+  network_rx_bytes: number | null;
+  network_tx_bytes: number | null;
+  blkio_read_bytes: number | null;
+  blkio_write_bytes: number | null;
+  health_status: string | null;
+  collected_at: string;
+}
+
+export interface ContainerHistory {
+  status: string;
+  cpu_percent: number | null;
+  memory_mb: number | null;
+  restart_count: number;
+  network_rx_bytes: number | null;
+  network_tx_bytes: number | null;
+  blkio_read_bytes: number | null;
+  blkio_write_bytes: number | null;
+  health_status: string | null;
+  collected_at: string;
+}
+
+export interface ContainerDetail extends ContainerSnapshot {
+  host_id: string;
+  history: ContainerHistory[];
+  alerts: Alert[];
+}
+
+export interface HostDetail extends Host {
+  containers: ContainerSnapshot[];
+  disk: DiskSnapshot[];
+  alerts: Alert[];
+  updates: UpdateCheck[];
+  hostMetrics: HostMetrics | null;
+  diskForecast: DiskForecastItem[];
+}
+
+// Alerts
+export interface Alert {
+  id: number;
+  host_id: string;
+  alert_type: string;
+  target: string;
+  triggered_at: string;
+  resolved_at: string | null;
+  last_notified: string;
+  notify_count: number;
+}
+
+// Timeline
+export interface TimelineEntry {
+  name: string;
+  slots: ('up' | 'down' | 'none')[];
+  uptimePercent: number | null;
+}
+
+// Trends
+export interface ContainerTrend {
+  name: string;
+  cpuNow: number | null;
+  cpuChange: number | null;
+  memNow: number | null;
+  memChange: number | null;
+  flagged: boolean;
+}
+
+export interface HostTrend {
+  cpuNow: number | null;
+  cpuChange: number | null;
+  memNow: number | null;
+  memChange: number | null;
+  loadNow: number | null;
+  loadChange: number | null;
+}
+
+export interface Trends {
+  containers: ContainerTrend[];
+  host: HostTrend | null;
+}
+
+// Events
+export interface EventItem {
+  time: string;
+  type: string;
+  target: string;
+  message: string;
+  good: boolean;
+}
+
+// Endpoints
+export interface Endpoint {
+  id: number;
+  name: string;
+  url: string;
+  method: string;
+  expected_status: number;
+  interval_seconds: number;
+  timeout_ms: number;
+  headers: string | null;
+  enabled: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EndpointSummary extends Endpoint {
+  lastCheck: EndpointCheck | null;
+  uptimePercent24h: number | null;
+  avgResponseMs: number | null;
+}
+
+export interface EndpointDetail extends Endpoint {
+  uptimePercent24h: number | null;
+  uptimePercent7d: number | null;
+  avgResponseMs: number | null;
+  lastCheck: EndpointCheck | null;
+}
+
+export interface EndpointCheck {
+  id: number;
+  status_code: number | null;
+  response_time_ms: number | null;
+  is_up: number;
+  error: string | null;
+  checked_at: string;
+}
+
+// Settings
+export interface SettingItem {
+  key: string;
+  value: string;
+  source: 'db' | 'env' | 'default';
+  type: 'string' | 'int' | 'float' | 'bool';
+  category: string;
+  label: string;
+  hotReload: boolean;
+  sensitive: boolean;
+  description: string | null;
+}
+
+export interface SettingsResponse {
+  categories: Record<string, SettingItem[]>;
+}
+
+// Agent Setup
+export interface AgentSetup {
+  mqttUrl: string;
+  mqttUser: string;
+  mqttPass: string;
+  image: string;
+}
+
+// Log
+export interface LogLine {
+  timestamp?: string;
+  stream: 'stdout' | 'stderr';
+  message: string;
+}
+
+export interface LogResponse {
+  container: string;
+  logs: LogLine[];
+  error?: string;
+}
