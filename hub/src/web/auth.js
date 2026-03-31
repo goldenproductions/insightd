@@ -6,7 +6,11 @@ const failedAttempts = new Map();
 const LOCKOUT_ATTEMPTS = 5;
 const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
 
-// Periodic cleanup of expired sessions and lockouts
+// DB reference for reading password from settings
+let _db = null;
+function setDb(db) { _db = db; }
+
+// Periodic cleanup
 setInterval(() => {
   const now = Date.now();
   for (const [token, created] of sessions) {
@@ -17,15 +21,34 @@ setInterval(() => {
   }
 }, 3600000).unref();
 
+function getAdminPassword() {
+  if (_db) {
+    try {
+      const row = _db.prepare("SELECT value FROM settings WHERE key = 'admin.password'").get();
+      if (row && row.value) return row.value;
+    } catch { /* DB not ready */ }
+  }
+  return process.env.INSIGHTD_ADMIN_PASSWORD || '';
+}
+
 function isAuthEnabled() {
-  return !!(process.env.INSIGHTD_ADMIN_PASSWORD);
+  return !!getAdminPassword();
+}
+
+function isSetupComplete() {
+  if (_db) {
+    try {
+      const row = _db.prepare("SELECT value FROM meta WHERE key = 'setup_complete'").get();
+      return row && row.value === 'true';
+    } catch { /* DB not ready */ }
+  }
+  return false;
 }
 
 function authenticate(password, ip) {
-  const expected = process.env.INSIGHTD_ADMIN_PASSWORD;
+  const expected = getAdminPassword();
   if (!expected) return null;
 
-  // Brute force protection
   if (ip) {
     const attempts = failedAttempts.get(ip);
     if (attempts && attempts.count >= LOCKOUT_ATTEMPTS && Date.now() - attempts.first < LOCKOUT_MS) {
@@ -36,7 +59,6 @@ function authenticate(password, ip) {
   const a = Buffer.from(password);
   const b = Buffer.from(expected);
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    // Track failed attempt
     if (ip) {
       const existing = failedAttempts.get(ip);
       if (existing && Date.now() - existing.first < LOCKOUT_MS) {
@@ -48,7 +70,6 @@ function authenticate(password, ip) {
     return null;
   }
 
-  // Success — clear failed attempts
   if (ip) failedAttempts.delete(ip);
   const token = crypto.randomBytes(32).toString('hex');
   sessions.set(token, Date.now());
@@ -73,4 +94,4 @@ function requireAuth(req) {
   return validateToken(token);
 }
 
-module.exports = { isAuthEnabled, authenticate, validateToken, requireAuth };
+module.exports = { isAuthEnabled, authenticate, validateToken, requireAuth, setDb, isSetupComplete };

@@ -1,5 +1,5 @@
 const queries = require('./queries');
-const { isAuthEnabled, authenticate, requireAuth } = require('./auth');
+const { isAuthEnabled, authenticate, requireAuth, isSetupComplete } = require('./auth');
 const { getSettings, putSettings } = require('../db/settings');
 
 function readBody(req, maxBytes = 65536) {
@@ -23,7 +23,30 @@ function handleHealth(req, res, db, config, params) {
   const health = queries.getHealth(db);
   health.authEnabled = isAuthEnabled();
   health.mode = config.mqttUrl ? 'hub' : 'standalone';
+  health.setupComplete = isSetupComplete();
   return health;
+}
+
+function handleSetupStatus(req, res, db, config) {
+  return {
+    setupComplete: isSetupComplete(),
+    mode: config.mqttUrl ? 'hub' : 'standalone',
+    authEnabled: isAuthEnabled(),
+  };
+}
+
+async function handleSetupPassword(req, res, db) {
+  if (isSetupComplete()) { res.statusCode = 403; return { error: 'Setup already complete' }; }
+  const body = await readBody(req);
+  if (!body.password || body.password.length < 4) { res.statusCode = 400; return { error: 'Password must be at least 4 characters' }; }
+  db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('admin.password', ?, datetime('now'))").run(body.password);
+  return { saved: true };
+}
+
+function handleSetupComplete(req, res, db) {
+  if (isSetupComplete()) { res.statusCode = 403; return { error: 'Setup already complete' }; }
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('setup_complete', 'true')").run();
+  return { complete: true };
 }
 
 function handleHosts(req, res, db, config, params) {
@@ -560,4 +583,4 @@ async function handleUpdateHub(req, res, db, config, params, ctx) {
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub };
