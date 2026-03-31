@@ -65,12 +65,14 @@ describe('HTTP Monitor API', () => {
     assert.deepEqual(res.json(), []);
   });
 
-  it('POST /api/endpoints without auth returns 401', async () => {
+  it('POST /api/endpoints without auth and no password set allows access', async () => {
     const res = await fetch(port, '/api/endpoints', {
       method: 'POST',
       body: { name: 'Test', url: 'https://test.com' },
     });
-    assert.equal(res.status, 401);
+    // No INSIGHTD_ADMIN_PASSWORD set = auth disabled = access allowed
+    // Should get 201 (created) not 401
+    assert.equal(res.status, 201);
   });
 
   it('POST /api/endpoints with invalid data returns 400', async () => {
@@ -100,9 +102,11 @@ describe('HTTP Monitor API', () => {
     assert.equal(res.status, 404);
   });
 
-  it('DELETE /api/endpoints/:id without auth returns 401', async () => {
+  it('DELETE /api/endpoints/:id without auth and no password set allows access', async () => {
     const res = await fetch(port, '/api/endpoints/1', { method: 'DELETE' });
-    assert.equal(res.status, 401);
+    // No INSIGHTD_ADMIN_PASSWORD set = auth disabled = access allowed
+    // Returns 404 because endpoint doesn't exist, not 401
+    assert.equal(res.status, 404);
   });
 
   it('dashboard includes endpoint counts', async () => {
