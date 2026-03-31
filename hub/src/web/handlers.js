@@ -298,4 +298,84 @@ function handleEndpointChecks(req, res, db, config, params) {
   return endpointQueries.getChecks(db, id, hours);
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks };
+// --- Webhooks ---
+
+const webhookQueries = require('../../../shared/webhooks/queries');
+const { sendTestWebhook } = require('../../../shared/webhooks/sender');
+
+const VALID_WEBHOOK_TYPES = ['slack', 'discord', 'telegram', 'ntfy', 'generic'];
+
+function validateWebhookBody(body) {
+  const errors = [];
+  if (!body.name || typeof body.name !== 'string' || body.name.length > 100) {
+    errors.push('name is required (max 100 chars)');
+  }
+  if (!body.type || !VALID_WEBHOOK_TYPES.includes(body.type)) {
+    errors.push('type must be one of: ' + VALID_WEBHOOK_TYPES.join(', '));
+  }
+  if (body.type === 'telegram') {
+    if (!body.url) errors.push('Bot token is required for Telegram');
+    if (!body.secret) errors.push('Chat ID is required for Telegram');
+  } else {
+    if (!body.url || !/^https?:\/\//.test(body.url)) {
+      errors.push('url must start with http:// or https://');
+    }
+  }
+  return errors;
+}
+
+function handleGetWebhooks(req, res, db) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  return webhookQueries.getWebhooks(db);
+}
+
+async function handleCreateWebhook(req, res, db) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const body = await readBody(req);
+  const errors = validateWebhookBody(body);
+  if (errors.length > 0) { res.statusCode = 400; return { error: errors.join('; ') }; }
+  res.statusCode = 201;
+  return webhookQueries.createWebhook(db, body);
+}
+
+function handleGetWebhook(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const wh = webhookQueries.getWebhook(db, parseInt(params.webhookId, 10));
+  if (!wh) { res.statusCode = 404; return { error: 'Webhook not found' }; }
+  return wh;
+}
+
+async function handleUpdateWebhook(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const id = parseInt(params.webhookId, 10);
+  const existing = webhookQueries.getWebhook(db, id);
+  if (!existing) { res.statusCode = 404; return { error: 'Webhook not found' }; }
+  const body = await readBody(req);
+  return webhookQueries.updateWebhook(db, id, body);
+}
+
+async function handleDeleteWebhook(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const id = parseInt(params.webhookId, 10);
+  const result = webhookQueries.deleteWebhook(db, id);
+  if (!result.deleted) { res.statusCode = 404; return { error: 'Webhook not found' }; }
+  return result;
+}
+
+async function handleTestWebhook(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const id = parseInt(params.webhookId, 10);
+  const wh = webhookQueries.getWebhook(db, id);
+  if (!wh) { res.statusCode = 404; return { error: 'Webhook not found' }; }
+  return sendTestWebhook(wh);
+}
+
+async function handleTestWebhookUnsaved(req, res, db) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const body = await readBody(req);
+  const errors = validateWebhookBody(body);
+  if (errors.length > 0) { res.statusCode = 400; return { error: errors.join('; ') }; }
+  return sendTestWebhook(body);
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved };

@@ -1,6 +1,6 @@
 const logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 
 function bootstrap(db) {
   db.exec(`
@@ -127,6 +127,19 @@ function bootstrap(db) {
 
     CREATE INDEX IF NOT EXISTS idx_http_checks_endpoint_time
       ON http_checks (endpoint_id, checked_at);
+
+    CREATE TABLE IF NOT EXISTS webhooks (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT NOT NULL,
+      type        TEXT NOT NULL,
+      url         TEXT NOT NULL,
+      secret      TEXT,
+      on_alert    INTEGER NOT NULL DEFAULT 1,
+      on_digest   INTEGER NOT NULL DEFAULT 1,
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 
   // Track schema version and run migrations
@@ -186,6 +199,9 @@ function migrate(db, fromVersion) {
   }
   if (fromVersion < 6) {
     // http_endpoints and http_checks tables are created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 7) {
+    // webhooks table is created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 

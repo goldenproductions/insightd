@@ -46,6 +46,13 @@ function startWebServer(db, config, context) {
   router.add('GET', '/api/endpoints/:endpointId', handlers.handleGetEndpoint);
   router.add('PUT', '/api/endpoints/:endpointId', handlers.handleUpdateEndpoint);
   router.add('DELETE', '/api/endpoints/:endpointId', handlers.handleDeleteEndpoint);
+  router.add('GET', '/api/webhooks', handlers.handleGetWebhooks);
+  router.add('POST', '/api/webhooks', handlers.handleCreateWebhook);
+  router.add('POST', '/api/webhooks/test', handlers.handleTestWebhookUnsaved);
+  router.add('POST', '/api/webhooks/:webhookId/test', handlers.handleTestWebhook);
+  router.add('GET', '/api/webhooks/:webhookId', handlers.handleGetWebhook);
+  router.add('PUT', '/api/webhooks/:webhookId', handlers.handleUpdateWebhook);
+  router.add('DELETE', '/api/webhooks/:webhookId', handlers.handleDeleteWebhook);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
