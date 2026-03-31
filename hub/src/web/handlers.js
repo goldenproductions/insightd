@@ -438,4 +438,31 @@ async function handleRemoveGroupMember(req, res, db, config, params) {
   return groupQueries.removeGroupMember(db, groupId, body.hostId, body.containerName);
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember };
+// --- Insights ---
+
+const insightQueries = require('../insights/queries');
+
+function handleGetBaselines(req, res, db, config, params) {
+  return insightQueries.getBaselines(db, params.entityType, decodeURIComponent(params.entityId));
+}
+
+function handleGetAllHealthScores(req, res, db) {
+  return insightQueries.getAllHealthScores(db);
+}
+
+function handleGetHealthScore(req, res, db, config, params) {
+  const score = insightQueries.getHealthScore(db, params.entityType, decodeURIComponent(params.entityId));
+  if (!score) { res.statusCode = 404; return { error: 'No health score found' }; }
+  score.factors = JSON.parse(score.factors);
+  return score;
+}
+
+function handleGetInsights(req, res, db) {
+  return insightQueries.getInsights(db);
+}
+
+function handleGetHostInsights(req, res, db, config, params) {
+  return insightQueries.getHostInsights(db, params.hostId);
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights };

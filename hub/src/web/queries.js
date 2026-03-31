@@ -180,7 +180,27 @@ function getDashboard(db, onlineThresholdMinutes) {
     endpointsUp: endpointsUp?.count || 0,
     endpointsDown: (endpointTotal?.count || 0) - (endpointsUp?.count || 0),
     groups,
+    systemHealthScore: getSystemHealthScore(db),
+    topInsights: getTopInsights(db),
   };
+}
+
+function getSystemHealthScore(db) {
+  try {
+    const row = db.prepare("SELECT score, factors, computed_at FROM health_scores WHERE entity_type = 'system' AND entity_id = 'system'").get();
+    if (!row) return null;
+    return { score: row.score, factors: JSON.parse(row.factors), computedAt: row.computed_at };
+  } catch { return null; }
+}
+
+function getTopInsights(db) {
+  try {
+    return db.prepare(`
+      SELECT entity_type, entity_id, category, severity, title, message FROM insights
+      ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END
+      LIMIT 5
+    `).all();
+  } catch { return []; }
 }
 
 function getLatestHostMetrics(db, hostId) {

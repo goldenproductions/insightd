@@ -60,6 +60,11 @@ function startWebServer(db, config, context) {
   router.add('DELETE', '/api/groups/:groupId', handlers.handleDeleteGroup);
   router.add('POST', '/api/groups/:groupId/members', handlers.handleAddGroupMember);
   router.add('DELETE', '/api/groups/:groupId/members', handlers.handleRemoveGroupMember);
+  router.add('GET', '/api/baselines/:entityType/:entityId', handlers.handleGetBaselines);
+  router.add('GET', '/api/health-scores', handlers.handleGetAllHealthScores);
+  router.add('GET', '/api/health-scores/:entityType/:entityId', handlers.handleGetHealthScore);
+  router.add('GET', '/api/insights', handlers.handleGetInsights);
+  router.add('GET', '/api/hosts/:hostId/insights', handlers.handleGetHostInsights);
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
