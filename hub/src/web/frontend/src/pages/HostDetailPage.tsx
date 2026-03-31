@@ -14,6 +14,8 @@ import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { EventTimeline } from '@/components/EventTimeline';
 import { timeAgo, fmtUptime, fmtPercent, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
 import { useShowInternal, isInternalContainer } from '@/lib/useShowInternal';
+import { useAuth } from '@/context/AuthContext';
+import { apiAuth } from '@/lib/api';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -44,10 +46,13 @@ export function HostDetailPage() {
     <div className="space-y-6">
       <Link to="/hosts" className="text-sm text-blue-500 hover:underline">&larr; Back to Hosts</Link>
 
-      <div className="flex items-center gap-2">
-        <StatusDot status={data.is_online ? 'online' : 'offline'} size="lg" />
-        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>{data.host_id}</h1>
-        <Badge text={data.is_online ? 'online' : 'offline'} color={data.is_online ? 'green' : 'red'} />
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <StatusDot status={data.is_online ? 'online' : 'offline'} size="lg" />
+          <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>{data.host_id}</h1>
+          <Badge text={data.is_online ? 'online' : 'offline'} color={data.is_online ? 'green' : 'red'} />
+        </div>
+        <RemoveHostButton hostId={hostId!} />
       </div>
 
       {/* Host system metrics */}
@@ -163,5 +168,26 @@ export function HostDetailPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+function RemoveHostButton({ hostId }: { hostId: string }) {
+  const { isAuthenticated, token } = useAuth();
+  const navigate = useNavigate();
+
+  if (!isAuthenticated) return null;
+
+  const remove = async () => {
+    if (!confirm(`Remove host "${hostId}" and all its data? This cannot be undone.`)) return;
+    try {
+      await apiAuth('DELETE', `/hosts/${encodeURIComponent(hostId)}`, undefined, token);
+      navigate('/hosts');
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <button onClick={remove} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700">
+      Remove Host
+    </button>
   );
 }

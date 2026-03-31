@@ -31,6 +31,22 @@ function handleHosts(req, res, db, config, params) {
   return queries.getHosts(db, threshold);
 }
 
+async function handleDeleteHost(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const hostId = decodeURIComponent(params.hostId);
+  const host = db.prepare('SELECT host_id FROM hosts WHERE host_id = ?').get(hostId);
+  if (!host) { res.statusCode = 404; return { error: 'Host not found' }; }
+
+  db.prepare('DELETE FROM container_snapshots WHERE host_id = ?').run(hostId);
+  db.prepare('DELETE FROM host_snapshots WHERE host_id = ?').run(hostId);
+  db.prepare('DELETE FROM disk_snapshots WHERE host_id = ?').run(hostId);
+  db.prepare('DELETE FROM alert_state WHERE host_id = ?').run(hostId);
+  db.prepare('DELETE FROM service_group_members WHERE host_id = ?').run(hostId);
+  db.prepare('DELETE FROM hosts WHERE host_id = ?').run(hostId);
+
+  return { deleted: true, hostId };
+}
+
 function handleHostDetail(req, res, db, config, params) {
   const threshold = config.collectIntervalMinutes * 2;
   const detail = queries.getHostDetail(db, params.hostId, threshold);
@@ -536,4 +552,4 @@ async function handleUpdateHub(req, res, db, config, params, ctx) {
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub };

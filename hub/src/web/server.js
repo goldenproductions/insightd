@@ -24,6 +24,7 @@ function startWebServer(db, config, context) {
 
   router.add('GET', '/api/health', handlers.handleHealth);
   router.add('GET', '/api/hosts', handlers.handleHosts);
+  router.add('DELETE', '/api/hosts/:hostId', handlers.handleDeleteHost);
   router.add('GET', '/api/hosts/:hostId', handlers.handleHostDetail);
   router.add('GET', '/api/hosts/:hostId/timeline', handlers.handleTimeline);
   router.add('GET', '/api/hosts/:hostId/trends', handlers.handleTrends);
