@@ -113,7 +113,7 @@ export function UpdatesPage() {
 
       {/* Agent updates */}
       <Card title="Agents">
-        {isAuthenticated && version?.updateAvailable && (
+        {isAuthenticated && (hosts || []).some(h => version?.latestVersion && h.agent_version && h.agent_version !== version.latestVersion) && (
           <div className="mb-4 flex justify-end">
             <Button onClick={() => updateAll.mutate()} disabled={updateAll.isPending}>
               {updateAll.isPending ? 'Updating All...' : 'Update All Agents'}
@@ -145,7 +145,7 @@ export function UpdatesPage() {
                       {result.status === 'success' ? 'Updated' : result.error || 'Failed'}
                     </span>
                   )}
-                  {isAuthenticated && version?.updateAvailable && h.is_online && (
+                  {isAuthenticated && isOutdated && h.is_online && (
                     <Button onClick={() => updateAgent.mutate(h.host_id)} disabled={updateAgent.isPending}>
                       Update
                     </Button>
