@@ -6,6 +6,7 @@ import { Badge } from '@/components/Badge';
 import { Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 
 interface VersionInfo {
   currentVersion: string;
@@ -24,6 +25,13 @@ interface Host {
   is_online: number;
 }
 
+interface ImageUpdate {
+  host_id: string;
+  container_name: string;
+  image: string;
+  checked_at: string;
+}
+
 type UpdateResult = { status: string; message?: string; error?: string };
 
 export function UpdatesPage() {
@@ -33,6 +41,7 @@ export function UpdatesPage() {
 
   const { data: version } = useQuery({ queryKey: ['version-check'], queryFn: () => api<VersionInfo>('/version-check') });
   const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts') });
+  const { data: imageUpdates } = useQuery({ queryKey: ['image-updates'], queryFn: () => api<ImageUpdate[]>('/image-updates') });
 
   const updateAgent = useMutation({
     mutationFn: async (hostId: string) => {
@@ -278,6 +287,42 @@ export function UpdatesPage() {
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No agents connected.</p>
           )}
         </div>
+      </Card>
+
+      {/* Container image updates */}
+      <Card title="Container Image Updates">
+        {(!imageUpdates || imageUpdates.length === 0) ? (
+          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>All container images are up to date.</p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {imageUpdates.length} container{imageUpdates.length > 1 ? 's' : ''} with newer images on Docker Hub.
+            </p>
+            <div className="space-y-2">
+              {imageUpdates.map(u => (
+                <Link key={`${u.host_id}/${u.container_name}`}
+                  to={`/hosts/${encodeURIComponent(u.host_id)}/containers/${encodeURIComponent(u.container_name)}`}
+                  className="flex items-center justify-between rounded-lg p-3 transition-colors"
+                  style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--color-info)')}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
+                >
+                  <div>
+                    <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{u.container_name}</div>
+                    <div className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>{u.image}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge text={u.host_id} color="blue" />
+                    <Badge text="Update available" color="yellow" />
+                  </div>
+                </Link>
+              ))}
+            </div>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Checked {imageUpdates[0]?.checked_at ? new Date(imageUpdates[0].checked_at + 'Z').toLocaleString() : 'recently'}
+            </p>
+          </div>
+        )}
       </Card>
     </div>
   );

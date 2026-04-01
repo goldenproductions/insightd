@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { MetricRating } from '@/lib/ratings';
 import { ratingColors } from '@/lib/ratings';
 
@@ -9,8 +10,8 @@ export function StatsGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function StatCard({ value, label, color, rating }: { value: React.ReactNode; label: string; color?: string; rating?: MetricRating | null }) {
-  return (
+export function StatCard({ value, label, color, rating, to }: { value: React.ReactNode; label: string; color?: string; rating?: MetricRating | null; to?: string }) {
+  const content = (
     <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
       <div className="text-2xl font-bold" style={{ color: color || (rating ? ratingColors[rating.rating] : undefined) || 'var(--text)' }}>
         {value}
@@ -25,4 +26,9 @@ export function StatCard({ value, label, color, rating }: { value: React.ReactNo
       </div>
     </div>
   );
+
+  if (to) {
+    return <Link to={to} className="block transition-opacity hover:opacity-80">{content}</Link>;
+  }
+  return content;
 }
