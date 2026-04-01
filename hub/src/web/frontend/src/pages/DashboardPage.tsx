@@ -29,7 +29,7 @@ export function DashboardPage() {
         <StatCard value={`${data.containersRunning}/${data.totalContainers}`} label="Containers Running" color={data.containersDown > 0 ? 'var(--color-danger)' : 'var(--color-success)'} />
         <StatCard value={data.activeAlerts} label="Active Alerts" color={data.activeAlerts > 0 ? 'var(--color-danger)' : 'var(--color-success)'} />
         <StatCard value={data.diskWarnings} label="Disk Warnings" color={data.diskWarnings > 0 ? 'var(--color-warning)' : 'var(--color-success)'} />
-        <StatCard value={data.updatesAvailable} label="Updates Available" />
+        <StatCard value={data.updatesAvailable} label="Updates Available" to="/updates" color={data.updatesAvailable > 0 ? 'var(--color-info)' : undefined} />
         {data.endpointsTotal > 0 && (
           <StatCard value={`${data.endpointsUp}/${data.endpointsTotal}`} label="Endpoints Up" color={data.endpointsDown > 0 ? 'var(--color-danger)' : 'var(--color-success)'} />
         )}

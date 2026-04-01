@@ -484,4 +484,19 @@ function getDiskForecast(db, hostId) {
   });
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast };
+function getAllImageUpdates(db) {
+  return db.prepare(`
+    SELECT uc.host_id, uc.container_name, uc.image, uc.checked_at
+    FROM update_checks uc
+    INNER JOIN (
+      SELECT host_id, container_name, MAX(checked_at) as max_at
+      FROM update_checks GROUP BY host_id, container_name
+    ) latest ON uc.host_id = latest.host_id
+      AND uc.container_name = latest.container_name
+      AND uc.checked_at = latest.max_at
+    WHERE uc.has_update = 1
+    ORDER BY uc.host_id, uc.container_name
+  `).all();
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates };

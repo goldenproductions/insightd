@@ -69,6 +69,7 @@ function startWebServer(db, config, context) {
   router.add('GET', '/api/setup/status', handlers.handleSetupStatus);
   router.add('POST', '/api/setup/password', handlers.handleSetupPassword);
   router.add('POST', '/api/setup/complete', handlers.handleSetupComplete);
+  router.add('GET', '/api/image-updates', handlers.handleImageUpdates);
   router.add('GET', '/api/version-check', handlers.handleVersionCheck);
   router.add('POST', '/api/update/agent/:hostId', handlers.handleUpdateAgent);
   router.add('POST', '/api/update/agents', handlers.handleUpdateAllAgents);
