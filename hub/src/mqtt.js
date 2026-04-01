@@ -222,7 +222,7 @@ function requestAgentUpdate(hostId, target, image) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingUpdateRequests.delete(requestId);
-      reject(new Error('Update request timed out — agent may be offline or pull is slow'));
+      reject(new Error('No response from agent. Check that INSIGHTD_ALLOW_UPDATES=true is set and the agent is running v0.2.0+.'));
     }, timeoutMs);
 
     pendingUpdateRequests.set(requestId, { resolve, reject, timer });

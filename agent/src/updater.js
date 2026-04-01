@@ -47,13 +47,6 @@ async function performUpdate(docker, target, image) {
   });
   logger.info('updater', `Pull complete: ${image}`);
 
-  // 2. Stop old container
-  try { await container.stop({ t: 5 }); } catch { /* already stopped */ }
-
-  // 3. Rename old container to free the name
-  try { await container.rename({ name: oldName + '-old' }); } catch { /* rename failed */ }
-
-  // 4. Create and start new container with same config
   const createOpts = {
     name: oldName,
     Image: image,
@@ -68,12 +61,25 @@ async function performUpdate(docker, target, image) {
     },
   };
 
-  const newContainer = await docker.createContainer(createOpts);
-  await newContainer.start();
-  logger.info('updater', `New container started: ${newContainer.id.slice(0, 12)}`);
+  if (target === 'agent') {
+    // Self-update: rename self (while running) to free the name, then create
+    // and start the replacement. The new container's cleanupOldContainers()
+    // will remove us on startup. We must NOT stop ourselves here — that would
+    // kill our process before we can create the replacement or send a response.
+    try { await container.rename({ name: oldName + '-old' }); } catch { /* rename failed */ }
 
-  // 5. For non-self updates, remove old container. For self-updates, we're about to die.
-  if (target !== 'agent') {
+    const newContainer = await docker.createContainer(createOpts);
+    await newContainer.start();
+    logger.info('updater', `New agent container started: ${newContainer.id.slice(0, 12)}`);
+  } else {
+    // Non-self update (e.g. hub): stop, rename, replace, remove old.
+    try { await container.stop({ t: 10 }); } catch { /* already stopped */ }
+    try { await container.rename({ name: oldName + '-old' }); } catch { /* rename failed */ }
+
+    const newContainer = await docker.createContainer(createOpts);
+    await newContainer.start();
+    logger.info('updater', `New container started: ${newContainer.id.slice(0, 12)}`);
+
     try {
       await container.remove({ force: true });
       logger.info('updater', `Old container removed`);
