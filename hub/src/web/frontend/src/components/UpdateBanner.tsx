@@ -4,8 +4,9 @@ import { Link } from 'react-router-dom';
 
 interface VersionInfo {
   currentVersion: string;
-  latestVersion: string | null;
-  updateAvailable: boolean;
+  latestHubVersion: string | null;
+  latestAgentVersion: string | null;
+  hubUpdateAvailable: boolean;
   checkedAt: string | null;
 }
 
@@ -27,17 +28,17 @@ export function UpdateBanner() {
     queryFn: () => api<Host[]>('/hosts'),
   });
 
-  const hubOutdated = version?.updateAvailable;
-  const outdatedAgents = (hosts || []).filter(h => version?.latestVersion && h.agent_version && h.agent_version !== version.latestVersion);
+  const hubOutdated = version?.hubUpdateAvailable;
+  const outdatedAgents = (hosts || []).filter(h => version?.latestAgentVersion && h.agent_version && h.agent_version !== version.latestAgentVersion);
   const agentsOutdated = outdatedAgents.length > 0;
 
   if (!hubOutdated && !agentsOutdated) return null;
 
   const message = hubOutdated && agentsOutdated
-    ? `insightd v${version?.latestVersion} available. Hub and ${outdatedAgents.length} agent${outdatedAgents.length > 1 ? 's' : ''} need updating.`
+    ? `Hub v${version?.latestHubVersion} and ${outdatedAgents.length} agent${outdatedAgents.length > 1 ? 's' : ''} have updates available.`
     : hubOutdated
-    ? `insightd v${version?.latestVersion} available. You're running v${version?.currentVersion}.`
-    : `${outdatedAgents.length} agent${outdatedAgents.length > 1 ? 's' : ''} running v${outdatedAgents[0]?.agent_version} — latest is v${version?.latestVersion}.`;
+    ? `Hub v${version?.latestHubVersion} available. You're running v${version?.currentVersion}.`
+    : `${outdatedAgents.length} agent${outdatedAgents.length > 1 ? 's' : ''} running v${outdatedAgents[0]?.agent_version} — latest is v${version?.latestAgentVersion}.`;
 
   return (
     <div className="mb-4 flex items-center justify-between rounded-lg px-4 py-2.5 text-sm"

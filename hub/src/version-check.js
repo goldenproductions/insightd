@@ -1,26 +1,27 @@
 const logger = require('../../shared/utils/logger');
 const { VERSION } = require('./config');
 
-let latestVersion = null;
+let latestHubVersion = null;
+let latestAgentVersion = null;
 let latestCheckedAt = null;
 
 /**
- * Check Docker Hub for the latest insightd-hub semver tag.
+ * Fetch the latest semver tag from a Docker Hub repository.
  */
-async function checkForUpdates() {
+async function fetchLatestTag(repo) {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
-    const res = await fetch('https://hub.docker.com/v2/repositories/andreas404/insightd-hub/tags/?page_size=10&ordering=last_updated', {
+    const res = await fetch(`https://hub.docker.com/v2/repositories/${repo}/tags/?page_size=10&ordering=last_updated`, {
       headers: { 'User-Agent': 'insightd' },
       signal: controller.signal,
     });
     clearTimeout(timeout);
 
     if (!res.ok) {
-      logger.warn('version-check', `Docker Hub API returned ${res.status}`);
-      return;
+      logger.warn('version-check', `Docker Hub API returned ${res.status} for ${repo}`);
+      return null;
     }
 
     const data = await res.json();
@@ -36,30 +37,47 @@ async function checkForUpdates() {
         return 0;
       });
 
-    if (tags.length === 0) {
-      logger.info('version-check', 'No semver tags found on Docker Hub');
-      return;
-    }
-
-    latestVersion = tags[0] || null;
-    latestCheckedAt = new Date().toISOString();
-
-    if (latestVersion !== VERSION) {
-      logger.info('version-check', `New version available: ${latestVersion} (current: ${VERSION})`);
-    } else {
-      logger.info('version-check', `Up to date: ${VERSION}`);
-    }
+    return tags[0] || null;
   } catch (err) {
-    logger.warn('version-check', `Failed to check for updates: ${err.message}`);
+    logger.warn('version-check', `Failed to fetch tags for ${repo}: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Check Docker Hub for the latest insightd-hub and insightd-agent semver tags.
+ */
+async function checkForUpdates() {
+  const [hub, agent] = await Promise.all([
+    fetchLatestTag('andreas404/insightd-hub'),
+    fetchLatestTag('andreas404/insightd-agent'),
+  ]);
+
+  if (hub !== null) latestHubVersion = hub;
+  if (agent !== null) latestAgentVersion = agent;
+  latestCheckedAt = new Date().toISOString();
+
+  if (latestHubVersion && latestHubVersion !== VERSION) {
+    logger.info('version-check', `New hub version available: ${latestHubVersion} (current: ${VERSION})`);
+  } else {
+    logger.info('version-check', `Hub up to date: ${VERSION}`);
+  }
+
+  if (latestAgentVersion) {
+    logger.info('version-check', `Latest agent version: ${latestAgentVersion}`);
   }
 }
 
 function getVersionInfo() {
   return {
     currentVersion: VERSION,
-    latestVersion,
-    updateAvailable: latestVersion ? latestVersion !== VERSION : false,
+    latestHubVersion,
+    latestAgentVersion,
+    hubUpdateAvailable: latestHubVersion ? latestHubVersion !== VERSION : false,
     checkedAt: latestCheckedAt,
+    // Backward compat
+    latestVersion: latestHubVersion,
+    updateAvailable: latestHubVersion ? latestHubVersion !== VERSION : false,
   };
 }
 

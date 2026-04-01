@@ -1,4 +1,4 @@
-const VERSION = process.env.INSIGHTD_VERSION || '0.2.0';
+const VERSION = process.env.INSIGHTD_VERSION || '0.3.0';
 
 const config = Object.freeze({
   // Host identification (required)
