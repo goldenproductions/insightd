@@ -9,9 +9,13 @@ import { useState } from 'react';
 
 interface VersionInfo {
   currentVersion: string;
+  latestHubVersion: string | null;
+  latestAgentVersion: string | null;
+  hubUpdateAvailable: boolean;
+  checkedAt: string | null;
+  // backward compat
   latestVersion: string | null;
   updateAvailable: boolean;
-  checkedAt: string | null;
 }
 
 interface Host {
@@ -82,6 +86,9 @@ export function UpdatesPage() {
     setTimeout(() => clearInterval(poll), 120000);
   };
 
+  const latestAgent = version?.latestAgentVersion;
+  const latestHub = version?.latestHubVersion;
+
   return (
     <div className="space-y-6">
       <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Updates</h1>
@@ -90,32 +97,38 @@ export function UpdatesPage() {
       <Card title="Version">
         <div className="space-y-2 text-sm">
           <div className="flex items-center gap-3">
-            <span style={{ color: 'var(--text-muted)' }}>Current:</span>
+            <span style={{ color: 'var(--text-muted)' }}>Hub:</span>
             <Badge text={`v${version?.currentVersion || '?'}`} color="blue" />
+            {latestHub && (
+              <>
+                <span style={{ color: 'var(--text-muted)' }}>→</span>
+                <Badge text={`v${latestHub}`} color={version?.hubUpdateAvailable ? 'green' : 'blue'} />
+              </>
+            )}
           </div>
           <div className="flex items-center gap-3">
-            <span style={{ color: 'var(--text-muted)' }}>Latest:</span>
-            {version?.latestVersion ? (
-              <Badge text={`v${version.latestVersion}`} color={version.updateAvailable ? 'green' : 'blue'} />
+            <span style={{ color: 'var(--text-muted)' }}>Agent:</span>
+            {latestAgent ? (
+              <Badge text={`v${latestAgent}`} color="blue" />
             ) : (
               <span style={{ color: 'var(--text-muted)' }}>Checking...</span>
             )}
           </div>
-          {version?.updateAvailable && (
-            <AlertBanner message={`Version ${version.latestVersion} is available!`} color="green" />
+          {version?.hubUpdateAvailable && (
+            <AlertBanner message={`Hub v${latestHub} is available!`} color="green" />
           )}
-          {!version?.updateAvailable && version?.latestVersion && (
-            <p style={{ color: 'var(--color-success)' }}>You're up to date.</p>
+          {!version?.hubUpdateAvailable && latestHub && (
+            <p style={{ color: 'var(--color-success)' }}>Hub is up to date.</p>
           )}
         </div>
       </Card>
 
       {/* Hub update */}
-      {isAuthenticated && version?.updateAvailable && (
+      {isAuthenticated && version?.hubUpdateAvailable && (
         <Card title="Hub">
           {hubStatus === 'idle' && (
             <div className="flex items-center justify-between">
-              <span className="text-sm" style={{ color: 'var(--text)' }}>Update hub to v{version.latestVersion}</span>
+              <span className="text-sm" style={{ color: 'var(--text)' }}>Update hub to v{latestHub}</span>
               <Button onClick={startHubUpdate}>Update Hub</Button>
             </div>
           )}
@@ -128,7 +141,7 @@ export function UpdatesPage() {
 
       {/* Agent updates */}
       <Card title="Agents">
-        {isAuthenticated && (hosts || []).some(h => version?.latestVersion && h.agent_version && h.agent_version !== version.latestVersion) && (
+        {isAuthenticated && (hosts || []).some(h => latestAgent && h.agent_version && h.agent_version !== latestAgent) && (
           <div className="mb-4 flex justify-end">
             <Button onClick={() => updateAll.mutate()} disabled={updateAll.isPending}>
               {updateAll.isPending ? 'Updating All...' : 'Update All Agents'}
@@ -138,7 +151,7 @@ export function UpdatesPage() {
         <div className="space-y-3">
           {(hosts || []).map(h => {
             const result = results[h.host_id];
-            const isOutdated = version?.latestVersion && h.agent_version && h.agent_version !== version.latestVersion;
+            const isOutdated = latestAgent && h.agent_version && h.agent_version !== latestAgent;
             return (
               <div key={h.host_id} className="flex items-center justify-between rounded-lg p-3" style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
                 <div>

@@ -527,7 +527,7 @@ async function handleUpdateAgent(req, res, db, config, params, ctx) {
   snoozeAlerts(10);
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
-  const tag = vi.latestVersion || vi.currentVersion;
+  const tag = vi.latestAgentVersion || vi.currentVersion;
   const image = `andreas404/insightd-agent:${tag}`;
   try {
     const result = await ctx.requestUpdate(params.hostId, 'agent', image);
@@ -546,7 +546,7 @@ async function handleUpdateAllAgents(req, res, db, config, params, ctx) {
   const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
-  const tag = vi.latestVersion || vi.currentVersion;
+  const tag = vi.latestAgentVersion || vi.currentVersion;
   const image = `andreas404/insightd-agent:${tag}`;
   const results = [];
   for (const host of hosts) {
@@ -572,7 +572,7 @@ async function handleUpdateHub(req, res, db, config, params, ctx) {
   if (!localAgent) { res.statusCode = 400; return { error: `No online agent found on hub host (${hubHostId}). Ensure an agent is running on the same host.` }; }
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
-  const tag = vi.latestVersion || vi.currentVersion;
+  const tag = vi.latestHubVersion || vi.currentVersion;
   const image = `andreas404/insightd-hub:${tag}`;
   try {
     const result = await ctx.requestUpdate(localAgent.host_id, 'hub', image);
