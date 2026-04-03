@@ -5,14 +5,8 @@ import { useTheme } from '@/context/ThemeContext';
 import { useShowInternal } from '@/lib/useShowInternal';
 import { UpdateBanner } from './UpdateBanner';
 
-const navItems = [
-  { to: '/', label: 'Dashboard', icon: DashboardIcon },
-  { to: '/services', label: 'Services', icon: ServicesIcon },
-  { to: '/hosts', label: 'Hosts', icon: HostsIcon },
-  { to: '/alerts', label: 'Alerts', icon: AlertsIcon },
-  { to: '/endpoints', label: 'Endpoints', icon: EndpointsIcon },
-  { to: '/webhooks', label: 'Webhooks', icon: WebhooksIcon },
-];
+interface NavItem { to: string; label: string; icon: () => React.JSX.Element }
+interface NavGroup { label: string; items: NavItem[] }
 
 export function Layout() {
   const { authEnabled, isHubMode } = useAuth();
@@ -20,10 +14,25 @@ export function Layout() {
   const { showInternal, toggleShowInternal } = useShowInternal();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const allItems = [
-    ...navItems,
-    ...(isHubMode ? [{ to: '/add-agent', label: 'Add Agent', icon: AgentIcon }] : []),
-    ...(authEnabled ? [{ to: '/settings', label: 'Settings', icon: SettingsIcon }] : []),
+  const navGroups: NavGroup[] = [
+    { label: 'Monitor', items: [
+      { to: '/', label: 'Dashboard', icon: DashboardIcon },
+      { to: '/hosts', label: 'Hosts', icon: HostsIcon },
+      { to: '/services', label: 'Services', icon: ServicesIcon },
+      { to: '/endpoints', label: 'Endpoints', icon: EndpointsIcon },
+    ]},
+    { label: 'Respond', items: [
+      { to: '/alerts', label: 'Alerts', icon: AlertsIcon },
+      { to: '/webhooks', label: 'Webhooks', icon: WebhooksIcon },
+    ]},
+    { label: 'System', items: [
+      { to: '/updates', label: 'Updates', icon: UpdatesIcon },
+      ...(isHubMode ? [{ to: '/add-agent', label: 'Add Agent', icon: AgentIcon }] : []),
+      ...(authEnabled ? [
+        { to: '/api-keys', label: 'API Keys', icon: KeyIcon },
+        { to: '/settings', label: 'Settings', icon: SettingsIcon },
+      ] : []),
+    ]},
   ];
 
   return (
@@ -51,28 +60,34 @@ export function Layout() {
         </div>
 
         {/* Nav links */}
-        <nav className="flex-1 space-y-0.5 px-2 py-2">
-          {allItems.map(item => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              onClick={() => setSidebarOpen(false)}
-              className={({ isActive }) => `
-                flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors
-                ${isActive
-                  ? 'text-white'
-                  : 'hover:text-white'
-                }
-              `}
-              style={({ isActive }) => ({
-                color: isActive ? 'var(--sidebar-active)' : 'var(--sidebar-text)',
-                backgroundColor: isActive ? 'var(--sidebar-hover)' : undefined,
-              })}
-            >
-              <item.icon />
-              {item.label}
-            </NavLink>
+        <nav className="flex-1 overflow-y-auto px-2 py-2">
+          {navGroups.map(group => (
+            <div key={group.label} className="mb-3">
+              <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.35)' }}>
+                {group.label}
+              </div>
+              <div className="space-y-0.5">
+                {group.items.map(item => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    end={item.to === '/'}
+                    onClick={() => setSidebarOpen(false)}
+                    className={({ isActive }) => `
+                      flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors
+                      ${isActive ? 'text-white' : 'hover:text-white'}
+                    `}
+                    style={({ isActive }) => ({
+                      color: isActive ? 'var(--sidebar-active)' : 'var(--sidebar-text)',
+                      backgroundColor: isActive ? 'var(--sidebar-hover)' : undefined,
+                    })}
+                  >
+                    <item.icon />
+                    {item.label}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
 
@@ -136,6 +151,12 @@ function ServicesIcon() {
 }
 function WebhooksIcon() {
   return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" /></svg>;
+}
+function KeyIcon() {
+  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>;
+}
+function UpdatesIcon() {
+  return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M21 12a9 9 0 11-6.22-8.56" /><polyline points="21 3 21 9 15 9" /></svg>;
 }
 function AgentIcon() {
   return <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" /></svg>;

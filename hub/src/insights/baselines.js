@@ -9,6 +9,24 @@ const HOST_METRICS = [
 
 const CONTAINER_METRICS = ['cpu_percent', 'memory_mb'];
 
+const TIME_PERIODS = [
+  { bucket: 'night', hours: [0, 1, 2, 3] },
+  { bucket: 'early_morning', hours: [4, 5, 6, 7] },
+  { bucket: 'morning', hours: [8, 9, 10, 11] },
+  { bucket: 'afternoon', hours: [12, 13, 14, 15] },
+  { bucket: 'evening', hours: [16, 17, 18, 19] },
+  { bucket: 'late_evening', hours: [20, 21, 22, 23] },
+];
+
+const MIN_PERIOD_SAMPLES = 48;
+
+function getTimePeriod(hour) {
+  for (const tp of TIME_PERIODS) {
+    if (tp.hours.includes(hour)) return tp.bucket;
+  }
+  return 'all';
+}
+
 /**
  * Compute percentile from a sorted array of numbers.
  */
@@ -21,9 +39,16 @@ function percentile(sorted, p) {
   return Math.round((sorted[lower] + frac * (sorted[lower + 1] - sorted[lower])) * 100) / 100;
 }
 
+function computePercentiles(values) {
+  return {
+    p50: percentile(values, 50), p75: percentile(values, 75), p90: percentile(values, 90),
+    p95: percentile(values, 95), p99: percentile(values, 99),
+    min: values[0], max: values[values.length - 1], count: values.length,
+  };
+}
+
 /**
  * Compute and store baselines for all hosts and containers.
- * Queries up to 30 days of history, computes percentiles, UPSERTs into baselines table.
  */
 function computeBaselines(db) {
   const upsert = db.prepare(`
@@ -34,6 +59,13 @@ function computeBaselines(db) {
       min_val=excluded.min_val, max_val=excluded.max_val, sample_count=excluded.sample_count, computed_at=excluded.computed_at
   `);
 
+  function upsertBucket(entityType, entityId, metric, bucket, values) {
+    if (values.length === 0) return false;
+    const p = computePercentiles(values);
+    upsert.run(entityType, entityId, metric, bucket, p.p50, p.p75, p.p90, p.p95, p.p99, p.min, p.max, p.count);
+    return true;
+  }
+
   let count = 0;
 
   // --- Host baselines ---
@@ -41,7 +73,8 @@ function computeBaselines(db) {
 
   for (const { host_id } of hosts) {
     const rows = db.prepare(`
-      SELECT *, strftime('%w', collected_at) as dow FROM host_snapshots
+      SELECT *, strftime('%w', collected_at) as dow, CAST(strftime('%H', collected_at) AS INTEGER) as hour
+      FROM host_snapshots
       WHERE host_id = ? AND collected_at >= datetime('now', '-30 days')
       ORDER BY collected_at
     `).all(host_id);
@@ -51,13 +84,16 @@ function computeBaselines(db) {
       const weekdayValues = rows.filter(r => r.dow >= 1 && r.dow <= 5).map(r => r[metric]).filter(v => v != null).sort((a, b) => a - b);
       const weekendValues = rows.filter(r => r.dow == 0 || r.dow == 6).map(r => r[metric]).filter(v => v != null).sort((a, b) => a - b);
 
-      for (const [bucket, values] of [['all', allValues], ['weekday', weekdayValues], ['weekend', weekendValues]]) {
-        if (values.length === 0) continue;
-        upsert.run('host', host_id, metric, bucket,
-          percentile(values, 50), percentile(values, 75), percentile(values, 90),
-          percentile(values, 95), percentile(values, 99),
-          values[0], values[values.length - 1], values.length);
-        count++;
+      if (upsertBucket('host', host_id, metric, 'all', allValues)) count++;
+      if (upsertBucket('host', host_id, metric, 'weekday', weekdayValues)) count++;
+      if (upsertBucket('host', host_id, metric, 'weekend', weekendValues)) count++;
+
+      // Time-period baselines
+      for (const tp of TIME_PERIODS) {
+        const periodValues = rows.filter(r => tp.hours.includes(r.hour)).map(r => r[metric]).filter(v => v != null).sort((a, b) => a - b);
+        if (periodValues.length >= MIN_PERIOD_SAMPLES) {
+          if (upsertBucket('host', host_id, metric, tp.bucket, periodValues)) count++;
+        }
       }
     }
   }
@@ -71,7 +107,8 @@ function computeBaselines(db) {
   for (const { host_id, container_name } of containers) {
     const entityId = `${host_id}/${container_name}`;
     const rows = db.prepare(`
-      SELECT *, strftime('%w', collected_at) as dow FROM container_snapshots
+      SELECT *, strftime('%w', collected_at) as dow, CAST(strftime('%H', collected_at) AS INTEGER) as hour
+      FROM container_snapshots
       WHERE host_id = ? AND container_name = ? AND collected_at >= datetime('now', '-30 days') AND status = 'running'
       ORDER BY collected_at
     `).all(host_id, container_name);
@@ -81,13 +118,15 @@ function computeBaselines(db) {
       const weekdayValues = rows.filter(r => r.dow >= 1 && r.dow <= 5).map(r => r[metric]).filter(v => v != null).sort((a, b) => a - b);
       const weekendValues = rows.filter(r => r.dow == 0 || r.dow == 6).map(r => r[metric]).filter(v => v != null).sort((a, b) => a - b);
 
-      for (const [bucket, values] of [['all', allValues], ['weekday', weekdayValues], ['weekend', weekendValues]]) {
-        if (values.length === 0) continue;
-        upsert.run('container', entityId, metric, bucket,
-          percentile(values, 50), percentile(values, 75), percentile(values, 90),
-          percentile(values, 95), percentile(values, 99),
-          values[0], values[values.length - 1], values.length);
-        count++;
+      if (upsertBucket('container', entityId, metric, 'all', allValues)) count++;
+      if (upsertBucket('container', entityId, metric, 'weekday', weekdayValues)) count++;
+      if (upsertBucket('container', entityId, metric, 'weekend', weekendValues)) count++;
+
+      for (const tp of TIME_PERIODS) {
+        const periodValues = rows.filter(r => tp.hours.includes(r.hour)).map(r => r[metric]).filter(v => v != null).sort((a, b) => a - b);
+        if (periodValues.length >= MIN_PERIOD_SAMPLES) {
+          if (upsertBucket('container', entityId, metric, tp.bucket, periodValues)) count++;
+        }
       }
     }
   }
@@ -97,4 +136,4 @@ function computeBaselines(db) {
   }
 }
 
-module.exports = { computeBaselines, percentile, HOST_METRICS, CONTAINER_METRICS };
+module.exports = { computeBaselines, percentile, HOST_METRICS, CONTAINER_METRICS, TIME_PERIODS, getTimePeriod, MIN_PERIOD_SAMPLES };

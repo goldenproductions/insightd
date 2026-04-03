@@ -58,7 +58,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.status, 'ok');
-    assert.equal(data.schemaVersion, 11);
+    assert.equal(data.schemaVersion, 12);
   });
 
   it('GET /api/hosts returns host list', async () => {
@@ -158,5 +158,28 @@ describe('Web API integration', () => {
     const res = await fetch(port, '/');
     assert.equal(res.status, 200);
     assert.ok(res.headers['content-type'].includes('text/html'));
+  });
+
+  it('GET /api/hosts/:hostId/containers/:name/availability returns availability data', async () => {
+    const sixHoursAgo = ts(new Date(NOW - 6 * 60 * 60 * 1000));
+    const fourHoursAgo = ts(new Date(NOW - 4 * 60 * 60 * 1000));
+    const twoHoursAgo = ts(new Date(NOW - 2 * 60 * 60 * 1000));
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'nginx', status: 'running', at: sixHoursAgo },
+      { hostId: 'h1', name: 'nginx', status: 'exited', at: fourHoursAgo },
+      { hostId: 'h1', name: 'nginx', status: 'running', at: twoHoursAgo },
+    ]);
+    const res = await fetch(port, '/api/hosts/h1/containers/nginx/availability?days=7');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.ok(Array.isArray(data.timeline.slots));
+    assert.equal(data.timeline.slots.length, 168);
+    assert.ok(Array.isArray(data.incidents));
+    assert.equal(data.summary.totalHours, 168);
+  });
+
+  it('GET /api/hosts/:hostId/containers/:name/availability returns 404 for unknown', async () => {
+    const res = await fetch(port, '/api/hosts/h1/containers/unknown/availability');
+    assert.equal(res.status, 404);
   });
 });

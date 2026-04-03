@@ -27,6 +27,9 @@ const config = Object.freeze({
   // Updates
   allowUpdates: process.env.INSIGHTD_ALLOW_UPDATES === 'true',
 
+  // Container actions (start/stop/restart)
+  allowActions: process.env.INSIGHTD_ALLOW_ACTIONS === 'true',
+
   // Disk warn threshold (used for logging only on agent side)
   diskWarnPercent: parseInt(process.env.INSIGHTD_DISK_WARN_THRESHOLD || '85', 10),
 

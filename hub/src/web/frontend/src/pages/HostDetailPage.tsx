@@ -1,6 +1,7 @@
+import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, apiAuth } from '@/lib/api';
 import type { HostDetail, TimelineEntry, Trends, EventItem } from '@/types/api';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
@@ -12,17 +13,22 @@ import { DiskForecast } from '@/components/DiskForecast';
 import { TrendArrow } from '@/components/TrendArrow';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { EventTimeline } from '@/components/EventTimeline';
+import { Tabs } from '@/components/Tabs';
 import { timeAgo, fmtUptime, fmtPercent, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
 import { useShowInternal } from '@/lib/useShowInternal';
 import { useAuth } from '@/context/AuthContext';
-import { apiAuth } from '@/lib/api';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
   const navigate = useNavigate();
+  const { isAuthenticated, token } = useAuth();
+  const queryClient = useQueryClient();
   const { showInternal } = useShowInternal();
   const hid = encodeURIComponent(hostId!);
   const si = showInternal ? '?showInternal=true' : '';
+  const [activeTab, setActiveTab] = useState('overview');
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionResult, setActionResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const { data } = useQuery({ queryKey: ['host', hostId, showInternal], queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`) });
   const { data: timeline } = useQuery({ queryKey: ['timeline', hostId], queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
@@ -32,6 +38,21 @@ export function HostDetailPage() {
   if (!data) return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
 
   const hm = data.hostMetrics;
+  const alertCount = data.alerts.length + (events?.length ?? 0);
+
+  const runAction = async (containerName: string, action: string) => {
+    if (action !== 'start' && !window.confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} container "${containerName}"?`)) return;
+    setActionLoading(`${containerName}:${action}`);
+    setActionResult(null);
+    try {
+      const res = await apiAuth('POST', `/hosts/${hid}/containers/${encodeURIComponent(containerName)}/action`, { action }, token) as { status: string; message?: string; error?: string };
+      setActionResult({ ok: res.status === 'success', message: res.message || res.error || `${action} completed` });
+      await queryClient.invalidateQueries({ queryKey: ['host', hostId, showInternal] });
+    } catch (err) {
+      setActionResult({ ok: false, message: err instanceof Error ? err.message : 'Action failed' });
+    }
+    setActionLoading(null);
+  };
 
   const containerCols: Column<typeof data.containers[number]>[] = [
     { header: 'Name', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.status} />{r.container_name}</span> },
@@ -39,6 +60,41 @@ export function HostDetailPage() {
     { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
     { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
     { header: 'Restarts', accessor: r => r.restart_count },
+    ...(isAuthenticated ? [{
+      header: '',
+      accessor: (r: typeof data.containers[number]) => {
+        const isInternal = r.labels ? (() => { try { return JSON.parse(r.labels!)['insightd.internal'] === 'true'; } catch { return false; } })() : false;
+        if (isInternal) return null;
+        const loading = actionLoading?.startsWith(`${r.container_name}:`);
+        return (
+          <span className="flex gap-1" onClick={e => e.stopPropagation()}>
+            {r.status === 'running' ? (
+              <>
+                <button onClick={() => runAction(r.container_name, 'restart')} disabled={!!loading}
+                  className="rounded px-2 py-0.5 text-xs text-slate-300 hover:bg-slate-700 disabled:opacity-50">
+                  {loading && actionLoading === `${r.container_name}:restart` ? '...' : 'Restart'}
+                </button>
+                <button onClick={() => runAction(r.container_name, 'stop')} disabled={!!loading}
+                  className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-slate-700 disabled:opacity-50">
+                  {loading && actionLoading === `${r.container_name}:stop` ? '...' : 'Stop'}
+                </button>
+              </>
+            ) : (
+              <button onClick={() => runAction(r.container_name, 'start')} disabled={!!loading}
+                className="rounded px-2 py-0.5 text-xs text-emerald-400 hover:bg-slate-700 disabled:opacity-50">
+                {loading && actionLoading === `${r.container_name}:start` ? '...' : 'Start'}
+              </button>
+            )}
+          </span>
+        );
+      },
+    }] : []),
+  ];
+
+  const tabs = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'resources', label: 'Resources' },
+    { id: 'alerts', label: 'Alerts', count: alertCount },
   ];
 
   return (
@@ -54,117 +110,143 @@ export function HostDetailPage() {
         <RemoveHostButton hostId={hostId!} />
       </div>
 
-      {/* Host system metrics */}
-      {hm && (
-        <>
-          <StatsGrid>
-            <StatCard value={fmtPercent(hm.cpu_percent)} label="CPU" />
-            <StatCard value={hm.memory_total_mb ? `${Math.round((hm.memory_used_mb || 0) / hm.memory_total_mb * 100)}%` : '-'} label="Memory" />
-            <StatCard value={hm.load_1 != null ? String(hm.load_1.toFixed(2)) : '-'} label="Load 1m" />
-            <StatCard value={hm.load_5 != null ? String(hm.load_5.toFixed(2)) : '-'} label="Load 5m" />
-            <StatCard value={fmtUptime(hm.uptime_seconds)} label="Uptime" />
-          </StatsGrid>
-          {(hm.cpu_temperature_celsius != null || hm.gpu_utilization_percent != null || hm.disk_read_bytes_per_sec != null || hm.net_rx_bytes_per_sec != null) && (
-            <StatsGrid>
-              {hm.cpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.cpu_temperature_celsius)} label="CPU Temp" color={hm.cpu_temperature_celsius > 80 ? 'var(--color-danger)' : hm.cpu_temperature_celsius > 60 ? 'var(--color-warning)' : undefined} />}
-              {hm.gpu_utilization_percent != null && <StatCard value={fmtPercent(hm.gpu_utilization_percent)} label="GPU" />}
-              {hm.gpu_memory_total_mb != null && <StatCard value={`${Math.round(hm.gpu_memory_used_mb || 0)}/${Math.round(hm.gpu_memory_total_mb)} MB`} label="GPU Memory" />}
-              {hm.gpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.gpu_temperature_celsius)} label="GPU Temp" color={hm.gpu_temperature_celsius > 85 ? 'var(--color-danger)' : hm.gpu_temperature_celsius > 70 ? 'var(--color-warning)' : undefined} />}
-              {hm.disk_read_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_read_bytes_per_sec)} label="Disk Read" />}
-              {hm.disk_write_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_write_bytes_per_sec)} label="Disk Write" />}
-              {hm.net_rx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_rx_bytes_per_sec)} label="Net RX" />}
-              {hm.net_tx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_tx_bytes_per_sec)} label="Net TX" />}
-            </StatsGrid>
-          )}
-        </>
-      )}
+      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      {/* Uptime Timeline */}
-      {timeline && timeline.length > 0 && (
-        <Card title="Uptime (7 days)">
-          <UptimeTimeline containers={timeline} />
-        </Card>
-      )}
-
-      {/* Containers */}
-      <Card title="Containers">
-        <div className="mb-3 flex justify-end">
-          <Link to={`/hosts/${hid}/logs`} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600">
-            Split Logs
-          </Link>
+      {actionResult && (
+        <div className="rounded-lg px-3 py-2 text-sm" style={{
+          backgroundColor: actionResult.ok ? 'rgba(16,185,129,0.1)' : 'rgba(239,68,68,0.1)',
+          color: actionResult.ok ? 'var(--color-success)' : 'var(--color-danger)',
+        }}>
+          {actionResult.message}
         </div>
-        <DataTable
-          columns={containerCols}
-          data={data.containers}
-          onRowClick={r => navigate(`/hosts/${hid}/containers/${encodeURIComponent(r.container_name)}`)}
-          emptyText="No containers"
-        />
-      </Card>
-
-      {/* Trends */}
-      {trends && trends.containers.length > 0 && (
-        <Card title="Trends (vs last week)">
-          <DataTable
-            columns={[
-              { header: 'Container', accessor: (r: typeof trends.containers[number]) => r.name },
-              { header: 'CPU Avg', accessor: r => fmtPercent(r.cpuNow) },
-              { header: 'CPU Change', accessor: r => <TrendArrow change={r.cpuChange} /> },
-              { header: 'Mem Avg', accessor: r => r.memNow != null ? `${r.memNow} MB` : '-' },
-              { header: 'Mem Change', accessor: r => <TrendArrow change={r.memChange} /> },
-            ]}
-            data={trends.containers}
-          />
-        </Card>
       )}
 
-      {/* Disk */}
-      {data.disk.length > 0 && (
-        <Card title="Disk Usage">
-          <DataTable
-            columns={[
-              { header: 'Mount', accessor: (r: typeof data.disk[number]) => r.mount_point },
-              { header: 'Usage', accessor: r => `${r.used_gb}/${r.total_gb} GB` },
-              { header: 'Percent', accessor: r => <DiskBar percent={r.used_percent} /> },
-            ]}
-            data={data.disk}
-          />
-          {data.diskForecast && <div className="mt-3"><DiskForecast forecasts={data.diskForecast} /></div>}
-        </Card>
+      {/* Overview Tab */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          {hm && (
+            <>
+              <StatsGrid>
+                <StatCard value={fmtPercent(hm.cpu_percent)} label="CPU" />
+                <StatCard value={hm.memory_total_mb ? `${Math.round((hm.memory_used_mb || 0) / hm.memory_total_mb * 100)}%` : '-'} label="Memory" />
+                <StatCard value={hm.load_1 != null ? String(hm.load_1.toFixed(2)) : '-'} label="Load 1m" />
+                <StatCard value={hm.load_5 != null ? String(hm.load_5.toFixed(2)) : '-'} label="Load 5m" />
+                <StatCard value={fmtUptime(hm.uptime_seconds)} label="Uptime" />
+              </StatsGrid>
+              {(hm.cpu_temperature_celsius != null || hm.gpu_utilization_percent != null || hm.disk_read_bytes_per_sec != null || hm.net_rx_bytes_per_sec != null) && (
+                <StatsGrid>
+                  {hm.cpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.cpu_temperature_celsius)} label="CPU Temp" color={hm.cpu_temperature_celsius > 80 ? 'var(--color-danger)' : hm.cpu_temperature_celsius > 60 ? 'var(--color-warning)' : undefined} />}
+                  {hm.gpu_utilization_percent != null && <StatCard value={fmtPercent(hm.gpu_utilization_percent)} label="GPU" />}
+                  {hm.gpu_memory_total_mb != null && <StatCard value={`${Math.round(hm.gpu_memory_used_mb || 0)}/${Math.round(hm.gpu_memory_total_mb)} MB`} label="GPU Memory" />}
+                  {hm.gpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.gpu_temperature_celsius)} label="GPU Temp" color={hm.gpu_temperature_celsius > 85 ? 'var(--color-danger)' : hm.gpu_temperature_celsius > 70 ? 'var(--color-warning)' : undefined} />}
+                  {hm.disk_read_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_read_bytes_per_sec)} label="Disk Read" />}
+                  {hm.disk_write_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_write_bytes_per_sec)} label="Disk Write" />}
+                  {hm.net_rx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_rx_bytes_per_sec)} label="Net RX" />}
+                  {hm.net_tx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_tx_bytes_per_sec)} label="Net TX" />}
+                </StatsGrid>
+              )}
+            </>
+          )}
+
+          {timeline && timeline.length > 0 && (
+            <Card title="Uptime (7 days)">
+              <UptimeTimeline containers={timeline} hostId={hostId!} />
+            </Card>
+          )}
+
+          <Card title="Containers">
+            <div className="mb-3 flex justify-end">
+              <Link to={`/hosts/${hid}/logs`} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600">
+                Split Logs
+              </Link>
+            </div>
+            <DataTable
+              columns={containerCols}
+              data={data.containers}
+              onRowClick={r => navigate(`/hosts/${hid}/containers/${encodeURIComponent(r.container_name)}`)}
+              emptyText="No containers"
+            />
+          </Card>
+        </div>
       )}
 
-      {/* Alerts */}
-      {data.alerts.length > 0 && (
-        <Card title="Active Alerts">
-          <DataTable
-            columns={[
-              { header: 'Type', accessor: (r: typeof data.alerts[number]) => r.alert_type.replace(/_/g, ' ') },
-              { header: 'Target', accessor: r => r.target },
-              { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
-              { header: 'Notifications', accessor: r => r.notify_count },
-            ]}
-            data={data.alerts}
-          />
-        </Card>
+      {/* Resources Tab */}
+      {activeTab === 'resources' && (
+        <div className="space-y-6">
+          {trends && trends.containers.length > 0 && (
+            <Card title="Trends (vs last week)">
+              <DataTable
+                columns={[
+                  { header: 'Container', accessor: (r: typeof trends.containers[number]) => r.name },
+                  { header: 'CPU Avg', accessor: r => fmtPercent(r.cpuNow) },
+                  { header: 'CPU Change', accessor: r => <TrendArrow change={r.cpuChange} /> },
+                  { header: 'Mem Avg', accessor: r => r.memNow != null ? `${r.memNow} MB` : '-' },
+                  { header: 'Mem Change', accessor: r => <TrendArrow change={r.memChange} /> },
+                ]}
+                data={trends.containers}
+              />
+            </Card>
+          )}
+
+          {data.disk.length > 0 && (
+            <Card title="Disk Usage">
+              <DataTable
+                columns={[
+                  { header: 'Mount', accessor: (r: typeof data.disk[number]) => r.mount_point },
+                  { header: 'Usage', accessor: r => `${r.used_gb}/${r.total_gb} GB` },
+                  { header: 'Percent', accessor: r => <DiskBar percent={r.used_percent} /> },
+                ]}
+                data={data.disk}
+              />
+              {data.diskForecast && <div className="mt-3"><DiskForecast forecasts={data.diskForecast} /></div>}
+            </Card>
+          )}
+
+          {data.updates.length > 0 && (
+            <Card title="Updates Available">
+              <DataTable
+                columns={[
+                  { header: 'Container', accessor: (r: typeof data.updates[number]) => r.container_name },
+                  { header: 'Image', accessor: r => r.image },
+                ]}
+                data={data.updates}
+              />
+            </Card>
+          )}
+
+          {(!trends || trends.containers.length === 0) && data.disk.length === 0 && data.updates.length === 0 && (
+            <p className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No resource data available</p>
+          )}
+        </div>
       )}
 
-      {/* Events */}
-      {events && events.length > 0 && (
-        <Card title="Events (7 days)">
-          <EventTimeline events={events} />
-        </Card>
-      )}
+      {/* Alerts Tab */}
+      {activeTab === 'alerts' && (
+        <div className="space-y-6">
+          {data.alerts.length > 0 && (
+            <Card title="Active Alerts">
+              <DataTable
+                columns={[
+                  { header: 'Type', accessor: (r: typeof data.alerts[number]) => r.alert_type.replace(/_/g, ' ') },
+                  { header: 'Target', accessor: r => r.target },
+                  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
+                  { header: 'Notifications', accessor: r => r.notify_count },
+                ]}
+                data={data.alerts}
+              />
+            </Card>
+          )}
 
-      {/* Updates */}
-      {data.updates.length > 0 && (
-        <Card title="Updates Available">
-          <DataTable
-            columns={[
-              { header: 'Container', accessor: (r: typeof data.updates[number]) => r.container_name },
-              { header: 'Image', accessor: r => r.image },
-            ]}
-            data={data.updates}
-          />
-        </Card>
+          {events && events.length > 0 && (
+            <Card title="Events (7 days)">
+              <EventTimeline events={events} />
+            </Card>
+          )}
+
+          {data.alerts.length === 0 && (!events || events.length === 0) && (
+            <p className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No alerts or events</p>
+          )}
+        </div>
       )}
     </div>
   );

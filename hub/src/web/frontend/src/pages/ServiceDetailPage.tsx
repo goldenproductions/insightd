@@ -33,8 +33,8 @@ export function ServiceDetailPage() {
   const totalMem = data.members.reduce((sum, m) => sum + (m.memory_mb || 0), 0);
 
   const columns: Column<typeof data.members[number]>[] = [
-    { header: 'Container', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.status || 'none'} />{r.container_name}</span> },
-    { header: 'Host', accessor: r => r.host_id },
+    { header: 'Container', accessor: r => <span className="flex items-center gap-2 text-blue-500"><StatusDot status={r.status || 'none'} />{r.container_name}</span> },
+    { header: 'Host', accessor: r => <span className="text-blue-500">{r.host_id}</span> },
     { header: 'Status', accessor: r => r.status ? <Badge text={r.status} color={r.status === 'running' ? 'green' : 'red'} /> : '-' },
     { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
     { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
@@ -82,7 +82,7 @@ export function ServiceDetailPage() {
         <DataTable
           columns={columns}
           data={data.members}
-          onRowClick={r => r.status ? navigate(`/hosts/${encodeURIComponent(r.host_id)}/containers/${encodeURIComponent(r.container_name)}`) : undefined}
+          onRowClick={r => navigate(`/hosts/${encodeURIComponent(r.host_id)}/containers/${encodeURIComponent(r.container_name)}`)}
           emptyText="No containers in this group"
         />
       </Card>

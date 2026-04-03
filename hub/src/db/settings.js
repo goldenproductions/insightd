@@ -39,6 +39,10 @@ const SETTING_DEFS = [
 
   // General
   { key: 'timezone', env: 'TZ', type: 'string', category: 'General', label: 'Timezone', hotReload: false, default: 'UTC' },
+
+  // Status Page
+  { key: 'statusPage.enabled', env: 'INSIGHTD_STATUS_PAGE', type: 'bool', category: 'Status Page', label: 'Enable public status page', hotReload: true, default: 'false', description: 'Serve a public status page at /status (no login required)' },
+  { key: 'statusPage.title', env: 'INSIGHTD_STATUS_PAGE_TITLE', type: 'string', category: 'Status Page', label: 'Page title', hotReload: true, default: 'System Status', description: 'Title shown on the public status page' },
 ];
 
 function getSettings(db) {

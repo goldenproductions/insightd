@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { createTestDb, seedHostSnapshots, seedContainerSnapshots } = require('../helpers/db');
 const { ts, NOW, THIS_WEEK } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
-const { computeBaselines, percentile } = require('../../hub/src/insights/baselines');
+const { computeBaselines, percentile, getTimePeriod, TIME_PERIODS } = require('../../hub/src/insights/baselines');
 
 describe('baselines', () => {
   let db, restore;
@@ -105,6 +105,46 @@ describe('baselines', () => {
 
       const cpuBaseline = db.prepare("SELECT * FROM baselines WHERE entity_id = 'h1' AND metric = 'cpu_percent' AND time_bucket = 'all'").get();
       assert.equal(cpuBaseline.sample_count, 2);
+    });
+
+    it('should compute time-period baselines when enough samples', () => {
+      // Seed 60 snapshots at 10am (morning period) within the last 30 days
+      for (let i = 0; i < 60; i++) {
+        const d = new Date(NOW - (i * 12) * 60 * 60 * 1000); // every 12 hours, stays within 30 days
+        d.setUTCHours(10, 0, 0, 0);
+        seedHostSnapshots(db, [{ hostId: 'h1', cpu: 20 + (i % 30), memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 1, at: ts(d) }]);
+      }
+      computeBaselines(db);
+
+      const morningBaseline = db.prepare("SELECT * FROM baselines WHERE entity_id = 'h1' AND metric = 'cpu_percent' AND time_bucket = 'morning'").get();
+      assert.ok(morningBaseline, 'Morning baseline should exist');
+      assert.ok(morningBaseline.sample_count >= 48);
+    });
+
+    it('should not compute time-period baselines with insufficient samples', () => {
+      // Seed only 10 snapshots at 3am (night period) — below threshold
+      for (let i = 0; i < 10; i++) {
+        const d = new Date(NOW - i * 86400000);
+        d.setUTCHours(3, 0, 0, 0);
+        seedHostSnapshots(db, [{ hostId: 'h1', cpu: 20 + i, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 1, at: ts(d) }]);
+      }
+      computeBaselines(db);
+
+      const nightBaseline = db.prepare("SELECT * FROM baselines WHERE entity_id = 'h1' AND metric = 'cpu_percent' AND time_bucket = 'night'").get();
+      assert.equal(nightBaseline, undefined, 'Night baseline should not exist with insufficient samples');
+    });
+  });
+
+  describe('getTimePeriod', () => {
+    it('should return correct period for each hour', () => {
+      assert.equal(getTimePeriod(0), 'night');
+      assert.equal(getTimePeriod(3), 'night');
+      assert.equal(getTimePeriod(4), 'early_morning');
+      assert.equal(getTimePeriod(8), 'morning');
+      assert.equal(getTimePeriod(12), 'afternoon');
+      assert.equal(getTimePeriod(16), 'evening');
+      assert.equal(getTimePeriod(20), 'late_evening');
+      assert.equal(getTimePeriod(23), 'late_evening');
     });
   });
 });

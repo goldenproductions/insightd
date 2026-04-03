@@ -53,3 +53,14 @@ export function fmtCelsius(value: number | null | undefined): string {
   if (value == null) return '-';
   return value.toFixed(1) + '\u00B0C';
 }
+
+export function fmtDurationMs(ms: number): string {
+  const totalMin = Math.floor(ms / 60000);
+  if (totalMin < 60) return `${totalMin}m`;
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours < 24) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+}

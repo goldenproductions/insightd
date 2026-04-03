@@ -35,6 +35,11 @@ function connect(config, docker) {
         if (err) logger.error('mqtt', 'Failed to subscribe to update request topic');
         else logger.info('mqtt', `Subscribed to ${updateRequestTopic}`);
       });
+      const actionRequestTopic = `insightd/${config.hostId}/action/request`;
+      client.subscribe(actionRequestTopic, { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to action request topic');
+        else logger.info('mqtt', `Subscribed to ${actionRequestTopic}`);
+      });
 
       if (!connected) {
         connected = true;
@@ -71,6 +76,36 @@ function connect(config, docker) {
             const responseTopic = `insightd/${config.hostId}/update/response`;
             client.publish(responseTopic, JSON.stringify({ requestId: req.requestId, status: 'failed', error: err.message }), { qos: 1 });
           } catch { /* can't even parse the request */ }
+        }
+        return;
+      }
+
+      // Handle container action requests
+      if (topic.endsWith('/action/request')) {
+        const responseTopic = `insightd/${config.hostId}/action/response`;
+        try {
+          const req = JSON.parse(message.toString());
+
+          if (req.timestamp) {
+            const age = Date.now() - new Date(req.timestamp).getTime();
+            if (age > 60000) {
+              logger.info('mqtt', `Ignoring stale action request (${Math.round(age / 1000)}s old)`);
+              return;
+            }
+          }
+
+          logger.info('mqtt', `Action request: ${req.action} on ${req.containerName}`);
+
+          const { performContainerAction } = require('./container-actions');
+          const result = await performContainerAction(dockerInstance, req.containerName, req.action);
+
+          client.publish(responseTopic, JSON.stringify({ requestId: req.requestId, ...result }), { qos: 1 });
+        } catch (err) {
+          logger.error('mqtt', `Action failed: ${err.message}`);
+          try {
+            const req = JSON.parse(message.toString());
+            client.publish(responseTopic, JSON.stringify({ requestId: req.requestId, status: 'failed', error: err.message }), { qos: 1 });
+          } catch { /* can't parse */ }
         }
         return;
       }

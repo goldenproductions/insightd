@@ -111,7 +111,15 @@ function getAlerts(db, activeOnly, hostId) {
   return db.prepare(sql).all(...params);
 }
 
+const _dashboardCache = { data: null, key: null, db: null, time: 0 };
+const DASHBOARD_CACHE_TTL = 30000; // 30 seconds
+
 function getDashboard(db, onlineThresholdMinutes, showInternal = false) {
+  const cacheKey = `${onlineThresholdMinutes}:${showInternal}`;
+  if (_dashboardCache.key === cacheKey && _dashboardCache.db === db && Date.now() - _dashboardCache.time < DASHBOARD_CACHE_TTL) {
+    return _dashboardCache.data;
+  }
+
   const hosts = getHosts(db, onlineThresholdMinutes);
 
   const allContainers = db.prepare(`
@@ -134,6 +142,7 @@ function getDashboard(db, onlineThresholdMinutes, showInternal = false) {
   const activeAlerts = db.prepare(
     'SELECT COUNT(*) as count FROM alert_state WHERE resolved_at IS NULL'
   ).get();
+  const activeAlertsList = getAlerts(db, true).slice(0, 10);
 
   const diskWarnings = db.prepare(`
     SELECT COUNT(*) as count FROM disk_snapshots ds
@@ -175,7 +184,34 @@ function getDashboard(db, onlineThresholdMinutes, showInternal = false) {
     groups = groupQueries.getGroups(db, showInternal);
   } catch { /* group queries not available */ }
 
-  return {
+  // 24h availability per container
+  const availRows = db.prepare(`
+    SELECT host_id, container_name, labels,
+      COUNT(*) as total,
+      SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running
+    FROM container_snapshots
+    WHERE collected_at >= datetime('now', '-1 day')
+    GROUP BY host_id, container_name
+  `).all();
+  const availFiltered = showInternal ? availRows : availRows.filter(c => {
+    if (!c.labels) return true;
+    try { return JSON.parse(c.labels)['insightd.internal'] !== 'true'; } catch { return true; }
+  });
+  let totalSnapshots = 0, totalRunning = 0;
+  const downContainers = [];
+  for (const r of availFiltered) {
+    totalSnapshots += r.total;
+    totalRunning += r.running;
+    const pct = Math.round((r.running / r.total) * 1000) / 10;
+    if (pct < 100) {
+      const downMinutes = Math.round((r.total - r.running) * 5);
+      downContainers.push({ hostId: r.host_id, name: r.container_name, uptimePercent: pct, downMinutes });
+    }
+  }
+  downContainers.sort((a, b) => a.uptimePercent - b.uptimePercent);
+  const overallAvailability = totalSnapshots > 0 ? Math.round((totalRunning / totalSnapshots) * 1000) / 10 : null;
+
+  const result = {
     hostCount: hosts.length,
     hostsOnline: hosts.filter(h => h.is_online).length,
     hostsOffline: hosts.filter(h => !h.is_online).length,
@@ -183,6 +219,7 @@ function getDashboard(db, onlineThresholdMinutes, showInternal = false) {
     containersRunning: containerCounts?.running || 0,
     containersDown: (containerCounts?.total || 0) - (containerCounts?.running || 0),
     activeAlerts: activeAlerts?.count || 0,
+    activeAlertsList,
     diskWarnings: diskWarnings?.count || 0,
     updatesAvailable: updatesAvailable?.count || 0,
     endpointsTotal: endpointTotal?.count || 0,
@@ -191,7 +228,14 @@ function getDashboard(db, onlineThresholdMinutes, showInternal = false) {
     groups,
     systemHealthScore: getSystemHealthScore(db),
     topInsights: getTopInsights(db),
+    availability: { overallPercent: overallAvailability, downContainers },
   };
+
+  _dashboardCache.data = result;
+  _dashboardCache.key = cacheKey;
+  _dashboardCache.db = db;
+  _dashboardCache.time = Date.now();
+  return result;
 }
 
 function getSystemHealthScore(db) {
@@ -499,4 +543,79 @@ function getAllImageUpdates(db) {
   `).all();
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates };
+function getContainerDowntime(db, hostId, containerName, days) {
+  // Status transitions for this container
+  const changes = db.prepare(`
+    SELECT cs1.status as new_status, cs2.status as old_status, cs1.collected_at as time
+    FROM container_snapshots cs1
+    JOIN container_snapshots cs2 ON cs1.host_id = cs2.host_id
+      AND cs1.container_name = cs2.container_name
+      AND cs2.collected_at = (
+        SELECT MAX(collected_at) FROM container_snapshots
+        WHERE host_id = cs1.host_id AND container_name = cs1.container_name
+          AND collected_at < cs1.collected_at
+      )
+    WHERE cs1.host_id = ? AND cs1.container_name = ?
+      AND cs1.status != cs2.status
+      AND cs1.collected_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY cs1.collected_at ASC
+  `).all(hostId, containerName, days);
+
+  // Pair stop/start transitions into downtime incidents
+  const incidents = [];
+  let currentDown = null;
+  for (const c of changes) {
+    if (c.new_status !== 'running' && !currentDown) {
+      currentDown = { start: c.time, end: null, durationMs: null, ongoing: true };
+    } else if (c.new_status === 'running' && currentDown) {
+      currentDown.end = c.time;
+      currentDown.durationMs = new Date(c.time + 'Z').getTime() - new Date(currentDown.start + 'Z').getTime();
+      currentDown.ongoing = false;
+      incidents.push(currentDown);
+      currentDown = null;
+    }
+  }
+  if (currentDown) incidents.push(currentDown);
+
+  // Single-container timeline (same logic as getUptimeTimeline)
+  const rows = db.prepare(`
+    SELECT status, collected_at FROM container_snapshots
+    WHERE host_id = ? AND container_name = ?
+      AND collected_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY collected_at
+  `).all(hostId, containerName, days);
+
+  const totalHours = days * 24;
+  const now = Date.now();
+  const startMs = now - days * 86400000;
+  const slots = [];
+  let upCount = 0, downCount = 0;
+  for (let h = 0; h < totalHours; h++) {
+    const slotStart = startMs + h * 3600000;
+    const slotEnd = slotStart + 3600000;
+    const inSlot = rows.filter(s => {
+      const t = new Date(s.collected_at + 'Z').getTime();
+      return t >= slotStart && t < slotEnd;
+    });
+    if (inSlot.length === 0) {
+      slots.push('none');
+    } else if (inSlot.every(s => s.status === 'running')) {
+      slots.push('up');
+      upCount++;
+    } else {
+      slots.push('down');
+      downCount++;
+    }
+  }
+  const noDataCount = slots.filter(s => s === 'none').length;
+  const slotsWithData = totalHours - noDataCount;
+  const uptimePercent = slotsWithData > 0 ? Math.round((upCount / slotsWithData) * 1000) / 10 : null;
+
+  return {
+    timeline: { slots, uptimePercent, slotStartTime: startMs },
+    incidents: incidents.reverse(),
+    summary: { totalHours, upHours: upCount, downHours: downCount, noDataHours: noDataCount, uptimePercent },
+  };
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };

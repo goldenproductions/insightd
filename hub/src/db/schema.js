@@ -1,6 +1,6 @@
 const logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 
 function bootstrap(db) {
   db.exec(`
@@ -310,6 +310,24 @@ function migrate(db, fromVersion) {
   }
   if (fromVersion < 11) {
     try { db.exec('ALTER TABLE hosts ADD COLUMN agent_version TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 12) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS sessions (
+        token TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        key_prefix TEXT NOT NULL,
+        key_hash TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_used_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_snapshots_collected ON container_snapshots (collected_at);
+    `);
   }
 }
 

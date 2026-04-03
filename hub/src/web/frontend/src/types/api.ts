@@ -17,6 +17,7 @@ export interface DashboardData {
   containersRunning: number;
   containersDown: number;
   activeAlerts: number;
+  activeAlertsList: Alert[];
   diskWarnings: number;
   updatesAvailable: number;
   endpointsTotal: number;
@@ -25,6 +26,7 @@ export interface DashboardData {
   groups: ServiceGroupSummary[];
   systemHealthScore: { score: number; factors: Record<string, unknown>; computedAt: string } | null;
   topInsights: { entity_type: string; entity_id: string; category: string; severity: string; title: string; message: string }[];
+  availability: { overallPercent: number | null; downContainers: { hostId: string; name: string; uptimePercent: number; downMinutes: number }[] };
 }
 
 export interface RankingItem {
@@ -154,6 +156,49 @@ export interface TimelineEntry {
   name: string;
   slots: ('up' | 'down' | 'none')[];
   uptimePercent: number | null;
+}
+
+// Container Availability (explainable uptime)
+export interface DowntimeIncident {
+  start: string;
+  end: string | null;
+  durationMs: number | null;
+  ongoing: boolean;
+}
+
+export interface ContainerAvailability {
+  timeline: { slots: ('up' | 'down' | 'none')[]; uptimePercent: number | null; slotStartTime: number };
+  incidents: DowntimeIncident[];
+  summary: { totalHours: number; upHours: number; downHours: number; noDataHours: number; uptimePercent: number | null };
+}
+
+// Public Status Page
+export interface PublicStatus {
+  title: string;
+  overallStatus: 'operational' | 'degraded' | 'outage';
+  groups: { id: number; name: string; icon: string | null; color: string | null;
+    members: { container_name: string; host_id: string; status: string | null }[];
+    running_count: number; member_count: number }[];
+  endpoints: { name: string; url: string; is_up: boolean | null;
+    uptimePercent24h: number | null; avgResponseMs: number | null;
+    lastCheckedAt: string | null }[];
+  updatedAt: string;
+}
+
+// API Keys
+export interface ApiKey {
+  id: number;
+  name: string;
+  key_prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+// Container Actions
+export interface ContainerActionResult {
+  status: string;
+  message: string;
+  error?: string;
 }
 
 // Trends

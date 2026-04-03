@@ -25,6 +25,8 @@ import { WebhookFormPage } from '@/pages/WebhookFormPage';
 import { ServicesPage } from '@/pages/ServicesPage';
 import { ServiceDetailPage } from '@/pages/ServiceDetailPage';
 import { ServiceFormPage } from '@/pages/ServiceFormPage';
+import { ApiKeysPage } from '@/pages/ApiKeysPage';
+import { StatusPage } from '@/pages/StatusPage';
 
 export function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
@@ -57,6 +59,7 @@ export function App() {
           <ShowInternalProvider>
           <HashRouter>
             <Routes>
+              <Route path="/status" element={<StatusPage />} />
               <Route element={<Layout />}>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/hosts" element={<HostsPage />} />
@@ -77,6 +80,7 @@ export function App() {
                 <Route path="/webhooks/:webhookId/edit" element={<WebhookFormPage />} />
                 <Route path="/updates" element={<UpdatesPage />} />
                 <Route path="/add-agent" element={<AddAgentPage />} />
+                <Route path="/api-keys" element={<ApiKeysPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/login" element={<LoginPage />} />
               </Route>

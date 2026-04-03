@@ -45,6 +45,11 @@ function startSubscriber(db, config) {
         else logger.info('mqtt', 'Subscribed to insightd/+/update/response');
       });
 
+      client.subscribe('insightd/+/action/response', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to action response topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/action/response');
+      });
+
       if (!connected) {
         connected = true;
         resolve(client);
@@ -66,6 +71,8 @@ function startSubscriber(db, config) {
           handleLogResponse(payload);
         } else if (type === 'update' && parts[3] === 'response') {
           handleUpdateResponse(payload);
+        } else if (type === 'action' && parts[3] === 'response') {
+          handleActionResponse(payload);
         }
       } catch (err) {
         logger.error('mqtt', `Failed to process message on ${topic}: ${err.message}`);
@@ -249,6 +256,49 @@ function requestAgentUpdate(hostId, target, image) {
   });
 }
 
+// --- Container action request/response ---
+const pendingActionRequests = new Map();
+
+function handleActionResponse(payload) {
+  const pending = pendingActionRequests.get(payload.requestId);
+  if (!pending) return;
+  clearTimeout(pending.timer);
+  pendingActionRequests.delete(payload.requestId);
+  pending.resolve({ status: payload.status, message: payload.message, error: payload.error || null });
+}
+
+function requestContainerAction(hostId, containerName, action) {
+  const requestId = crypto.randomUUID();
+  const timeoutMs = 30000;
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pendingActionRequests.delete(requestId);
+      reject(new Error('No response from agent. Check that INSIGHTD_ALLOW_ACTIONS=true is set and the agent is online.'));
+    }, timeoutMs);
+
+    pendingActionRequests.set(requestId, { resolve, reject, timer });
+
+    const topic = `insightd/${hostId}/action/request`;
+    const payload = JSON.stringify({ requestId, containerName, action, timestamp: new Date().toISOString() });
+    logger.info('mqtt', `Publishing action request to ${topic}: ${action} on ${containerName}`);
+    if (!client || !client.connected) {
+      clearTimeout(timer);
+      pendingActionRequests.delete(requestId);
+      reject(new Error('MQTT client not connected'));
+      return;
+    }
+    client.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish action request: ${err.message}`);
+        clearTimeout(timer);
+        pendingActionRequests.delete(requestId);
+        reject(err);
+      }
+    });
+  });
+}
+
 function disconnect() {
   // Reject all pending log requests
   for (const [id, pending] of pendingLogRequests) {
@@ -257,10 +307,16 @@ function disconnect() {
   }
   pendingLogRequests.clear();
 
+  for (const [id, pending] of pendingActionRequests) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error('MQTT disconnecting'));
+  }
+  pendingActionRequests.clear();
+
   if (client) {
     client.end();
     client = null;
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction };

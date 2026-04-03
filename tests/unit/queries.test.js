@@ -2,7 +2,7 @@ const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
-const { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts } = require('../../hub/src/web/queries');
+const { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getContainerDowntime } = require('../../hub/src/web/queries');
 
 const recent = ts(new Date(NOW - 2 * 60 * 1000)); // 2 min ago
 const old = ts(new Date(NOW - 30 * 60 * 1000)); // 30 min ago
@@ -22,7 +22,7 @@ describe('queries', () => {
     it('returns status ok with schema version', () => {
       const health = getHealth(db);
       assert.equal(health.status, 'ok');
-      assert.equal(health.schemaVersion, 11);
+      assert.equal(health.schemaVersion, 12);
       assert.equal(typeof health.uptime, 'number');
     });
   });
@@ -256,6 +256,66 @@ describe('queries', () => {
     it('returns empty for container with no alerts', () => {
       const alerts = getContainerAlerts(db, 'h1', 'nginx');
       assert.deepEqual(alerts, []);
+    });
+  });
+
+  describe('getContainerDowntime', () => {
+    it('returns empty incidents when container is always running', () => {
+      const sixHoursAgo = ts(new Date(NOW - 6 * 60 * 60 * 1000));
+      const threeHoursAgo = ts(new Date(NOW - 3 * 60 * 60 * 1000));
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', at: sixHoursAgo },
+        { hostId: 'h1', name: 'nginx', status: 'running', at: threeHoursAgo },
+        { hostId: 'h1', name: 'nginx', status: 'running', at: recent },
+      ]);
+
+      const result = getContainerDowntime(db, 'h1', 'nginx', 7);
+      assert.deepEqual(result.incidents, []);
+      assert.equal(result.summary.downHours, 0);
+      assert.equal(result.summary.totalHours, 168);
+      assert.equal(result.timeline.slots.length, 168);
+    });
+
+    it('detects a downtime incident with correct duration', () => {
+      const sixHoursAgo = ts(new Date(NOW - 6 * 60 * 60 * 1000));
+      const fourHoursAgo = ts(new Date(NOW - 4 * 60 * 60 * 1000));
+      const twoHoursAgo = ts(new Date(NOW - 2 * 60 * 60 * 1000));
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', at: sixHoursAgo },
+        { hostId: 'h1', name: 'nginx', status: 'exited', at: fourHoursAgo },
+        { hostId: 'h1', name: 'nginx', status: 'running', at: twoHoursAgo },
+      ]);
+
+      const result = getContainerDowntime(db, 'h1', 'nginx', 7);
+      assert.equal(result.incidents.length, 1);
+      assert.equal(result.incidents[0].ongoing, false);
+      assert.ok(result.incidents[0].end != null);
+      assert.ok(result.incidents[0].durationMs > 0);
+    });
+
+    it('detects ongoing downtime when container is still down', () => {
+      const sixHoursAgo = ts(new Date(NOW - 6 * 60 * 60 * 1000));
+      const twoHoursAgo = ts(new Date(NOW - 2 * 60 * 60 * 1000));
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', at: sixHoursAgo },
+        { hostId: 'h1', name: 'nginx', status: 'exited', at: twoHoursAgo },
+      ]);
+
+      const result = getContainerDowntime(db, 'h1', 'nginx', 7);
+      assert.equal(result.incidents.length, 1);
+      assert.equal(result.incidents[0].ongoing, true);
+      assert.equal(result.incidents[0].end, null);
+    });
+
+    it('returns correct timeline slot count', () => {
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', at: recent },
+      ]);
+
+      const result = getContainerDowntime(db, 'h1', 'nginx', 7);
+      assert.equal(result.timeline.slots.length, 168); // 7 * 24
+      assert.equal(typeof result.timeline.slotStartTime, 'number');
+      assert.ok(result.timeline.slotStartTime > 0);
     });
   });
 });

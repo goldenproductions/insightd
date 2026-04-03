@@ -1,5 +1,5 @@
 const queries = require('./queries');
-const { isAuthEnabled, authenticate, requireAuth, isSetupComplete } = require('./auth');
+const { isAuthEnabled, authenticate, requireAuth, isSetupComplete, createApiKey, revokeApiKey, getApiKeys } = require('./auth');
 const { getSettings, putSettings } = require('../db/settings');
 
 function readBody(req, maxBytes = 65536) {
@@ -587,4 +587,121 @@ async function handleUpdateHub(req, res, db, config, params, ctx) {
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub };
+function handleContainerAvailability(req, res, db, config, params) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get('days') || '7', 10) || 7));
+  const latest = queries.getLatestContainers(db, params.hostId)
+    .find(c => c.container_name === params.containerName);
+  if (!latest) {
+    res.statusCode = 404;
+    return { error: 'Container not found' };
+  }
+  return queries.getContainerDowntime(db, params.hostId, params.containerName, days);
+}
+
+function handlePublicStatus(req, res, db, config) {
+  // No auth — this is a public endpoint
+  const enabled = db.prepare("SELECT value FROM settings WHERE key = 'statusPage.enabled'").get();
+  if (!enabled || enabled.value !== 'true') {
+    res.statusCode = 404;
+    return { error: 'Status page not enabled' };
+  }
+
+  const titleRow = db.prepare("SELECT value FROM settings WHERE key = 'statusPage.title'").get();
+  const title = titleRow?.value || 'System Status';
+
+  // Service groups with members
+  let groups = [];
+  try {
+    const groupQueries = require('./group-queries');
+    groups = groupQueries.getGroups(db, false).map(g => {
+      const detail = groupQueries.getGroupDetail(db, g.id);
+      return {
+        id: g.id, name: g.name, icon: g.icon, color: g.color,
+        running_count: g.running_count, member_count: g.member_count,
+        members: (detail?.members || []).map(m => ({
+          container_name: m.container_name, host_id: m.host_id, status: m.status,
+        })),
+      };
+    });
+  } catch { /* no groups */ }
+
+  // HTTP endpoints
+  let endpoints = [];
+  try {
+    const httpQueries = require('../http-monitor/queries');
+    const summaries = httpQueries.getEndpointsSummary(db);
+    endpoints = summaries.map(e => ({
+      name: e.name, url: e.url,
+      is_up: e.lastCheck ? e.lastCheck.is_up === 1 : null,
+      uptimePercent24h: e.uptimePercent24h,
+      avgResponseMs: e.avgResponseMs,
+      lastCheckedAt: e.lastCheck?.checked_at || null,
+    }));
+  } catch { /* no endpoints */ }
+
+  // Overall status
+  const allContainersOk = groups.every(g => g.running_count === g.member_count);
+  const allEndpointsOk = endpoints.every(e => e.is_up !== false);
+  const anyData = groups.length > 0 || endpoints.length > 0;
+  const overallStatus = !anyData ? 'operational' : (allContainersOk && allEndpointsOk) ? 'operational' : 'degraded';
+
+  return { title, overallStatus, groups, endpoints, updatedAt: new Date().toISOString() };
+}
+
+async function handleContainerAction(req, res, db, config, params, ctx) {
+  if (!requireAuth(req, res)) return { error: 'Unauthorized' };
+
+  const body = await readBody(req);
+  const action = body.action;
+  if (!['start', 'stop', 'restart'].includes(action)) {
+    res.statusCode = 400;
+    return { error: 'Invalid action. Must be start, stop, or restart.' };
+  }
+
+  try {
+    if (ctx.docker) {
+      // Standalone mode — direct Docker
+      const containers = await ctx.docker.listContainers({ all: true });
+      const match = containers.find(c => c.Names.some(n => n === `/${params.containerName}` || n === params.containerName));
+      if (!match) { res.statusCode = 404; return { error: 'Container not found' }; }
+      if (match.Labels && match.Labels['insightd.internal'] === 'true') { res.statusCode = 403; return { error: 'Cannot perform actions on internal insightd containers' }; }
+      const container = ctx.docker.getContainer(match.Id);
+      if (action === 'start') await container.start();
+      else if (action === 'stop') await container.stop({ t: 10 });
+      else await container.restart({ t: 10 });
+      return { status: 'success', message: `Container "${params.containerName}" ${action}ed successfully` };
+    } else if (ctx.requestAction) {
+      // Hub mode — MQTT
+      const result = await ctx.requestAction(params.hostId, params.containerName, action);
+      return result;
+    } else {
+      res.statusCode = 501;
+      return { error: 'Container actions not available in this mode' };
+    }
+  } catch (err) {
+    res.statusCode = 504;
+    return { error: err.message };
+  }
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
+
+function handleGetApiKeys(req, res, db) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  return getApiKeys(db);
+}
+
+async function handleCreateApiKey(req, res, db) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const body = await readBody(req);
+  if (!body.name || !body.name.trim()) { res.statusCode = 400; return { error: 'Name is required' }; }
+  const result = createApiKey(db, body.name.trim());
+  return result;
+}
+
+function handleDeleteApiKey(req, res, db, config, params) {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  revokeApiKey(db, parseInt(params.keyId, 10));
+  return { deleted: true };
+}

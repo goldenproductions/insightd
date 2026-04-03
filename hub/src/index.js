@@ -43,7 +43,7 @@ async function main() {
     let webServer;
     if (config.web.enabled) {
       const { startWebServer } = require('./web/server');
-      webServer = startWebServer(db, config, { requestLogs: mqttModule.requestContainerLogs, requestUpdate: mqttModule.requestAgentUpdate });
+      webServer = startWebServer(db, config, { requestLogs: mqttModule.requestContainerLogs, requestUpdate: mqttModule.requestAgentUpdate, requestAction: mqttModule.requestContainerAction });
     }
 
     logger.info('main', 'insightd hub is running (MQTT mode)');

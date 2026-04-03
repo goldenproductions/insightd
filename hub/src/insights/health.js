@@ -1,4 +1,5 @@
 const logger = require('../../../shared/utils/logger');
+const { getTimePeriod, MIN_PERIOD_SAMPLES } = require('./baselines');
 
 /**
  * Score a metric value against its baseline percentiles.
@@ -180,11 +181,21 @@ function computeHealthScores(db) {
 }
 
 function getEntityBaselines(db, entityType, entityId) {
-  const rows = db.prepare(
+  const hour = new Date().getUTCHours();
+  const period = getTimePeriod(hour);
+
+  const allRows = db.prepare(
     "SELECT metric, p50, p75, p90, p95, p99, sample_count FROM baselines WHERE entity_type = ? AND entity_id = ? AND time_bucket = 'all'"
   ).all(entityType, entityId);
+  const periodRows = db.prepare(
+    'SELECT metric, p50, p75, p90, p95, p99, sample_count FROM baselines WHERE entity_type = ? AND entity_id = ? AND time_bucket = ?'
+  ).all(entityType, entityId, period);
+
   const map = {};
-  for (const r of rows) map[r.metric] = r;
+  for (const r of allRows) map[r.metric] = r;
+  for (const r of periodRows) {
+    if (r.sample_count >= MIN_PERIOD_SAMPLES) map[r.metric] = r;
+  }
   return map;
 }
 
