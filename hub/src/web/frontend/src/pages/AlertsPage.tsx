@@ -19,7 +19,7 @@ const columns: Column<Alert>[] = [
 
 export function AlertsPage() {
   const navigate = useNavigate();
-  const { data: alerts } = useQuery({ queryKey: ['alerts'], queryFn: () => api<Alert[]>('/alerts?active=false') });
+  const { data: alerts } = useQuery({ queryKey: ['alerts'], queryFn: () => api<Alert[]>('/alerts?active=false'), refetchInterval: 30_000 });
 
   return (
     <div className="space-y-6">

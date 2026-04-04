@@ -9,7 +9,7 @@ import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { fmtPercent } from '@/lib/formatters';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 
 export function ServiceDetailPage() {
   const { groupId } = useParams();
@@ -18,7 +18,7 @@ export function ServiceDetailPage() {
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
 
-  const { data } = useQuery({ queryKey: ['group', groupId], queryFn: () => api<ServiceGroupDetail>(`/groups/${groupId}`) });
+  const { data } = useQuery({ queryKey: ['group', groupId], queryFn: () => api<ServiceGroupDetail>(`/groups/${groupId}`), refetchInterval: 30_000 });
 
   const removeMutation = useMutation({
     mutationFn: ({ hostId, containerName }: { hostId: string; containerName: string }) =>
@@ -28,9 +28,15 @@ export function ServiceDetailPage() {
 
   if (!data) return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
 
-  const running = data.members.filter(m => m.status === 'running').length;
-  const totalCpu = data.members.reduce((sum, m) => sum + (m.cpu_percent || 0), 0);
-  const totalMem = data.members.reduce((sum, m) => sum + (m.memory_mb || 0), 0);
+  const { running, totalCpu, totalMem } = useMemo(() => {
+    let running = 0, cpu = 0, mem = 0;
+    for (const m of data.members) {
+      if (m.status === 'running') running++;
+      cpu += m.cpu_percent || 0;
+      mem += m.memory_mb || 0;
+    }
+    return { running, totalCpu: cpu, totalMem: mem };
+  }, [data.members]);
 
   const columns: Column<typeof data.members[number]>[] = [
     { header: 'Container', accessor: r => <span className="flex items-center gap-2 text-blue-500"><StatusDot status={r.status || 'none'} />{r.container_name}</span> },
@@ -97,7 +103,7 @@ function AddContainerForm({ groupId, token, onAdded }: { groupId: number; token:
   // Fetch all containers across all hosts
   const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<{ host_id: string }[]>('/hosts') });
   const { data: allContainers } = useQuery({
-    queryKey: ['all-containers', hosts],
+    queryKey: ['all-containers', hosts?.map(h => h.host_id).sort().join(',')],
     queryFn: async () => {
       if (!hosts) return [];
       const results: { hostId: string; name: string }[] = [];

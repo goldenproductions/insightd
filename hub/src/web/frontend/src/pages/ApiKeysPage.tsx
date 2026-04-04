@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -32,11 +32,23 @@ export function ApiKeysPage() {
     setCreating(false);
   };
 
-  const revoke = async (id: number) => {
+  const revoke = useCallback(async (id: number) => {
     if (!confirm('Revoke this API key? Any scripts using it will stop working.')) return;
     await apiAuth('DELETE', `/api-keys/${id}`, undefined, token);
     queryClient.invalidateQueries({ queryKey: ['api-keys'] });
-  };
+  }, [token, queryClient]);
+
+  const keyCols = useMemo(() => [
+    { header: 'Name', accessor: (r: ApiKey) => r.name },
+    { header: 'Key', accessor: (r: ApiKey) => <code className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.key_prefix}...</code> },
+    { header: 'Created', accessor: (r: ApiKey) => timeAgo(r.created_at) },
+    { header: 'Last Used', accessor: (r: ApiKey) => r.last_used_at ? timeAgo(r.last_used_at) : <span style={{ color: 'var(--text-muted)' }}>never</span> },
+    { header: '', accessor: (r: ApiKey) => (
+      <button onClick={() => revoke(r.id)} className="text-xs text-red-400 hover:text-red-300">
+        Revoke
+      </button>
+    )},
+  ], [revoke]);
 
   if (!isAuthenticated) {
     return (
@@ -89,17 +101,7 @@ export function ApiKeysPage() {
       {/* Keys list */}
       <Card title="Active Keys">
         <DataTable
-          columns={[
-            { header: 'Name', accessor: (r: ApiKey) => r.name },
-            { header: 'Key', accessor: r => <code className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.key_prefix}...</code> },
-            { header: 'Created', accessor: r => timeAgo(r.created_at) },
-            { header: 'Last Used', accessor: r => r.last_used_at ? timeAgo(r.last_used_at) : <span style={{ color: 'var(--text-muted)' }}>never</span> },
-            { header: '', accessor: r => (
-              <button onClick={() => revoke(r.id)} className="text-xs text-red-400 hover:text-red-300">
-                Revoke
-              </button>
-            )},
-          ]}
+          columns={keyCols}
           data={keys || []}
           emptyText="No API keys created yet"
         />

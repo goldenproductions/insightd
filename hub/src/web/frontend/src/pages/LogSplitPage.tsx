@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -10,6 +10,7 @@ export function LogSplitPage() {
   const { hostId } = useParams();
   const hid = encodeURIComponent(hostId!);
   const [selectedContainers, setSelectedContainers] = useState<string[]>([]);
+  const selectedSet = useMemo(() => new Set(selectedContainers), [selectedContainers]);
 
   const { data: containers } = useQuery({
     queryKey: ['host-containers', hostId],
@@ -36,7 +37,7 @@ export function LogSplitPage() {
       {/* Container selector */}
       <div className="flex flex-wrap gap-2">
         {(containers || []).map(c => {
-          const isSelected = selectedContainers.includes(c.container_name);
+          const isSelected = selectedSet.has(c.container_name);
           return (
             <button
               key={c.container_name}

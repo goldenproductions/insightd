@@ -12,7 +12,7 @@ import { timeAgo } from '@/lib/formatters';
 export function EndpointsPage() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { data: endpoints } = useQuery({ queryKey: ['endpoints'], queryFn: () => api<EndpointSummary[]>('/endpoints') });
+  const { data: endpoints } = useQuery({ queryKey: ['endpoints'], queryFn: () => api<EndpointSummary[]>('/endpoints'), refetchInterval: 30_000 });
 
   const columns: Column<EndpointSummary>[] = [
     {

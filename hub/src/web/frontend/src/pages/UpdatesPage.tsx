@@ -5,7 +5,7 @@ import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import { Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 
 interface VersionInfo {
@@ -129,8 +129,17 @@ export function UpdatesPage() {
   const latestHub = version?.latestHubVersion;
   const checkedAt = version?.checkedAt ? new Date(version.checkedAt).toLocaleString() : null;
 
-  const outdatedAgents = (hosts || []).filter(h => latestAgent && h.agent_version && h.agent_version !== latestAgent);
-  const hasOutdatedOnline = outdatedAgents.some(h => h.is_online);
+  const { outdatedAgents, hasOutdatedOnline } = useMemo(() => {
+    const outdated: Host[] = [];
+    let hasOnline = false;
+    for (const h of hosts || []) {
+      if (latestAgent && h.agent_version && h.agent_version !== latestAgent) {
+        outdated.push(h);
+        if (h.is_online) hasOnline = true;
+      }
+    }
+    return { outdatedAgents: outdated, hasOutdatedOnline: hasOnline };
+  }, [hosts, latestAgent]);
 
   return (
     <div className="space-y-6">

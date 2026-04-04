@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerActionResult } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerActionResult, ContainerHistory, Alert } from '@/types/api';
 import { Card } from '@/components/Card';
 import { BarChart } from '@/components/BarChart';
 import { DataTable, type Column } from '@/components/DataTable';
@@ -13,6 +13,21 @@ import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
 import { timeAgo, fmtBytes, fmtPercent, fmtDurationMs } from '@/lib/formatters';
+
+const historyCols: Column<ContainerHistory>[] = [
+  { header: 'Time', accessor: r => timeAgo(r.collected_at) },
+  { header: 'Status', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.status} />{r.status}</span> },
+  { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
+  { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
+  { header: 'Restarts', accessor: r => r.restart_count },
+];
+
+const containerAlertsCols: Column<Alert>[] = [
+  { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.resolved_at ? 'green' : 'red'} />{r.alert_type.replace(/_/g, ' ')}</span> },
+  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
+  { header: 'Resolved', accessor: r => r.resolved_at ? timeAgo(r.resolved_at) : <Badge text="active" color="red" /> },
+  { header: 'Notifications', accessor: r => r.notify_count },
+];
 
 export function ContainerDetailPage() {
   const { hostId, containerName } = useParams();
@@ -28,6 +43,7 @@ export function ContainerDetailPage() {
   const { data } = useQuery({
     queryKey: ['container', hostId, containerName],
     queryFn: () => api<ContainerDetail>(`/hosts/${hid}/containers/${cname}`),
+    refetchInterval: 30_000,
   });
   const { data: availability } = useQuery({
     queryKey: ['container-availability', hostId, containerName],
@@ -57,13 +73,7 @@ export function ContainerDetailPage() {
     ? <Badge text={data.health_status} color={data.health_status === 'healthy' ? 'green' : data.health_status === 'unhealthy' ? 'red' : 'yellow'} />
     : '-';
 
-  const historyCols: Column<typeof history[number]>[] = [
-    { header: 'Time', accessor: r => timeAgo(r.collected_at) },
-    { header: 'Status', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.status} />{r.status}</span> },
-    { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
-    { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
-    { header: 'Restarts', accessor: r => r.restart_count },
-  ];
+  // historyCols and containerAlertsCols defined at module level
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
@@ -241,12 +251,7 @@ export function ContainerDetailPage() {
           {data.alerts.length > 0 && (
             <Card title="Alerts">
               <DataTable
-                columns={[
-                  { header: 'Type', accessor: (r: typeof data.alerts[number]) => <span className="flex items-center gap-2"><StatusDot status={r.resolved_at ? 'green' : 'red'} />{r.alert_type.replace(/_/g, ' ')}</span> },
-                  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
-                  { header: 'Resolved', accessor: r => r.resolved_at ? timeAgo(r.resolved_at) : <Badge text="active" color="red" /> },
-                  { header: 'Notifications', accessor: r => r.notify_count },
-                ]}
+                columns={containerAlertsCols}
                 data={data.alerts}
               />
             </Card>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -14,7 +14,7 @@ export function Layout() {
   const { showInternal, toggleShowInternal } = useShowInternal();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const navGroups: NavGroup[] = [
+  const navGroups = useMemo<NavGroup[]>(() => [
     { label: 'Monitor', items: [
       { to: '/', label: 'Dashboard', icon: DashboardIcon },
       { to: '/hosts', label: 'Hosts', icon: HostsIcon },
@@ -33,7 +33,7 @@ export function Layout() {
         { to: '/settings', label: 'Settings', icon: SettingsIcon },
       ] : []),
     ]},
-  ];
+  ], [isHubMode, authEnabled]);
 
   return (
     <div className="flex min-h-screen">

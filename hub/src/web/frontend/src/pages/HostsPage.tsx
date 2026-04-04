@@ -10,7 +10,7 @@ import { useShowInternal } from '@/lib/useShowInternal';
 export function HostsPage() {
   const navigate = useNavigate();
   const { showInternal } = useShowInternal();
-  const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts') });
+  const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts'), refetchInterval: 30_000 });
 
   if (!hosts) return <Loading />;
 
@@ -35,6 +35,7 @@ function HostCard({ host, onClick, showInternal }: { host: Host; onClick: () => 
   const { data: containers } = useQuery({
     queryKey: ['host-containers', host.host_id, showInternal],
     queryFn: () => api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(host.host_id)}/containers${si}`),
+    refetchInterval: 30_000,
   });
 
   const running = containers?.filter(c => c.status === 'running').length ?? 0;

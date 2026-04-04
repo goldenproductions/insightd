@@ -22,8 +22,8 @@ interface AttentionItem {
 export function DashboardPage() {
   const { showInternal } = useShowInternal();
   const si = showInternal ? '?showInternal=true' : '';
-  const { data } = useQuery({ queryKey: ['dashboard', showInternal], queryFn: () => api<DashboardData>(`/dashboard${si}`) });
-  const { data: rankings } = useQuery({ queryKey: ['rankings'], queryFn: () => api<Rankings>('/rankings?limit=5') });
+  const { data } = useQuery({ queryKey: ['dashboard', showInternal], queryFn: () => api<DashboardData>(`/dashboard${si}`), refetchInterval: 30_000 });
+  const { data: rankings } = useQuery({ queryKey: ['rankings'], queryFn: () => api<Rankings>('/rankings?limit=5'), refetchInterval: 30_000 });
 
   const attentionItems = useMemo(() => {
     if (!data) return [];
