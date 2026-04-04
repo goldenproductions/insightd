@@ -40,6 +40,8 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement> & { 
   );
 }
 
+const secondaryStyle = { backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)' } as const;
+
 export function Button({ variant = 'primary', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'danger' | 'secondary' }) {
   const base = 'rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50';
   const styles = {
@@ -47,5 +49,5 @@ export function Button({ variant = 'primary', ...props }: React.ButtonHTMLAttrib
     danger: `${base} bg-red-600 text-white hover:bg-red-700`,
     secondary: `${base} hover:opacity-80`,
   };
-  return <button {...props} className={styles[variant]} style={variant === 'secondary' ? { backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)' } : undefined} />;
+  return <button {...props} className={styles[variant]} style={variant === 'secondary' ? secondaryStyle : undefined} />;
 }

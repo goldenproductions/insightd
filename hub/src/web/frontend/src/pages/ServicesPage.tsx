@@ -11,7 +11,7 @@ export function ServicesPage() {
   const { isAuthenticated } = useAuth();
   const { showInternal } = useShowInternal();
   const si = showInternal ? '?showInternal=true' : '';
-  const { data: groups } = useQuery({ queryKey: ['groups', showInternal], queryFn: () => api<ServiceGroupSummary[]>(`/groups${si}`) });
+  const { data: groups } = useQuery({ queryKey: ['groups', showInternal], queryFn: () => api<ServiceGroupSummary[]>(`/groups${si}`), refetchInterval: 30_000 });
 
   return (
     <div className="space-y-6">

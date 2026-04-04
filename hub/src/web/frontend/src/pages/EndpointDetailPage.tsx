@@ -13,8 +13,8 @@ import { timeAgo } from '@/lib/formatters';
 export function EndpointDetailPage() {
   const { endpointId } = useParams();
   const { isAuthenticated } = useAuth();
-  const { data } = useQuery({ queryKey: ['endpoint', endpointId], queryFn: () => api<EndpointDetail>(`/endpoints/${endpointId}`) });
-  const { data: checks } = useQuery({ queryKey: ['endpoint-checks', endpointId], queryFn: () => api<EndpointCheck[]>(`/endpoints/${endpointId}/checks?hours=24`) });
+  const { data } = useQuery({ queryKey: ['endpoint', endpointId], queryFn: () => api<EndpointDetail>(`/endpoints/${endpointId}`), refetchInterval: 30_000 });
+  const { data: checks } = useQuery({ queryKey: ['endpoint-checks', endpointId], queryFn: () => api<EndpointCheck[]>(`/endpoints/${endpointId}/checks?hours=24`), refetchInterval: 30_000 });
 
   if (!data) return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
 

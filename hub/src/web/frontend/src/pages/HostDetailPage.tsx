@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, TimelineEntry, Trends, EventItem } from '@/types/api';
+import type { HostDetail, TimelineEntry, Trends, EventItem, ContainerTrend, DiskSnapshot, UpdateCheck, Alert } from '@/types/api';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
@@ -15,8 +15,34 @@ import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { EventTimeline } from '@/components/EventTimeline';
 import { Tabs } from '@/components/Tabs';
 import { timeAgo, fmtUptime, fmtPercent, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
-import { useShowInternal } from '@/lib/useShowInternal';
+import { useShowInternal, isInternalContainer } from '@/lib/useShowInternal';
 import { useAuth } from '@/context/AuthContext';
+
+const trendsCols: Column<ContainerTrend>[] = [
+  { header: 'Container', accessor: r => r.name },
+  { header: 'CPU Avg', accessor: r => fmtPercent(r.cpuNow) },
+  { header: 'CPU Change', accessor: r => <TrendArrow change={r.cpuChange} /> },
+  { header: 'Mem Avg', accessor: r => r.memNow != null ? `${r.memNow} MB` : '-' },
+  { header: 'Mem Change', accessor: r => <TrendArrow change={r.memChange} /> },
+];
+
+const diskCols: Column<DiskSnapshot>[] = [
+  { header: 'Mount', accessor: r => r.mount_point },
+  { header: 'Usage', accessor: r => `${r.used_gb}/${r.total_gb} GB` },
+  { header: 'Percent', accessor: r => <DiskBar percent={r.used_percent} /> },
+];
+
+const updatesCols: Column<UpdateCheck>[] = [
+  { header: 'Container', accessor: r => r.container_name },
+  { header: 'Image', accessor: r => r.image },
+];
+
+const alertsCols: Column<Alert>[] = [
+  { header: 'Type', accessor: r => r.alert_type.replace(/_/g, ' ') },
+  { header: 'Target', accessor: r => r.target },
+  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
+  { header: 'Notifications', accessor: r => r.notify_count },
+];
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -30,7 +56,7 @@ export function HostDetailPage() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionResult, setActionResult] = useState<{ ok: boolean; message: string } | null>(null);
 
-  const { data } = useQuery({ queryKey: ['host', hostId, showInternal], queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`) });
+  const { data } = useQuery({ queryKey: ['host', hostId, showInternal], queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`), refetchInterval: 30_000 });
   const { data: timeline } = useQuery({ queryKey: ['timeline', hostId], queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
   const { data: trends } = useQuery({ queryKey: ['trends', hostId], queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
   const { data: events } = useQuery({ queryKey: ['events', hostId], queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
@@ -63,7 +89,7 @@ export function HostDetailPage() {
     ...(isAuthenticated ? [{
       header: '',
       accessor: (r: typeof data.containers[number]) => {
-        const isInternal = r.labels ? (() => { try { return JSON.parse(r.labels!)['insightd.internal'] === 'true'; } catch { return false; } })() : false;
+        const isInternal = isInternalContainer(r.labels);
         if (isInternal) return null;
         const loading = actionLoading?.startsWith(`${r.container_name}:`);
         return (
@@ -176,13 +202,7 @@ export function HostDetailPage() {
           {trends && trends.containers.length > 0 && (
             <Card title="Trends (vs last week)">
               <DataTable
-                columns={[
-                  { header: 'Container', accessor: (r: typeof trends.containers[number]) => r.name },
-                  { header: 'CPU Avg', accessor: r => fmtPercent(r.cpuNow) },
-                  { header: 'CPU Change', accessor: r => <TrendArrow change={r.cpuChange} /> },
-                  { header: 'Mem Avg', accessor: r => r.memNow != null ? `${r.memNow} MB` : '-' },
-                  { header: 'Mem Change', accessor: r => <TrendArrow change={r.memChange} /> },
-                ]}
+                columns={trendsCols}
                 data={trends.containers}
               />
             </Card>
@@ -191,11 +211,7 @@ export function HostDetailPage() {
           {data.disk.length > 0 && (
             <Card title="Disk Usage">
               <DataTable
-                columns={[
-                  { header: 'Mount', accessor: (r: typeof data.disk[number]) => r.mount_point },
-                  { header: 'Usage', accessor: r => `${r.used_gb}/${r.total_gb} GB` },
-                  { header: 'Percent', accessor: r => <DiskBar percent={r.used_percent} /> },
-                ]}
+                columns={diskCols}
                 data={data.disk}
               />
               {data.diskForecast && <div className="mt-3"><DiskForecast forecasts={data.diskForecast} /></div>}
@@ -205,10 +221,7 @@ export function HostDetailPage() {
           {data.updates.length > 0 && (
             <Card title="Updates Available">
               <DataTable
-                columns={[
-                  { header: 'Container', accessor: (r: typeof data.updates[number]) => r.container_name },
-                  { header: 'Image', accessor: r => r.image },
-                ]}
+                columns={updatesCols}
                 data={data.updates}
               />
             </Card>
@@ -226,12 +239,7 @@ export function HostDetailPage() {
           {data.alerts.length > 0 && (
             <Card title="Active Alerts">
               <DataTable
-                columns={[
-                  { header: 'Type', accessor: (r: typeof data.alerts[number]) => r.alert_type.replace(/_/g, ' ') },
-                  { header: 'Target', accessor: r => r.target },
-                  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
-                  { header: 'Notifications', accessor: r => r.notify_count },
-                ]}
+                columns={alertsCols}
                 data={data.alerts}
               />
             </Card>
