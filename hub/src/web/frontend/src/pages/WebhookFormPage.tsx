@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiAuth } from '@/lib/api';
 import type { Webhook } from '@/types/api';
@@ -18,39 +18,33 @@ const typeHelp: Record<string, string> = {
 
 export function WebhookFormPage() {
   const { webhookId } = useParams();
-  const navigate = useNavigate();
   const { isAuthenticated, token } = useAuth();
   const isEdit = !!webhookId;
 
-  const { data: existing } = useQuery({
+  const { data: existing, isLoading } = useQuery({
     queryKey: ['webhook', webhookId],
     queryFn: () => apiAuth<Webhook>('GET', `/webhooks/${webhookId}`, undefined, token),
     enabled: isEdit && isAuthenticated,
     refetchInterval: false,
   });
 
-  const [name, setName] = useState('');
-  const [type, setType] = useState<string>('slack');
-  const [url, setUrl] = useState('');
-  const [secret, setSecret] = useState('');
-  const [onAlert, setOnAlert] = useState('1');
-  const [onDigest, setOnDigest] = useState('1');
-  const [enabled, setEnabled] = useState('1');
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (isEdit && isLoading) return null;
+
+  return <WebhookForm key={webhookId ?? 'new'} existing={existing} isEdit={isEdit} webhookId={webhookId} token={token} />;
+}
+
+function WebhookForm({ existing, isEdit, webhookId, token }: { existing?: Webhook; isEdit: boolean; webhookId?: string; token: string | null }) {
+  const navigate = useNavigate();
+
+  const [name, setName] = useState(existing?.name ?? '');
+  const [type, setType] = useState<string>(existing?.type ?? 'slack');
+  const [url, setUrl] = useState(existing?.url ?? '');
+  const [secret, setSecret] = useState(existing?.secret ?? '');
+  const [onAlert, setOnAlert] = useState(existing?.on_alert != null ? (existing.on_alert ? '1' : '0') : '1');
+  const [onDigest, setOnDigest] = useState(existing?.on_digest != null ? (existing.on_digest ? '1' : '0') : '1');
+  const [enabled, setEnabled] = useState(existing?.enabled != null ? (existing.enabled ? '1' : '0') : '1');
   const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
-
-  useEffect(() => {
-    if (existing) {
-      setName(existing.name);
-      setType(existing.type);
-      setUrl(existing.url);
-      setSecret(existing.secret || '');
-      setOnAlert(existing.on_alert ? '1' : '0');
-      setOnDigest(existing.on_digest ? '1' : '0');
-      setEnabled(existing.enabled ? '1' : '0');
-    }
-  }, [existing]);
-
-  if (!isAuthenticated) { navigate('/login'); return null; }
 
   const save = async () => {
     const body = { name, type, url, secret: secret || null, onAlert: onAlert === '1', onDigest: onDigest === '1', enabled: enabled === '1' };

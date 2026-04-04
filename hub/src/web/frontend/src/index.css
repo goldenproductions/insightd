@@ -48,6 +48,20 @@ body {
   margin: 0;
 }
 
+/* Hover utilities — replaces JS onMouseEnter/onMouseLeave handlers */
+.hover-surface { transition: background-color 150ms; }
+.hover-surface:hover { background-color: var(--surface-hover); }
+.hover-border-info { transition: border-color 150ms; }
+.hover-border-info:hover { border-color: var(--color-info); }
+.hover-text-secondary { transition: color 150ms; }
+.hover-text-secondary:hover { color: var(--text-secondary); }
+
+/* Log line rendering optimization — defer off-screen lines */
+.log-line {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 20px;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;

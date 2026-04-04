@@ -13,10 +13,8 @@ export function Tabs({ tabs, active, onChange }: { tabs: Tab[]; active: string; 
           <button
             key={tab.id}
             onClick={() => onChange(tab.id)}
-            className="relative px-4 py-2 text-sm font-medium transition-colors"
+            className={`relative px-4 py-2 text-sm font-medium transition-colors ${!isActive ? 'hover-text-secondary' : ''}`}
             style={{ color: isActive ? 'var(--color-info)' : 'var(--text-muted)', marginBottom: '-1px' }}
-            onMouseEnter={e => { if (!isActive) e.currentTarget.style.color = 'var(--text-secondary)'; }}
-            onMouseLeave={e => { if (!isActive) e.currentTarget.style.color = 'var(--text-muted)'; }}
           >
             {tab.label}
             {tab.count != null && (

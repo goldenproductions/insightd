@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 interface Props {
   values: number[];
   colorFn?: (value: number) => string;
@@ -9,7 +11,7 @@ interface Props {
 const defaultColorFn = (v: number) =>
   v > 90 ? 'var(--color-danger)' : v > 70 ? 'var(--color-warning)' : 'var(--color-success)';
 
-export function BarChart({ values, colorFn = defaultColorFn, maxLabel, minLabel, height = 44 }: Props) {
+export const BarChart = memo(function BarChart({ values, colorFn = defaultColorFn, maxLabel, minLabel, height = 44 }: Props) {
   if (values.length < 2) return null;
 
   const maxVal = Math.max(...values, 1);
@@ -43,4 +45,4 @@ export function BarChart({ values, colorFn = defaultColorFn, maxLabel, minLabel,
       )}
     </div>
   );
-}
+});

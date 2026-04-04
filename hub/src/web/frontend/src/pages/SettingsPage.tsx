@@ -1,6 +1,6 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { apiAuth } from '@/lib/api';
 import type { SettingsResponse } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
@@ -10,7 +10,6 @@ import { AlertBanner } from '@/components/AlertBanner';
 
 export function SettingsPage() {
   const { isAuthenticated, token, logout } = useAuth();
-  const navigate = useNavigate();
   const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
   const formRef = useRef<Record<string, string>>({});
 
@@ -21,18 +20,16 @@ export function SettingsPage() {
     refetchInterval: false,
   });
 
-  if (!isAuthenticated) {
-    navigate('/login');
-    return null;
-  }
-
-  if (error) {
-    // Token might be stale after hub restart — clear it and redirect to login
+  // Logout on stale token (401 after hub restart)
+  useEffect(() => {
     if (error instanceof Error && (error.message.includes('401') || error.message.includes('Unauthorized'))) {
       logout();
-      navigate('/login');
-      return null;
     }
+  }, [error, logout]);
+
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+
+  if (error) {
     return <AlertBanner message={error instanceof Error ? error.message : 'Failed to load settings'} color="red" />;
   }
 

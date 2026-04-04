@@ -1,3 +1,5 @@
+import { memo } from 'react';
+
 const styles: Record<string, string> = {
   green: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
   red: 'bg-red-500/10 text-red-600 dark:text-red-400',
@@ -6,10 +8,10 @@ const styles: Record<string, string> = {
   gray: 'bg-gray-500/10 text-gray-600 dark:text-gray-400',
 };
 
-export function Badge({ text, color = 'gray' }: { text: string; color?: string }) {
+export const Badge = memo(function Badge({ text, color = 'gray' }: { text: string; color?: string }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${styles[color] || styles.gray}`}>
       {text}
     </span>
   );
-}
+});

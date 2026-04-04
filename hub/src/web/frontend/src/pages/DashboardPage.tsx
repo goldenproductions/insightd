@@ -134,9 +134,7 @@ export function DashboardPage() {
           <div className="space-y-1">
             {attentionItems.map((item, i) => (
               <Link key={i} to={item.to}
-                className="flex items-center gap-3 rounded-lg px-3 py-2 -mx-1 transition-colors"
-                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--surface-hover)')}
-                onMouseLeave={e => (e.currentTarget.style.backgroundColor = '')}
+                className="flex items-center gap-3 rounded-lg px-3 py-2 -mx-1 hover-surface"
               >
                 <span className="h-2 w-2 flex-shrink-0 rounded-full" style={{
                   backgroundColor: item.severity === 'critical' ? 'var(--color-danger)' : 'var(--color-warning)',
@@ -178,9 +176,7 @@ export function DashboardPage() {
         <Card title="Services">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {data.groups.map(g => (
-              <Link key={g.id} to={`/services/${g.id}`} className="block rounded-lg p-3 transition-colors" style={{ border: '1px solid var(--border)', borderLeft: `3px solid ${g.color || 'var(--color-info)'}` }}
-                onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--surface-hover)')}
-                onMouseLeave={e => (e.currentTarget.style.backgroundColor = '')}
+              <Link key={g.id} to={`/services/${g.id}`} className="block rounded-lg p-3 hover-surface" style={{ border: '1px solid var(--border)', borderLeft: `3px solid ${g.color || 'var(--color-info)'}` }}
               >
                 <div className="font-medium text-sm" style={{ color: 'var(--text)' }}>{g.icon && <span className="mr-1">{g.icon}</span>}{g.name}</div>
                 <div className="text-xs mt-1" style={{ color: 'var(--text-muted)' }}>

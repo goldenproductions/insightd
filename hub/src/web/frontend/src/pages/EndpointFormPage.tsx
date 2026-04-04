@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import type { EndpointDetail } from '@/types/api';
@@ -10,44 +10,34 @@ import { AlertBanner } from '@/components/AlertBanner';
 
 export function EndpointFormPage() {
   const { endpointId } = useParams();
-  const navigate = useNavigate();
   const { isAuthenticated, token } = useAuth();
   const isEdit = !!endpointId;
 
-  const { data: existing } = useQuery({
+  const { data: existing, isLoading } = useQuery({
     queryKey: ['endpoint', endpointId],
     queryFn: () => api<EndpointDetail>(`/endpoints/${endpointId}`),
     enabled: isEdit,
     refetchInterval: false,
   });
 
-  const [name, setName] = useState('');
-  const [url, setUrl] = useState('');
-  const [method, setMethod] = useState('GET');
-  const [expectedStatus, setExpectedStatus] = useState('200');
-  const [intervalSeconds, setIntervalSeconds] = useState('60');
-  const [timeoutMs, setTimeoutMs] = useState('10000');
-  const [headers, setHeaders] = useState('');
-  const [enabled, setEnabled] = useState('1');
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (isEdit && isLoading) return null;
+
+  return <EndpointForm key={endpointId ?? 'new'} existing={existing} isEdit={isEdit} endpointId={endpointId} token={token} />;
+}
+
+function EndpointForm({ existing, isEdit, endpointId, token }: { existing?: EndpointDetail; isEdit: boolean; endpointId?: string; token: string | null }) {
+  const navigate = useNavigate();
+
+  const [name, setName] = useState(existing?.name ?? '');
+  const [url, setUrl] = useState(existing?.url ?? '');
+  const [method, setMethod] = useState(existing?.method ?? 'GET');
+  const [expectedStatus, setExpectedStatus] = useState(String(existing?.expected_status ?? 200));
+  const [intervalSeconds, setIntervalSeconds] = useState(String(existing?.interval_seconds ?? 60));
+  const [timeoutMs, setTimeoutMs] = useState(String(existing?.timeout_ms ?? 10000));
+  const [headers, setHeaders] = useState(existing?.headers ?? '');
+  const [enabled, setEnabled] = useState(existing?.enabled != null ? (existing.enabled ? '1' : '0') : '1');
   const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
-
-  useEffect(() => {
-    if (existing) {
-      setName(existing.name);
-      setUrl(existing.url);
-      setMethod(existing.method);
-      setExpectedStatus(String(existing.expected_status));
-      setIntervalSeconds(String(existing.interval_seconds));
-      setTimeoutMs(String(existing.timeout_ms));
-      setHeaders(existing.headers || '');
-      setEnabled(existing.enabled ? '1' : '0');
-    }
-  }, [existing]);
-
-  if (!isAuthenticated) {
-    navigate('/login');
-    return null;
-  }
 
   const save = async () => {
     const body = {

@@ -5,28 +5,37 @@ import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { ShowInternalProvider } from '@/lib/useShowInternal';
 import { Layout } from '@/components/Layout';
-import { SetupWizardPage } from '@/pages/SetupWizardPage';
-import { useState, useEffect } from 'react';
-import { DashboardPage } from '@/pages/DashboardPage';
-import { HostsPage } from '@/pages/HostsPage';
-import { HostDetailPage } from '@/pages/HostDetailPage';
-import { ContainerDetailPage } from '@/pages/ContainerDetailPage';
-import { AlertsPage } from '@/pages/AlertsPage';
-import { EndpointsPage } from '@/pages/EndpointsPage';
-import { EndpointDetailPage } from '@/pages/EndpointDetailPage';
-import { EndpointFormPage } from '@/pages/EndpointFormPage';
-import { SettingsPage } from '@/pages/SettingsPage';
-import { LoginPage } from '@/pages/LoginPage';
-import { AddAgentPage } from '@/pages/AddAgentPage';
-import { LogSplitPage } from '@/pages/LogSplitPage';
-import { WebhooksPage } from '@/pages/WebhooksPage';
-import { UpdatesPage } from '@/pages/UpdatesPage';
-import { WebhookFormPage } from '@/pages/WebhookFormPage';
-import { ServicesPage } from '@/pages/ServicesPage';
-import { ServiceDetailPage } from '@/pages/ServiceDetailPage';
-import { ServiceFormPage } from '@/pages/ServiceFormPage';
-import { ApiKeysPage } from '@/pages/ApiKeysPage';
-import { StatusPage } from '@/pages/StatusPage';
+import { useState, useEffect, lazy, Suspense } from 'react';
+
+const SetupWizardPage = lazy(() => import('@/pages/SetupWizardPage').then(m => ({ default: m.SetupWizardPage })));
+const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
+const HostsPage = lazy(() => import('@/pages/HostsPage').then(m => ({ default: m.HostsPage })));
+const HostDetailPage = lazy(() => import('@/pages/HostDetailPage').then(m => ({ default: m.HostDetailPage })));
+const ContainerDetailPage = lazy(() => import('@/pages/ContainerDetailPage').then(m => ({ default: m.ContainerDetailPage })));
+const AlertsPage = lazy(() => import('@/pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
+const EndpointsPage = lazy(() => import('@/pages/EndpointsPage').then(m => ({ default: m.EndpointsPage })));
+const EndpointDetailPage = lazy(() => import('@/pages/EndpointDetailPage').then(m => ({ default: m.EndpointDetailPage })));
+const EndpointFormPage = lazy(() => import('@/pages/EndpointFormPage').then(m => ({ default: m.EndpointFormPage })));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
+const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
+const AddAgentPage = lazy(() => import('@/pages/AddAgentPage').then(m => ({ default: m.AddAgentPage })));
+const LogSplitPage = lazy(() => import('@/pages/LogSplitPage').then(m => ({ default: m.LogSplitPage })));
+const WebhooksPage = lazy(() => import('@/pages/WebhooksPage').then(m => ({ default: m.WebhooksPage })));
+const UpdatesPage = lazy(() => import('@/pages/UpdatesPage').then(m => ({ default: m.UpdatesPage })));
+const WebhookFormPage = lazy(() => import('@/pages/WebhookFormPage').then(m => ({ default: m.WebhookFormPage })));
+const ServicesPage = lazy(() => import('@/pages/ServicesPage').then(m => ({ default: m.ServicesPage })));
+const ServiceDetailPage = lazy(() => import('@/pages/ServiceDetailPage').then(m => ({ default: m.ServiceDetailPage })));
+const ServiceFormPage = lazy(() => import('@/pages/ServiceFormPage').then(m => ({ default: m.ServiceFormPage })));
+const ApiKeysPage = lazy(() => import('@/pages/ApiKeysPage').then(m => ({ default: m.ApiKeysPage })));
+const StatusPage = lazy(() => import('@/pages/StatusPage').then(m => ({ default: m.StatusPage })));
+
+function PageLoading() {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh', color: 'var(--text-muted)' }}>
+      Loading…
+    </div>
+  );
+}
 
 export function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
@@ -47,7 +56,9 @@ export function App() {
   if (!setupComplete) {
     return (
       <ThemeProvider>
-        <SetupWizardPage mode={mode} onComplete={() => setSetupComplete(true)} />
+        <Suspense fallback={<PageLoading />}>
+          <SetupWizardPage mode={mode} onComplete={() => setSetupComplete(true)} />
+        </Suspense>
       </ThemeProvider>
     );
   }
@@ -58,6 +69,7 @@ export function App() {
         <ThemeProvider>
           <ShowInternalProvider>
           <HashRouter>
+            <Suspense fallback={<PageLoading />}>
             <Routes>
               <Route path="/status" element={<StatusPage />} />
               <Route element={<Layout />}>
@@ -85,6 +97,7 @@ export function App() {
                 <Route path="/login" element={<LoginPage />} />
               </Route>
             </Routes>
+            </Suspense>
           </HashRouter>
           </ShowInternalProvider>
         </ThemeProvider>

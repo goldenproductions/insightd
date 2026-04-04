@@ -302,10 +302,8 @@ export function UpdatesPage() {
               {imageUpdates.map(u => (
                 <Link key={`${u.host_id}/${u.container_name}`}
                   to={`/hosts/${encodeURIComponent(u.host_id)}/containers/${encodeURIComponent(u.container_name)}`}
-                  className="flex items-center justify-between rounded-lg p-3 transition-colors"
+                  className="flex items-center justify-between rounded-lg p-3 hover-border-info"
                   style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
-                  onMouseEnter={e => (e.currentTarget.style.borderColor = 'var(--color-info)')}
-                  onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--border)')}
                 >
                   <div>
                     <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{u.container_name}</div>

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import type { ServiceGroup } from '@/types/api';
@@ -10,33 +10,30 @@ import { AlertBanner } from '@/components/AlertBanner';
 
 export function ServiceFormPage() {
   const { groupId } = useParams();
-  const navigate = useNavigate();
   const { isAuthenticated, token } = useAuth();
   const isEdit = !!groupId;
 
-  const { data: existing } = useQuery({
+  const { data: existing, isLoading } = useQuery({
     queryKey: ['group-edit', groupId],
     queryFn: () => api<ServiceGroup>(`/groups/${groupId}`),
     enabled: isEdit,
     refetchInterval: false,
   });
 
-  const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
-  const [icon, setIcon] = useState('');
-  const [color, setColor] = useState('#3b82f6');
+  if (!isAuthenticated) return <Navigate to="/login" replace />;
+  if (isEdit && isLoading) return null;
+
+  return <ServiceForm key={groupId ?? 'new'} existing={existing} isEdit={isEdit} groupId={groupId} token={token} />;
+}
+
+function ServiceForm({ existing, isEdit, groupId, token }: { existing?: ServiceGroup; isEdit: boolean; groupId?: string; token: string | null }) {
+  const navigate = useNavigate();
+
+  const [name, setName] = useState(existing?.name ?? '');
+  const [description, setDescription] = useState(existing?.description ?? '');
+  const [icon, setIcon] = useState(existing?.icon ?? '');
+  const [color, setColor] = useState(existing?.color ?? '#3b82f6');
   const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
-
-  useEffect(() => {
-    if (existing) {
-      setName(existing.name);
-      setDescription(existing.description || '');
-      setIcon(existing.icon || '');
-      setColor(existing.color || '#3b82f6');
-    }
-  }, [existing]);
-
-  if (!isAuthenticated) { navigate('/login'); return null; }
 
   const save = async () => {
     const body = { name, description: description || null, icon: icon || null, color: color || null };

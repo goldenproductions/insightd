@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, memo } from 'react';
 
 interface Props {
   message: string;
@@ -7,7 +7,7 @@ interface Props {
   highlightPattern?: RegExp | null;
 }
 
-export function JsonLogLine({ message, stream, timestamp, highlightPattern }: Props) {
+export const JsonLogLine = memo(function JsonLogLine({ message, stream, timestamp, highlightPattern }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const parsed = useMemo(() => {
@@ -25,7 +25,7 @@ export function JsonLogLine({ message, stream, timestamp, highlightPattern }: Pr
 
   if (!isJson) {
     return (
-      <div className={stderrClass}>
+      <div className={`log-line ${stderrClass}`}>
         {timestamp && <span className="text-slate-500">{timestamp.slice(11, 23)} </span>}
         {highlightPattern ? highlightText(message, highlightPattern) : message}
       </div>
@@ -35,7 +35,7 @@ export function JsonLogLine({ message, stream, timestamp, highlightPattern }: Pr
   const summary = getJsonSummary(parsed);
 
   return (
-    <div className={stderrClass}>
+    <div className={`log-line ${stderrClass}`}>
       {timestamp && <span className="text-slate-500">{timestamp.slice(11, 23)} </span>}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -65,7 +65,7 @@ export function JsonLogLine({ message, stream, timestamp, highlightPattern }: Pr
       )}
     </div>
   );
-}
+});
 
 function getJsonSummary(obj: unknown): string {
   if (typeof obj !== 'object' || obj === null) return String(obj);

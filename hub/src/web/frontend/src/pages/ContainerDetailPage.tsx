@@ -257,10 +257,8 @@ export function ContainerDetailPage() {
           <div>
             <button
               onClick={() => setShowSnapshots(!showSnapshots)}
-              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
+              className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium hover-surface"
               style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--surface-hover)')}
-              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'var(--surface)')}
             >
               <span style={{ fontSize: '0.6rem' }}>{showSnapshots ? '\u25BC' : '\u25B6'}</span>
               {showSnapshots ? 'Hide' : 'Show'} all snapshots ({history.length})

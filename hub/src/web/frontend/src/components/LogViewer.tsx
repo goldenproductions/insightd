@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo, useRef, useEffect, useDeferredValue } from 'react';
 import { api } from '@/lib/api';
 import type { LogResponse, LogLine } from '@/types/api';
 import { Select, Button } from './FormField';
@@ -21,28 +21,29 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
   // Search state
   const [searchValue, setSearchValue] = useState('');
   const [searchMode, setSearchMode] = useState<'filter' | 'highlight'>('highlight');
+  const deferredSearch = useDeferredValue(searchValue);
 
   const logEndRef = useRef<HTMLDivElement>(null);
 
   const regex = useMemo(() => {
-    if (!searchValue) return null;
+    if (!deferredSearch) return null;
     try {
-      return new RegExp(searchValue, 'gi');
+      return new RegExp(deferredSearch, 'gi');
     } catch {
       return null;
     }
-  }, [searchValue]);
+  }, [deferredSearch]);
 
   const isValidRegex = !searchValue || regex !== null;
 
   const filteredLogs = useMemo(() => {
     if (!logs?.logs) return [];
-    if (!searchValue || !regex) return logs.logs;
+    if (!deferredSearch || !regex) return logs.logs;
     if (searchMode === 'filter') {
       return logs.logs.filter(l => regex.test(l.message));
     }
     return logs.logs;
-  }, [logs, searchValue, regex, searchMode]);
+  }, [logs, deferredSearch, regex, searchMode]);
 
   const matchCount = useMemo(() => {
     if (!logs?.logs || !regex) return 0;

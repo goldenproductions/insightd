@@ -18,10 +18,7 @@ export function UptimeTimeline({ containers, hostId, days = 7 }: { containers: T
     <div className="space-y-1.5">
       {containers.map(c => {
         const row = (
-          <div className={`flex items-center gap-2${hostId ? ' cursor-pointer rounded-lg px-1 -mx-1 transition-colors' : ''}`}
-            style={hostId ? { ['--hover-bg' as string]: 'var(--surface-hover)' } : undefined}
-            onMouseEnter={hostId ? e => (e.currentTarget.style.backgroundColor = 'var(--surface-hover)') : undefined}
-            onMouseLeave={hostId ? e => (e.currentTarget.style.backgroundColor = '') : undefined}
+          <div className={`flex items-center gap-2${hostId ? ' cursor-pointer rounded-lg px-1 -mx-1 hover-surface' : ''}`}
           >
             <span className="w-28 truncate text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>{c.name}</span>
             <div className="flex flex-1 gap-px">
