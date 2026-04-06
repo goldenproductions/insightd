@@ -28,9 +28,8 @@ export function ServiceDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['group', groupId] }),
   });
 
-  if (!data) return <LoadingState />;
-
   const { running, totalCpu, totalMem } = useMemo(() => {
+    if (!data) return { running: 0, totalCpu: 0, totalMem: 0 };
     let running = 0, cpu = 0, mem = 0;
     for (const m of data.members) {
       if (m.status === 'running') running++;
@@ -38,7 +37,9 @@ export function ServiceDetailPage() {
       mem += m.memory_mb || 0;
     }
     return { running, totalCpu: cpu, totalMem: mem };
-  }, [data.members]);
+  }, [data]);
+
+  if (!data) return <LoadingState />;
 
   const columns: Column<typeof data.members[number]>[] = [
     { header: 'Container', accessor: r => <span className="flex items-center gap-2 text-blue-500"><StatusDot status={r.status || 'none'} />{r.container_name}</span> },
