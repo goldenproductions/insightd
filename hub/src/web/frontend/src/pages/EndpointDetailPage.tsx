@@ -9,6 +9,8 @@ import { BarChart } from '@/components/BarChart';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { timeAgo } from '@/lib/formatters';
+import { BackLink } from '@/components/BackLink';
+import { LoadingState } from '@/components/LoadingState';
 
 export function EndpointDetailPage() {
   const { endpointId } = useParams();
@@ -16,7 +18,7 @@ export function EndpointDetailPage() {
   const { data } = useQuery({ queryKey: ['endpoint', endpointId], queryFn: () => api<EndpointDetail>(`/endpoints/${endpointId}`), refetchInterval: 30_000 });
   const { data: checks } = useQuery({ queryKey: ['endpoint-checks', endpointId], queryFn: () => api<EndpointCheck[]>(`/endpoints/${endpointId}/checks?hours=24`), refetchInterval: 30_000 });
 
-  if (!data) return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
+  if (!data) return <LoadingState />;
 
   const isUp = data.lastCheck ? data.lastCheck.is_up : null;
   const statusText = isUp === null ? 'No data' : isUp ? 'Up' : 'Down';
@@ -34,17 +36,17 @@ export function EndpointDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Link to="/endpoints" className="text-sm text-blue-500 hover:underline">&larr; Back to Endpoints</Link>
+      <BackLink to="/endpoints" label="Back to Endpoints" />
 
       <div className="flex items-center gap-3">
         <StatusDot status={isUp ? 'up' : isUp === 0 ? 'down' : 'none'} size="lg" />
-        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>{data.name}</h1>
+        <h1 className="text-xl font-bold text-fg">{data.name}</h1>
         {isAuthenticated && (
           <Link to={`/endpoints/${endpointId}/edit`} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Edit</Link>
         )}
       </div>
 
-      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+      <p className="text-sm text-muted">
         {data.url} &middot; {data.method} &middot; Expects {data.expected_status} &middot; Every {data.interval_seconds}s
       </p>
 

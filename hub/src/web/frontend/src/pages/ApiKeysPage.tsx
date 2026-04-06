@@ -6,6 +6,8 @@ import type { ApiKey } from '@/types/api';
 import { Card } from '@/components/Card';
 import { DataTable } from '@/components/DataTable';
 import { timeAgo } from '@/lib/formatters';
+import { PageTitle } from '@/components/PageTitle';
+import { EmptyState } from '@/components/EmptyState';
 
 export function ApiKeysPage() {
   const { isAuthenticated, token } = useAuth();
@@ -40,9 +42,9 @@ export function ApiKeysPage() {
 
   const keyCols = useMemo(() => [
     { header: 'Name', accessor: (r: ApiKey) => r.name },
-    { header: 'Key', accessor: (r: ApiKey) => <code className="text-xs" style={{ color: 'var(--text-muted)' }}>{r.key_prefix}...</code> },
+    { header: 'Key', accessor: (r: ApiKey) => <code className="text-xs text-muted">{r.key_prefix}...</code> },
     { header: 'Created', accessor: (r: ApiKey) => timeAgo(r.created_at) },
-    { header: 'Last Used', accessor: (r: ApiKey) => r.last_used_at ? timeAgo(r.last_used_at) : <span style={{ color: 'var(--text-muted)' }}>never</span> },
+    { header: 'Last Used', accessor: (r: ApiKey) => r.last_used_at ? timeAgo(r.last_used_at) : <span className="text-muted">never</span> },
     { header: '', accessor: (r: ApiKey) => (
       <button onClick={() => revoke(r.id)} className="text-xs text-red-400 hover:text-red-300">
         Revoke
@@ -51,16 +53,12 @@ export function ApiKeysPage() {
   ], [revoke]);
 
   if (!isAuthenticated) {
-    return (
-      <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-        Log in to manage API keys.
-      </div>
-    );
+    return <EmptyState message="Log in to manage API keys." />;
   }
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>API Keys</h1>
+      <PageTitle>API Keys</PageTitle>
 
       {/* Create form */}
       <Card title="Create API Key">
@@ -69,8 +67,7 @@ export function ApiKeysPage() {
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="Key name (e.g., monitoring-script)"
-            className="flex-1 rounded-lg px-3 py-2 text-sm"
-            style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text)' }}
+            className="flex-1 rounded-lg px-3 py-2 text-sm bg-bg-secondary border border-border text-fg"
             onKeyDown={e => e.key === 'Enter' && create()}
           />
           <button onClick={create} disabled={creating || !name.trim()}
@@ -80,17 +77,16 @@ export function ApiKeysPage() {
         </div>
 
         {newKey && (
-          <div className="mt-3 rounded-lg p-3" style={{ backgroundColor: 'rgba(16,185,129,0.1)', border: '1px solid var(--color-success)' }}>
-            <div className="mb-1 text-xs font-semibold" style={{ color: 'var(--color-success)' }}>
+          <div className="mt-3 rounded-lg p-3 bg-success/10 border border-success">
+            <div className="mb-1 text-xs font-semibold text-success">
               Save this key — you won't see it again
             </div>
-            <code className="block break-all rounded px-2 py-1 text-sm" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)' }}>
+            <code className="block break-all rounded px-2 py-1 text-sm bg-bg-secondary text-fg">
               {newKey}
             </code>
             <button
               onClick={() => { navigator.clipboard.writeText(newKey).catch(() => {}); }}
-              className="mt-2 rounded px-2 py-1 text-xs font-medium"
-              style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+              className="mt-2 rounded px-2 py-1 text-xs font-medium bg-surface border border-border text-secondary"
             >
               Copy to clipboard
             </button>
@@ -107,9 +103,9 @@ export function ApiKeysPage() {
         />
       </Card>
 
-      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+      <div className="text-xs text-muted">
         Use API keys to authenticate scripts and automation. Include the key in the Authorization header:
-        <code className="ml-1" style={{ color: 'var(--text-secondary)' }}>Authorization: Bearer insightd_...</code>
+        <code className="ml-1 text-secondary">Authorization: Bearer insightd_...</code>
       </div>
     </div>
   );

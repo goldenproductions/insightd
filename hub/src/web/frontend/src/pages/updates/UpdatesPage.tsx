@@ -6,9 +6,12 @@ import { Badge } from '@/components/Badge';
 import { Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
 import { useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { PageTitle } from '@/components/PageTitle';
+import { useHubUpdate } from '@/hooks/useHubUpdate';
+import { HubUpdateCard } from './HubUpdateCard';
+import { ImageUpdatesCard } from './ImageUpdatesCard';
 
-interface VersionInfo {
+export interface VersionInfo {
   currentVersion: string;
   latestHubVersion: string | null;
   latestAgentVersion: string | null;
@@ -19,20 +22,20 @@ interface VersionInfo {
   updateAvailable: boolean;
 }
 
-interface Host {
+export interface Host {
   host_id: string;
   agent_version: string | null;
   is_online: number;
 }
 
-interface ImageUpdate {
+export interface ImageUpdate {
   host_id: string;
   container_name: string;
   image: string;
   checked_at: string;
 }
 
-type UpdateResult = { status: string; message?: string; error?: string };
+export type UpdateResult = { status: string; message?: string; error?: string };
 
 export function UpdatesPage() {
   const { isAuthenticated, token } = useAuth();
@@ -87,43 +90,7 @@ export function UpdatesPage() {
     },
   });
 
-  const [hubStatus, setHubStatus] = useState<'idle' | 'updating' | 'restarting' | 'done' | 'failed'>('idle');
-  const [hubError, setHubError] = useState('');
-
-  const startHubUpdate = async () => {
-    setHubStatus('updating');
-    setHubError('');
-    try {
-      const res = await fetch('/api/update/hub', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        setHubStatus('failed');
-        setHubError(data.error || `Server returned ${res.status}`);
-        return;
-      }
-    } catch {
-      // Expected — hub may go down during the request
-    }
-    setHubStatus('restarting');
-    const poll = setInterval(async () => {
-      try {
-        const res = await fetch('/api/health');
-        if (res.ok) {
-          clearInterval(poll);
-          setHubStatus('done');
-          setTimeout(() => window.location.reload(), 2000);
-        }
-      } catch { /* hub still down */ }
-    }, 3000);
-    setTimeout(() => {
-      clearInterval(poll);
-      setHubStatus((prev) => prev === 'restarting' ? 'failed' : prev);
-      setHubError('Hub did not come back within 2 minutes. Check the container logs.');
-    }, 120000);
-  };
+  const { hubStatus, hubError, startHubUpdate } = useHubUpdate();
 
   const latestAgent = version?.latestAgentVersion;
   const latestHub = version?.latestHubVersion;
@@ -143,39 +110,39 @@ export function UpdatesPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Updates</h1>
+      <PageTitle>Updates</PageTitle>
 
       {/* Version info */}
       <Card title="Version">
         <div className="space-y-3 text-sm">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="w-12 font-medium" style={{ color: 'var(--text)' }}>Hub</span>
+              <span className="w-12 font-medium text-fg">Hub</span>
               <Badge text={`v${version?.currentVersion || '?'}`} color="blue" />
               {latestHub && latestHub !== version?.currentVersion && (
                 <>
-                  <span style={{ color: 'var(--text-muted)' }}>→</span>
+                  <span className="text-muted">&rarr;</span>
                   <Badge text={`v${latestHub}`} color="green" />
                 </>
               )}
             </div>
             {latestHub && (
-              <span className="text-xs" style={{ color: version?.hubUpdateAvailable ? 'var(--color-warning)' : 'var(--color-success)' }}>
+              <span className={`text-xs ${version?.hubUpdateAvailable ? 'text-warning' : 'text-success'}`}>
                 {version?.hubUpdateAvailable ? 'Update available' : 'Up to date'}
               </span>
             )}
           </div>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="w-12 font-medium" style={{ color: 'var(--text)' }}>Agent</span>
+              <span className="w-12 font-medium text-fg">Agent</span>
               {latestAgent ? (
                 <Badge text={`v${latestAgent}`} color="blue" />
               ) : (
-                <span style={{ color: 'var(--text-muted)' }}>Checking...</span>
+                <span className="text-muted">Checking...</span>
               )}
             </div>
             {latestAgent && (
-              <span className="text-xs" style={{ color: outdatedAgents.length > 0 ? 'var(--color-warning)' : 'var(--color-success)' }}>
+              <span className={`text-xs ${outdatedAgents.length > 0 ? 'text-warning' : 'text-success'}`}>
                 {outdatedAgents.length > 0
                   ? `${outdatedAgents.length} agent${outdatedAgents.length > 1 ? 's' : ''} outdated`
                   : 'All agents up to date'}
@@ -183,42 +150,27 @@ export function UpdatesPage() {
             )}
           </div>
           {checkedAt && (
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>Last checked: {checkedAt}</p>
+            <p className="text-xs text-muted">Last checked: {checkedAt}</p>
           )}
         </div>
       </Card>
 
       {/* Hub update */}
-      <Card title="Hub">
-        {!version?.hubUpdateAvailable && (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-            Running v{version?.currentVersion || '?'} — no update available.
-          </p>
-        )}
-        {version?.hubUpdateAvailable && !isAuthenticated && (
-          <AlertBanner message={`Hub v${latestHub} is available. Log in to update.`} color="yellow" />
-        )}
-        {isAuthenticated && version?.hubUpdateAvailable && (
-          <>
-            {hubStatus === 'idle' && (
-              <div className="flex items-center justify-between">
-                <span className="text-sm" style={{ color: 'var(--text)' }}>Update hub to v{latestHub}</span>
-                <Button onClick={startHubUpdate}>Update Hub</Button>
-              </div>
-            )}
-            {hubStatus === 'updating' && <AlertBanner message="Sending update command to local agent..." color="yellow" />}
-            {hubStatus === 'restarting' && <AlertBanner message="Hub is restarting — this page will reload automatically when it's back..." color="yellow" />}
-            {hubStatus === 'done' && <AlertBanner message="Hub updated! Reloading..." color="green" />}
-            {hubStatus === 'failed' && <AlertBanner message={hubError || 'Hub update failed.'} color="red" />}
-          </>
-        )}
-      </Card>
+      <HubUpdateCard
+        currentVersion={version?.currentVersion}
+        latestHub={latestHub}
+        hubUpdateAvailable={version?.hubUpdateAvailable}
+        hubStatus={hubStatus}
+        hubError={hubError}
+        startHubUpdate={startHubUpdate}
+        isAuthenticated={isAuthenticated}
+      />
 
       {/* Agent updates */}
       <Card title="Agents">
         {isAuthenticated && hasOutdatedOnline && (
           <div className="mb-4 flex items-center justify-between">
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-sm text-muted">
               {outdatedAgents.length} agent{outdatedAgents.length > 1 ? 's' : ''} can be updated to v{latestAgent}
             </span>
             <Button onClick={() => updateAll.mutate()} disabled={updateAll.isPending}>
@@ -238,24 +190,24 @@ export function UpdatesPage() {
             const isUpdating = result?.status === 'updating';
 
             return (
-              <div key={h.host_id} className="rounded-lg p-3" style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+              <div key={h.host_id} className="rounded-lg p-3 bg-bg-secondary border border-border">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="flex items-center gap-2 text-sm font-medium" style={{ color: 'var(--text)' }}>
+                    <div className="flex items-center gap-2 text-sm font-medium text-fg">
                       <span className={`h-2 w-2 rounded-full ${h.is_online ? 'bg-emerald-500' : 'bg-red-500'}`} />
                       {h.host_id}
-                      {!h.is_online && <span className="text-xs font-normal" style={{ color: 'var(--text-muted)' }}>Offline</span>}
+                      {!h.is_online && <span className="text-xs font-normal text-muted">Offline</span>}
                     </div>
                     <div className="mt-1 flex items-center gap-2 text-xs">
                       {h.agent_version ? (
                         <>
                           <Badge text={`v${h.agent_version}`} color={isOutdated ? 'yellow' : 'green'} />
                           {isOutdated && latestAgent && (
-                            <span style={{ color: 'var(--text-muted)' }}>→ v{latestAgent}</span>
+                            <span className="text-muted">&rarr; v{latestAgent}</span>
                           )}
                         </>
                       ) : (
-                        <span style={{ color: 'var(--text-muted)' }}>Version unknown (agent may be too old)</span>
+                        <span className="text-muted">Version unknown (agent may be too old)</span>
                       )}
                     </div>
                   </div>
@@ -276,7 +228,7 @@ export function UpdatesPage() {
                 {result && (
                   <div className="mt-2">
                     {result.status === 'updating' && (
-                      <div className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-warning)' }}>
+                      <div className="flex items-center gap-2 text-xs text-warning">
                         <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
                         {result.message || 'Pulling image and restarting container...'}
                       </div>
@@ -293,44 +245,13 @@ export function UpdatesPage() {
             );
           })}
           {(hosts || []).length === 0 && (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No agents connected.</p>
+            <p className="text-sm text-muted">No agents connected.</p>
           )}
         </div>
       </Card>
 
       {/* Container image updates */}
-      <Card title="Container Image Updates">
-        {(!imageUpdates || imageUpdates.length === 0) ? (
-          <p className="text-sm" style={{ color: 'var(--text-muted)' }}>All container images are up to date.</p>
-        ) : (
-          <div className="space-y-2">
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              {imageUpdates.length} container{imageUpdates.length > 1 ? 's' : ''} with newer images on Docker Hub.
-            </p>
-            <div className="space-y-2">
-              {imageUpdates.map(u => (
-                <Link key={`${u.host_id}/${u.container_name}`}
-                  to={`/hosts/${encodeURIComponent(u.host_id)}/containers/${encodeURIComponent(u.container_name)}`}
-                  className="flex items-center justify-between rounded-lg p-3 hover-border-info"
-                  style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
-                >
-                  <div>
-                    <div className="text-sm font-medium" style={{ color: 'var(--text)' }}>{u.container_name}</div>
-                    <div className="mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>{u.image}</div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge text={u.host_id} color="blue" />
-                    <Badge text="Update available" color="yellow" />
-                  </div>
-                </Link>
-              ))}
-            </div>
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-              Checked {imageUpdates[0]?.checked_at ? new Date(imageUpdates[0].checked_at + 'Z').toLocaleString() : 'recently'}
-            </p>
-          </div>
-        )}
-      </Card>
+      <ImageUpdatesCard imageUpdates={imageUpdates} />
     </div>
   );
 }

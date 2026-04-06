@@ -7,6 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
+import { PageTitle } from '@/components/PageTitle';
+import { BackLink } from '@/components/BackLink';
 
 const typeHelp: Record<string, string> = {
   slack: 'Create an incoming webhook in your Slack workspace settings. Paste the webhook URL.',
@@ -80,8 +82,8 @@ function WebhookForm({ existing, isEdit, webhookId, token }: { existing?: Webhoo
 
   return (
     <div className="space-y-6">
-      <button onClick={() => navigate(isEdit ? '/webhooks' : '/webhooks')} className="text-sm text-blue-500 hover:underline">&larr; Back</button>
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>{isEdit ? 'Edit Webhook' : 'Add Webhook'}</h1>
+      <BackLink to="/webhooks" label="Back" />
+      <PageTitle>{isEdit ? 'Edit Webhook' : 'Add Webhook'}</PageTitle>
 
       <Card className="max-w-xl">
         <div className="space-y-4">
@@ -100,7 +102,7 @@ function WebhookForm({ existing, isEdit, webhookId, token }: { existing?: Webhoo
           </FormField>
 
           {typeHelp[type] && (
-            <p className="rounded-lg p-3 text-xs" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }}>
+            <p className="rounded-lg p-3 text-xs bg-bg-secondary text-muted">
               {typeHelp[type]}
             </p>
           )}

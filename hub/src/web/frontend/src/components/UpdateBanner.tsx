@@ -41,8 +41,9 @@ export function UpdateBanner() {
     : `${outdatedAgents.length} agent${outdatedAgents.length > 1 ? 's' : ''} running v${outdatedAgents[0]?.agent_version} — latest is v${version?.latestAgentVersion}.`;
 
   return (
-    <div className="mb-4 flex items-center justify-between rounded-lg px-4 py-2.5 text-sm"
-      style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)', color: 'var(--color-info)' }}>
+    <div className="mb-4 flex items-center justify-between rounded-lg px-4 py-2.5 text-sm text-info"
+      style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)' }}>
+
       <span>{message}</span>
       <Link to="/updates" className="rounded-md bg-blue-600 px-3 py-1 text-xs font-medium text-white hover:bg-blue-700">
         Update

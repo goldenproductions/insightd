@@ -7,6 +7,7 @@ import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { timeAgo } from '@/lib/formatters';
+import { PageTitle } from '@/components/PageTitle';
 
 const columns: Column<Alert>[] = [
   { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.resolved_at ? 'green' : 'red'} /> {r.alert_type.replace(/_/g, ' ')}</span> },
@@ -23,7 +24,7 @@ export function AlertsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Alerts</h1>
+      <PageTitle>Alerts</PageTitle>
       <Card>
         <DataTable
           columns={columns}

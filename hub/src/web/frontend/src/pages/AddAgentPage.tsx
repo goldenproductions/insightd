@@ -5,6 +5,7 @@ import type { AgentSetup } from '@/types/api';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select } from '@/components/FormField';
 import { CommandBlock } from '@/components/CommandBlock';
+import { PageTitle } from '@/components/PageTitle';
 
 export function AddAgentPage() {
   const { data: defaults } = useQuery({
@@ -41,8 +42,8 @@ export function AddAgentPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Add Agent</h1>
-      <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+      <PageTitle>Add Agent</PageTitle>
+      <p className="text-sm text-muted">
         Configure and copy the command below to deploy an agent on a remote host.
       </p>
 

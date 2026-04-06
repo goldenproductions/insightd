@@ -12,12 +12,12 @@ export function StatsGrid({ children }: { children: React.ReactNode }) {
 
 export function StatCard({ value, label, color, rating, to }: { value: React.ReactNode; label: string; color?: string; rating?: MetricRating | null; to?: string }) {
   const content = (
-    <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
-      <div className="text-2xl font-bold" style={{ color: color || (rating ? ratingColors[rating.rating] : undefined) || 'var(--text)' }}>
+    <div className="rounded-xl border border-border bg-surface p-4">
+      <div className="text-2xl font-bold text-fg" style={color || rating ? { color: color || ratingColors[rating!.rating] } : undefined}>
         {value}
       </div>
       <div className="mt-0.5 flex items-center gap-2">
-        <span className="text-xs font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <span className="text-xs font-medium text-muted">{label}</span>
         {rating && (
           <span className="rounded-full px-1.5 py-0.5 text-[10px] font-medium" style={{ backgroundColor: `${ratingColors[rating.rating]}20`, color: ratingColors[rating.rating] }}>
             {rating.label} {rating.rating}

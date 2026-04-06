@@ -27,7 +27,7 @@ export function HealthBadge({ score, size = 'md' }: Props) {
   const progress = (score / 100) * circumference;
 
   return (
-    <div className="flex flex-col items-center gap-1">
+    <div className="flex flex-col items-center gap-1" aria-label={`Health score: ${score} - ${scoreLabel(score)}`}>
       <div className="relative" style={{ width: dim, height: dim }}>
         <svg width={dim} height={dim} className="-rotate-90">
           <circle cx={dim / 2} cy={dim / 2} r={radius} fill="none" stroke="var(--border)" strokeWidth={strokeWidth} />

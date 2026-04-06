@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import { useShowInternal } from '@/lib/useShowInternal';
+import { useShowInternal } from '@/hooks/useShowInternal';
 import { UpdateBanner } from './UpdateBanner';
 
 interface NavItem { to: string; label: string; icon: () => React.JSX.Element }
@@ -37,6 +37,8 @@ export function Layout() {
 
   return (
     <div className="flex min-h-screen">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded focus:bg-info focus:px-4 focus:py-2 focus:text-white">Skip to content</a>
+
       {/* Mobile overlay */}
       {sidebarOpen && (
         <div
@@ -50,20 +52,21 @@ export function Layout() {
         fixed inset-y-0 left-0 z-30 flex w-56 flex-col
         transition-transform duration-200 lg:translate-x-0 lg:static
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-      `} style={{ backgroundColor: 'var(--sidebar-bg)' }}>
+        bg-sidebar-bg
+      `}>
         {/* Logo */}
         <div className="flex h-14 items-center px-4">
-          <NavLink to="/" className="text-lg font-bold" style={{ color: 'var(--sidebar-active)' }}
+          <NavLink to="/" className="text-lg font-bold text-sidebar-active"
             onClick={() => setSidebarOpen(false)}>
             insightd
           </NavLink>
         </div>
 
         {/* Nav links */}
-        <nav className="flex-1 overflow-y-auto px-2 py-2">
+        <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-2 py-2">
           {navGroups.map(group => (
             <div key={group.label} className="mb-3">
-              <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.35)' }}>
+              <div className="px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-white/35">
                 {group.label}
               </div>
               <div className="space-y-0.5">
@@ -75,12 +78,8 @@ export function Layout() {
                     onClick={() => setSidebarOpen(false)}
                     className={({ isActive }) => `
                       flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors
-                      ${isActive ? 'text-white' : 'hover:text-white'}
+                      ${isActive ? 'text-sidebar-active bg-sidebar-hover' : 'text-sidebar-text hover:text-white'}
                     `}
-                    style={({ isActive }) => ({
-                      color: isActive ? 'var(--sidebar-active)' : 'var(--sidebar-text)',
-                      backgroundColor: isActive ? 'var(--sidebar-hover)' : undefined,
-                    })}
                   >
                     <item.icon />
                     {item.label}
@@ -92,19 +91,19 @@ export function Layout() {
         </nav>
 
         {/* Bottom controls */}
-        <div className="border-t px-4 py-3 space-y-1" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+        <div className="border-t border-white/10 px-4 py-3 space-y-1">
           <button
             onClick={toggleShowInternal}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:text-white"
-            style={{ color: 'var(--sidebar-text)' }}
+            aria-label="Toggle insightd containers visibility"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:text-white text-sidebar-text"
           >
             <EyeIcon hidden={!showInternal} />
             {showInternal ? 'Hide insightd' : 'Show insightd'}
           </button>
           <button
             onClick={toggleTheme}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:text-white"
-            style={{ color: 'var(--sidebar-text)' }}
+            aria-label="Toggle dark mode"
+            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:text-white text-sidebar-text"
           >
             {theme === 'dark' ? <SunIcon /> : <MoonIcon />}
             {theme === 'dark' ? 'Light mode' : 'Dark mode'}
@@ -115,14 +114,14 @@ export function Layout() {
       {/* Main content */}
       <div className="flex flex-1 flex-col min-w-0">
         {/* Mobile header */}
-        <header className="flex h-14 items-center gap-3 px-4 lg:hidden" style={{ borderBottom: '1px solid var(--border)' }}>
-          <button onClick={() => setSidebarOpen(true)} className="p-1" style={{ color: 'var(--text)' }}>
+        <header className="flex h-14 items-center gap-3 px-4 lg:hidden border-b border-border">
+          <button onClick={() => setSidebarOpen(true)} aria-label="Toggle menu" className="p-1 text-fg">
             <MenuIcon />
           </button>
-          <span className="text-sm font-bold" style={{ color: 'var(--text)' }}>insightd</span>
+          <span className="text-sm font-bold text-fg">insightd</span>
         </header>
 
-        <main className="flex-1 overflow-auto p-4 lg:p-6">
+        <main id="main-content" className="flex-1 overflow-auto p-4 lg:p-6">
           <div className="mx-auto max-w-6xl">
             <UpdateBanner />
             <Outlet />

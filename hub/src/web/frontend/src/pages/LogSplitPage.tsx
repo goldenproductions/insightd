@@ -1,10 +1,13 @@
 import { useState, useMemo } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { ContainerSnapshot } from '@/types/api';
 import { LogViewer } from '@/components/LogViewer';
 import { Card } from '@/components/Card';
+import { PageTitle } from '@/components/PageTitle';
+import { BackLink } from '@/components/BackLink';
+import { EmptyState } from '@/components/EmptyState';
 
 export function LogSplitPage() {
   const { hostId } = useParams();
@@ -27,12 +30,11 @@ export function LogSplitPage() {
 
   return (
     <div className="space-y-4">
-      <Link to={`/hosts/${hid}`} className="text-sm text-blue-500 hover:underline">&larr; Back to {hostId}</Link>
+      <BackLink to={`/hosts/${hid}`} label={`Back to ${hostId}`} />
 
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Split Log View</h1>
-        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>Select up to 4 containers</span>
-      </div>
+      <PageTitle actions={<span className="text-xs text-muted">Select up to 4 containers</span>}>
+        Split Log View
+      </PageTitle>
 
       {/* Container selector */}
       <div className="flex flex-wrap gap-2">
@@ -43,9 +45,8 @@ export function LogSplitPage() {
               key={c.container_name}
               onClick={() => toggleContainer(c.container_name)}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                isSelected ? 'bg-blue-600 text-white' : ''
+                isSelected ? 'bg-blue-600 text-white' : 'bg-surface border border-border text-secondary'
               }`}
-              style={!isSelected ? { backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' } : undefined}
             >
               <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${c.status === 'running' ? 'bg-emerald-500' : 'bg-red-500'}`} />
               {c.container_name}
@@ -56,9 +57,7 @@ export function LogSplitPage() {
 
       {/* Split panels */}
       {selectedContainers.length === 0 ? (
-        <p className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
-          Select containers above to view their logs side by side
-        </p>
+        <EmptyState message="Select containers above to view their logs side by side" />
       ) : (
         <div className={`grid gap-4 ${
           selectedContainers.length === 1 ? 'grid-cols-1' :
@@ -69,7 +68,7 @@ export function LogSplitPage() {
           {selectedContainers.map(name => (
             <Card key={name}>
               <div className="mb-2 flex items-center justify-between">
-                <h3 className="text-sm font-semibold" style={{ color: 'var(--text)' }}>{name}</h3>
+                <h3 className="text-sm font-semibold text-fg">{name}</h3>
                 <button
                   onClick={() => toggleContainer(name)}
                   className="text-xs text-slate-400 hover:text-red-400"

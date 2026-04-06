@@ -5,6 +5,27 @@
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-info: #3b82f6;
+
+  /* Theme-aware surface & background */
+  --color-bg: var(--bg);
+  --color-bg-secondary: var(--bg-secondary);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+
+  /* Theme-aware text */
+  --color-fg: var(--text);
+  --color-secondary: var(--text-secondary);
+  --color-muted: var(--text-muted);
+
+  /* Theme-aware borders */
+  --color-border: var(--border);
+  --color-border-light: var(--border-light);
+
+  /* Sidebar */
+  --color-sidebar-bg: var(--sidebar-bg);
+  --color-sidebar-text: var(--sidebar-text);
+  --color-sidebar-active: var(--sidebar-active);
+  --color-sidebar-hover: var(--sidebar-hover);
 }
 
 /* Light mode defaults */
@@ -60,6 +81,22 @@ body {
 .log-line {
   content-visibility: auto;
   contain-intrinsic-size: 0 20px;
+}
+
+/* Focus styles for accessibility */
+:focus-visible {
+  outline: 2px solid var(--color-info);
+  outline-offset: 2px;
+}
+
+/* Smooth theme transitions */
+*, *::before, *::after {
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+/* Opt out for elements where transitions cause jank */
+pre, code, .log-line, [data-no-transition] {
+  transition: none;
 }
 
 /* Scrollbar styling */

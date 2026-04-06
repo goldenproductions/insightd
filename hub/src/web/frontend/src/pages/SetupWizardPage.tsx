@@ -16,17 +16,16 @@ export function SetupWizardPage({ onComplete, mode }: Props) {
   const totalSteps = 6;
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-4" style={{ backgroundColor: 'var(--bg)' }}>
+    <div className="flex min-h-screen items-center justify-center p-4 bg-bg">
       <div className="w-full max-w-lg">
         {/* Progress */}
         <div className="mb-8 flex justify-center gap-2">
           {Array.from({ length: totalSteps }).map((_, i) => (
-            <div key={i} className={`h-2 w-8 rounded-full transition-colors ${i <= step ? 'bg-blue-500' : ''}`}
-              style={i > step ? { backgroundColor: 'var(--border)' } : undefined} />
+            <div key={i} className={`h-2 w-8 rounded-full transition-colors ${i <= step ? 'bg-blue-500' : 'bg-border'}`} />
           ))}
         </div>
 
-        <div className="rounded-2xl p-8" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}>
+        <div className="rounded-2xl p-8 bg-surface border border-border">
           {step === 0 && <WelcomeStep onNext={() => setStep(1)} />}
           {step === 1 && <PasswordStep onNext={() => setStep(2)} onSkip={() => setStep(2)} />}
           {step === 2 && <EmailStep onNext={() => setStep(3)} onSkip={() => setStep(3)} />}
@@ -43,8 +42,8 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <div className="text-center">
       <div className="text-4xl mb-4">🔍</div>
-      <h1 className="text-2xl font-bold mb-2" style={{ color: 'var(--text)' }}>Welcome to insightd</h1>
-      <p className="mb-6 text-sm" style={{ color: 'var(--text-muted)' }}>
+      <h1 className="text-2xl font-bold mb-2 text-fg">Welcome to insightd</h1>
+      <p className="mb-6 text-sm text-muted">
         Self-hosted server awareness for homelabbers.<br />
         Let's get you set up in under 2 minutes.
       </p>
@@ -71,8 +70,8 @@ function PasswordStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-1" style={{ color: 'var(--text)' }}>Admin Password</h2>
-      <p className="mb-5 text-sm" style={{ color: 'var(--text-muted)' }}>Secure your dashboard. Required for settings, webhooks, and updates.</p>
+      <h2 className="text-xl font-bold mb-1 text-fg">Admin Password</h2>
+      <p className="mb-5 text-sm text-muted">Secure your dashboard. Required for settings, webhooks, and updates.</p>
       <div className="space-y-4">
         <FormField label="Password">
           <Input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Choose a password" autoFocus />
@@ -114,8 +113,8 @@ function EmailStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void 
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-1" style={{ color: 'var(--text)' }}>Email Notifications</h2>
-      <p className="mb-5 text-sm" style={{ color: 'var(--text-muted)' }}>Get weekly digests and real-time alerts. You can configure this later in Settings.</p>
+      <h2 className="text-xl font-bold mb-1 text-fg">Email Notifications</h2>
+      <p className="mb-5 text-sm text-muted">Get weekly digests and real-time alerts. You can configure this later in Settings.</p>
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-3">
           <FormField label="SMTP Host"><Input value={host} onChange={e => setHost(e.target.value)} placeholder="smtp.gmail.com" /></FormField>
@@ -144,8 +143,8 @@ function AgentStep({ mode, onNext, onSkip }: { mode: string; onNext: () => void;
     return (
       <div className="text-center">
         <div className="text-4xl mb-4">✅</div>
-        <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text)' }}>You're Already Monitoring</h2>
-        <p className="mb-5 text-sm" style={{ color: 'var(--text-muted)' }}>Standalone mode monitors this host directly. No agent needed.</p>
+        <h2 className="text-xl font-bold mb-2 text-fg">You're Already Monitoring</h2>
+        <p className="mb-5 text-sm text-muted">Standalone mode monitors this host directly. No agent needed.</p>
         <Button onClick={onNext}>Continue</Button>
       </div>
     );
@@ -167,8 +166,8 @@ function AgentStep({ mode, onNext, onSkip }: { mode: string; onNext: () => void;
 
   return (
     <div>
-      <h2 className="text-xl font-bold mb-1" style={{ color: 'var(--text)' }}>Add Your First Agent</h2>
-      <p className="mb-5 text-sm" style={{ color: 'var(--text-muted)' }}>Run this command on the host you want to monitor.</p>
+      <h2 className="text-xl font-bold mb-1 text-fg">Add Your First Agent</h2>
+      <p className="mb-5 text-sm text-muted">Run this command on the host you want to monitor.</p>
       <div className="space-y-4">
         <FormField label="Host ID" description="A unique name for this host">
           <Input value={hostId} onChange={e => setHostId(e.target.value)} placeholder="e.g. nas-01, web-server" autoFocus />
@@ -225,17 +224,17 @@ function WaitingStep({ mode, onNext, onSkip }: { mode: string; onNext: () => voi
       {!connected ? (
         <>
           <div className="mb-4 animate-pulse text-4xl">📡</div>
-          <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text)' }}>Waiting for Agent</h2>
-          <p className="mb-5 text-sm" style={{ color: 'var(--text-muted)' }}>Run the command from the previous step on your host...</p>
-          <div className="h-1 w-48 mx-auto rounded-full overflow-hidden" style={{ backgroundColor: 'var(--border)' }}>
+          <h2 className="text-xl font-bold mb-2 text-fg">Waiting for Agent</h2>
+          <p className="mb-5 text-sm text-muted">Run the command from the previous step on your host...</p>
+          <div className="h-1 w-48 mx-auto rounded-full overflow-hidden bg-border">
             <div className="h-full w-1/3 rounded-full bg-blue-500 animate-pulse" />
           </div>
         </>
       ) : (
         <>
           <div className="mb-4 text-4xl">🎉</div>
-          <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--color-success)' }}>Agent Connected!</h2>
-          <div className="space-y-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+          <h2 className="text-xl font-bold mb-2 text-success">Agent Connected!</h2>
+          <div className="space-y-2 text-sm text-secondary">
             <p>✓ {hosts[0]?.host_id} is online</p>
             <p>✓ {containers.length} containers found</p>
           </div>
@@ -257,8 +256,8 @@ function DoneStep({ onComplete }: { onComplete: () => void }) {
   return (
     <div className="text-center">
       <div className="mb-4 text-4xl">🚀</div>
-      <h2 className="text-2xl font-bold mb-2" style={{ color: 'var(--text)' }}>You're All Set!</h2>
-      <p className="mb-6 text-sm" style={{ color: 'var(--text-muted)' }}>
+      <h2 className="text-2xl font-bold mb-2 text-fg">You're All Set!</h2>
+      <p className="mb-6 text-sm text-muted">
         insightd is now monitoring your infrastructure. Data will start appearing on the dashboard within a few minutes.
       </p>
       <Button onClick={finish}>Go to Dashboard →</Button>

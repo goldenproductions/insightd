@@ -5,20 +5,23 @@ import type { Host, ContainerSnapshot } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { timeAgo } from '@/lib/formatters';
-import { useShowInternal } from '@/lib/useShowInternal';
+import { useShowInternal } from '@/hooks/useShowInternal';
+import { PageTitle } from '@/components/PageTitle';
+import { LoadingState } from '@/components/LoadingState';
+import { EmptyState } from '@/components/EmptyState';
 
 export function HostsPage() {
   const navigate = useNavigate();
   const { showInternal } = useShowInternal();
   const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts'), refetchInterval: 30_000 });
 
-  if (!hosts) return <Loading />;
+  if (!hosts) return <LoadingState />;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Hosts</h1>
+      <PageTitle>Hosts</PageTitle>
       {hosts.length === 0 ? (
-        <p className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>No hosts connected yet</p>
+        <EmptyState message="No hosts connected yet" />
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {hosts.map(h => (
@@ -44,17 +47,16 @@ function HostCard({ host, onClick, showInternal }: { host: Host; onClick: () => 
   return (
     <div
       onClick={onClick}
-      className="cursor-pointer rounded-xl p-4 hover-surface"
-      style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)' }}
+      className="cursor-pointer rounded-xl p-4 hover-surface bg-surface border border-border"
     >
       <div className="flex items-center justify-between">
-        <span className="flex items-center gap-2 font-semibold" style={{ color: 'var(--text)' }}>
+        <span className="flex items-center gap-2 font-semibold text-fg">
           <StatusDot status={host.is_online ? 'online' : 'offline'} size="md" />
           {host.host_id}
         </span>
         <Badge text={host.is_online ? 'online' : 'offline'} color={host.is_online ? 'green' : 'red'} />
       </div>
-      <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+      <div className="mt-2 text-xs text-muted">
         {running}/{total} containers running<br />
         Last seen {timeAgo(host.last_seen)}
       </div>
@@ -62,6 +64,3 @@ function HostCard({ host, onClick, showInternal }: { host: Host; onClick: () => 
   );
 }
 
-function Loading() {
-  return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
-}

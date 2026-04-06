@@ -10,6 +10,8 @@ import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { fmtPercent } from '@/lib/formatters';
 import { useState, useMemo } from 'react';
+import { BackLink } from '@/components/BackLink';
+import { LoadingState } from '@/components/LoadingState';
 
 export function ServiceDetailPage() {
   const { groupId } = useParams();
@@ -26,7 +28,7 @@ export function ServiceDetailPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['group', groupId] }),
   });
 
-  if (!data) return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
+  if (!data) return <LoadingState />;
 
   const { running, totalCpu, totalMem } = useMemo(() => {
     let running = 0, cpu = 0, mem = 0;
@@ -58,16 +60,16 @@ export function ServiceDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Link to="/services" className="text-sm text-blue-500 hover:underline">&larr; Back to Services</Link>
+      <BackLink to="/services" label="Back to Services" />
 
       <div className="flex items-center gap-3">
         {data.icon && <span className="text-2xl">{data.icon}</span>}
-        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>{data.name}</h1>
+        <h1 className="text-xl font-bold text-fg">{data.name}</h1>
         {isAuthenticated && (
           <Link to={`/services/${groupId}/edit`} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Edit</Link>
         )}
       </div>
-      {data.description && <p className="text-sm" style={{ color: 'var(--text-muted)' }}>{data.description}</p>}
+      {data.description && <p className="text-sm text-muted">{data.description}</p>}
 
       <StatsGrid>
         <StatCard value={data.members.length} label="Containers" />
@@ -124,9 +126,9 @@ function AddContainerForm({ groupId, token, onAdded }: { groupId: number; token:
   };
 
   return (
-    <div className="mb-4 flex flex-wrap items-end gap-2 rounded-lg p-3" style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}>
+    <div className="mb-4 flex flex-wrap items-end gap-2 rounded-lg p-3 bg-bg-secondary border border-border">
       <select value={`${hostId}|${containerName}`} onChange={e => { const [h, c] = e.target.value.split('|'); setHostId(h || ''); setContainerName(c || ''); }}
-        className="rounded-lg px-3 py-2 text-sm" style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
+        className="rounded-lg px-3 py-2 text-sm bg-surface border border-border text-fg">
         <option value="">Select container...</option>
         {(allContainers || []).map(c => (
           <option key={`${c.hostId}|${c.name}`} value={`${c.hostId}|${c.name}`}>{c.hostId} / {c.name}</option>

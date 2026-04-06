@@ -38,7 +38,7 @@ export const BarChart = memo(function BarChart({ values, colorFn = defaultColorF
         })}
       </div>
       {(minLabel || maxLabel) && (
-        <div className="mt-1 flex justify-between text-xs" style={{ color: 'var(--text-muted)' }}>
+        <div className="mt-1 flex justify-between text-xs text-muted">
           <span>{minLabel || ''}</span>
           <span>{maxLabel || ''}</span>
         </div>
