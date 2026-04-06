@@ -20,6 +20,7 @@ export function AddAgentPage() {
   const [mqttPass, setMqttPass] = useState('');
   const [image, setImage] = useState('');
   const [allowUpdates, setAllowUpdates] = useState(true);
+  const [allowActions, setAllowActions] = useState(true);
 
   const effectiveMqttUrl = mqttUrl || defaults?.mqttUrl || '';
   const effectiveMqttUser = mqttUser || defaults?.mqttUser || '';
@@ -37,6 +38,7 @@ export function AddAgentPage() {
     effectiveMqttUser ? `  -e INSIGHTD_MQTT_USER=${effectiveMqttUser} \\` : null,
     effectiveMqttPass ? `  -e INSIGHTD_MQTT_PASS=${effectiveMqttPass} \\` : null,
     allowUpdates ? '  -e INSIGHTD_ALLOW_UPDATES=true \\' : null,
+    allowActions ? '  -e INSIGHTD_ALLOW_ACTIONS=true \\' : null,
     `  ${effectiveImage}`,
   ].filter(Boolean).join('\n');
 
@@ -66,6 +68,12 @@ export function AddAgentPage() {
           </FormField>
           <FormField label="Remote Updates" description="Allow the hub to update this agent remotely">
             <Select value={allowUpdates ? '1' : '0'} onChange={e => setAllowUpdates(e.target.value === '1')}>
+              <option value="1">Enabled</option>
+              <option value="0">Disabled</option>
+            </Select>
+          </FormField>
+          <FormField label="Container Actions" description="Allow start/stop/restart containers from the hub UI">
+            <Select value={allowActions ? '1' : '0'} onChange={e => setAllowActions(e.target.value === '1')}>
               <option value="1">Enabled</option>
               <option value="0">Disabled</option>
             </Select>
