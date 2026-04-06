@@ -32,6 +32,13 @@ insightd/
   hub/src/insights/          # Baselines (time-of-day), health scores, anomaly detector, predictions, correlations
   hub/src/web/               # HTTP server, API handlers, auth (SQLite sessions + API keys), rate limiting
   hub/src/web/frontend/      # React + TypeScript SPA (Vite build → public/)
+  hub/src/web/frontend/src/components/  # Shared UI components (Card, PageTitle, LoadingState, etc.)
+  hub/src/web/frontend/src/hooks/       # Custom hooks (useContainerAction, useAttentionItems, useTab, etc.)
+  hub/src/web/frontend/src/pages/       # Page components, decomposed into subdirectories:
+    dashboard/               # DashboardPage, AttentionList, StatusRow
+    containers/              # ContainerDetailPage, ContainerHistoryTab, HistorySummary, MetricGauge
+    hosts/                   # HostDetailPage, HostOverviewTab, HostResourcesTab, HostAlertsTab, HostsPage
+    updates/                 # UpdatesPage, HubUpdateCard, ImageUpdatesCard
   hub/src/web/public/        # Built frontend assets (served by Node HTTP server)
   hub/src/db/                # Connection, schema, settings
   src/                       # Standalone mode code (mirrors hub for single-host)
