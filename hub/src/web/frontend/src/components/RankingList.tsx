@@ -8,7 +8,7 @@ interface Props<T> {
 
 export function RankingList<T extends object>({ items, valueKey, formatFn, nameKey = 'container_name' as keyof T, hostKey = 'host_id' as keyof T }: Props<T>) {
   if (!items || items.length === 0) {
-    return <p className="py-4 text-center text-xs" style={{ color: 'var(--text-muted)' }}>No data</p>;
+    return <p className="py-4 text-center text-xs text-muted">No data</p>;
   }
 
   const max = Math.max(...items.map(r => (r[valueKey] as number) || 0), 1);
@@ -21,13 +21,13 @@ export function RankingList<T extends object>({ items, valueKey, formatFn, nameK
         return (
           <div key={i}>
             <div className="flex items-center justify-between text-xs">
-              <span style={{ color: 'var(--text)' }}>
+              <span className="text-fg">
                 {String(item[nameKey])}
-                <span className="ml-1" style={{ color: 'var(--text-muted)' }}>{String(item[hostKey])}</span>
+                <span className="ml-1 text-muted">{String(item[hostKey])}</span>
               </span>
-              <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>{formatFn(value)}</span>
+              <span className="font-medium text-secondary">{formatFn(value)}</span>
             </div>
-            <div className="mt-1 h-1.5 w-full rounded-full" style={{ backgroundColor: 'var(--border)' }}>
+            <div className="mt-1 h-1.5 w-full rounded-full bg-border">
               <div className="h-1.5 rounded-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
             </div>
           </div>

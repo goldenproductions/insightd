@@ -7,6 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
+import { PageTitle } from '@/components/PageTitle';
+import { LoadingState } from '@/components/LoadingState';
 
 export function SettingsPage() {
   const { isAuthenticated, token, logout } = useAuth();
@@ -33,7 +35,7 @@ export function SettingsPage() {
     return <AlertBanner message={error instanceof Error ? error.message : 'Failed to load settings'} color="red" />;
   }
 
-  if (!data) return <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
+  if (!data) return <LoadingState />;
 
   const save = async () => {
     try {
@@ -50,7 +52,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Settings</h1>
+      <PageTitle>Settings</PageTitle>
 
       {Object.entries(data.categories).map(([category, settings]) => (
         <Card key={category} title={category}>

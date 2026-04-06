@@ -28,7 +28,7 @@ export function LoginPage() {
   return (
     <div className="flex min-h-[60vh] items-center justify-center">
       <Card className="w-full max-w-sm">
-        <h2 className="mb-4 text-lg font-bold" style={{ color: 'var(--text)' }}>Admin Login</h2>
+        <h2 className="mb-4 text-lg font-bold text-fg">Admin Login</h2>
         <div className="space-y-4">
           <FormField label="Password">
             <Input

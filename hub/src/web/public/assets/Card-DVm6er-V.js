@@ -1,1 +1,0 @@
-import{j as e}from"./index-gNQNutjW.js";function d({title:r,children:s,className:o=""}){return e.jsxs("div",{className:`rounded-xl p-4 lg:p-5 ${o}`,style:{backgroundColor:"var(--surface)",border:"1px solid var(--border)"},children:[r&&e.jsx("h2",{className:"mb-3 text-sm font-semibold uppercase tracking-wide",style:{color:"var(--text-secondary)"},children:r}),s]})}export{d as C};

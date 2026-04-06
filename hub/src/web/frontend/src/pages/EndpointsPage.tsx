@@ -8,6 +8,7 @@ import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { timeAgo } from '@/lib/formatters';
+import { PageTitle } from '@/components/PageTitle';
 
 export function EndpointsPage() {
   const navigate = useNavigate();
@@ -23,7 +24,7 @@ export function EndpointsPage() {
         return <span className="flex items-center gap-2"><StatusDot status={status} /> {r.name}</span>;
       },
     },
-    { header: 'URL', accessor: r => <span className="max-w-[250px] truncate text-xs" style={{ color: 'var(--text-muted)' }}>{r.url}</span> },
+    { header: 'URL', accessor: r => <span className="max-w-[250px] truncate text-xs text-muted">{r.url}</span> },
     { header: 'Uptime (24h)', accessor: r => r.uptimePercent24h != null ? `${r.uptimePercent24h}%` : '-' },
     { header: 'Avg Response', accessor: r => r.avgResponseMs != null ? `${r.avgResponseMs}ms` : '-' },
     { header: 'Last Check', accessor: r => r.lastCheck ? timeAgo(r.lastCheck.checked_at) : 'never' },
@@ -32,14 +33,11 @@ export function EndpointsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Endpoints</h1>
-        {isAuthenticated && (
-          <Link to="/endpoints/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
-            Add Endpoint
-          </Link>
-        )}
-      </div>
+      <PageTitle actions={isAuthenticated ? (
+        <Link to="/endpoints/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+          Add Endpoint
+        </Link>
+      ) : undefined}>Endpoints</PageTitle>
       <Card>
         <DataTable
           columns={columns}

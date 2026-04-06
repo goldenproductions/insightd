@@ -7,6 +7,8 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { Badge } from '@/components/Badge';
 import { useState } from 'react';
+import { PageTitle } from '@/components/PageTitle';
+import { EmptyState } from '@/components/EmptyState';
 
 const typeLabels: Record<string, string> = {
   slack: 'Slack', discord: 'Discord', telegram: 'Telegram', ntfy: 'ntfy', generic: 'Generic',
@@ -42,7 +44,7 @@ export function WebhooksPage() {
   });
 
   if (!isAuthenticated) {
-    return <p className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>Log in to manage webhooks.</p>;
+    return <EmptyState message="Log in to manage webhooks." />;
   }
 
   const columns: Column<Webhook>[] = [
@@ -69,8 +71,7 @@ export function WebhooksPage() {
         return (
           <button
             onClick={e => { e.stopPropagation(); testMutation.mutate(r.id); }}
-            className="rounded-lg px-2.5 py-1 text-xs font-medium transition-colors"
-            style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+            className="rounded-lg px-2.5 py-1 text-xs font-medium transition-colors bg-bg-secondary border border-border text-secondary"
           >
             Test
           </button>
@@ -81,12 +82,11 @@ export function WebhooksPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>Webhooks</h1>
+      <PageTitle actions={
         <Link to="/webhooks/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
           Add Webhook
         </Link>
-      </div>
+      }>Webhooks</PageTitle>
       <Card>
         <DataTable columns={columns} data={webhooks || []} emptyText="No webhooks configured." />
       </Card>

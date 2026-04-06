@@ -7,6 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { FormField, Input, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
+import { PageTitle } from '@/components/PageTitle';
+import { BackLink } from '@/components/BackLink';
 
 export function ServiceFormPage() {
   const { groupId } = useParams();
@@ -63,8 +65,8 @@ function ServiceForm({ existing, isEdit, groupId, token }: { existing?: ServiceG
 
   return (
     <div className="space-y-6">
-      <button onClick={() => navigate(isEdit ? `/services/${groupId}` : '/services')} className="text-sm text-blue-500 hover:underline">&larr; Back</button>
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>{isEdit ? 'Edit Group' : 'Create Group'}</h1>
+      <BackLink to={isEdit ? `/services/${groupId}` : '/services'} label="Back" />
+      <PageTitle>{isEdit ? 'Edit Group' : 'Create Group'}</PageTitle>
 
       <Card className="max-w-xl">
         <div className="space-y-4">

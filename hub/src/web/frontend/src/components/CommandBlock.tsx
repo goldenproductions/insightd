@@ -26,13 +26,12 @@ export function CommandBlock({ command }: { command: string }) {
 
   return (
     <div className="relative">
-      <pre ref={preRef} className="overflow-x-auto rounded-lg p-4 text-sm" style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text)', border: '1px solid var(--border)' }}>
+      <pre ref={preRef} className="overflow-x-auto rounded-lg border border-border bg-bg-secondary p-4 text-sm text-fg">
         {command}
       </pre>
       <button
         onClick={copy}
-        className="absolute right-2 top-2 rounded-md px-2.5 py-1 text-xs font-medium transition-colors"
-        style={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+        className="absolute right-2 top-2 rounded-md border border-border bg-surface px-2.5 py-1 text-xs font-medium text-secondary transition-colors"
       >
         {copied ? 'Copied!' : 'Copy'}
       </button>

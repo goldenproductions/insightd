@@ -7,6 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
+import { PageTitle } from '@/components/PageTitle';
+import { BackLink } from '@/components/BackLink';
 
 export function EndpointFormPage() {
   const { endpointId } = useParams();
@@ -74,8 +76,8 @@ function EndpointForm({ existing, isEdit, endpointId, token }: { existing?: Endp
 
   return (
     <div className="space-y-6">
-      <button onClick={() => navigate(isEdit ? `/endpoints/${endpointId}` : '/endpoints')} className="text-sm text-blue-500 hover:underline">&larr; Back</button>
-      <h1 className="text-xl font-bold" style={{ color: 'var(--text)' }}>{isEdit ? 'Edit Endpoint' : 'Add Endpoint'}</h1>
+      <BackLink to={isEdit ? `/endpoints/${endpointId}` : '/endpoints'} label="Back" />
+      <PageTitle>{isEdit ? 'Edit Endpoint' : 'Add Endpoint'}</PageTitle>
 
       <Card className="max-w-xl">
         <div className="space-y-4">

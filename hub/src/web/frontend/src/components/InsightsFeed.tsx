@@ -15,7 +15,7 @@ const severityConfig = {
 
 export function InsightsFeed({ insights }: { insights: Insight[] }) {
   if (!insights || insights.length === 0) {
-    return <p className="py-4 text-center text-xs" style={{ color: 'var(--text-muted)' }}>No insights — everything looks normal</p>;
+    return <p className="py-4 text-center text-xs text-muted">No insights — everything looks normal</p>;
   }
 
   return (
@@ -27,9 +27,9 @@ export function InsightsFeed({ insights }: { insights: Insight[] }) {
             <span className="mt-0.5 text-sm">{config.icon}</span>
             <div className="min-w-0 flex-1">
               <div className="text-sm font-medium" style={{ color: config.color }}>{insight.title}</div>
-              <div className="mt-0.5 text-xs" style={{ color: 'var(--text-secondary)' }}>{insight.message}</div>
+              <div className="mt-0.5 text-xs text-secondary">{insight.message}</div>
             </div>
-            <span className="flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium" style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-secondary)' }}>
+            <span className="flex-shrink-0 rounded-full bg-bg-secondary px-2 py-0.5 text-[10px] font-medium text-muted">
               {insight.category}
             </span>
           </div>

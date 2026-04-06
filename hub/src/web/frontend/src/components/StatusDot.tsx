@@ -18,5 +18,5 @@ const colors: Record<string, string> = {
 export const StatusDot = memo(function StatusDot({ status, size = 'sm' }: { status: string; size?: 'sm' | 'md' | 'lg' }) {
   const sizeClass = size === 'lg' ? 'h-3 w-3' : size === 'md' ? 'h-2.5 w-2.5' : 'h-2 w-2';
   const colorClass = colors[status] || 'bg-gray-400';
-  return <span className={`inline-block rounded-full ${sizeClass} ${colorClass}`} />;
+  return <span role="img" aria-label={`Status: ${status}`} className={`inline-block rounded-full ${sizeClass} ${colorClass}`} />;
 });

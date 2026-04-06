@@ -3,15 +3,15 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
-import { ShowInternalProvider } from '@/lib/useShowInternal';
+import { ShowInternalProvider } from '@/hooks/useShowInternal';
 import { Layout } from '@/components/Layout';
 import { useState, useEffect, lazy, Suspense } from 'react';
 
 const SetupWizardPage = lazy(() => import('@/pages/SetupWizardPage').then(m => ({ default: m.SetupWizardPage })));
-const DashboardPage = lazy(() => import('@/pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
-const HostsPage = lazy(() => import('@/pages/HostsPage').then(m => ({ default: m.HostsPage })));
-const HostDetailPage = lazy(() => import('@/pages/HostDetailPage').then(m => ({ default: m.HostDetailPage })));
-const ContainerDetailPage = lazy(() => import('@/pages/ContainerDetailPage').then(m => ({ default: m.ContainerDetailPage })));
+const DashboardPage = lazy(() => import('@/pages/dashboard/DashboardPage').then(m => ({ default: m.DashboardPage })));
+const HostsPage = lazy(() => import('@/pages/hosts/HostsPage').then(m => ({ default: m.HostsPage })));
+const HostDetailPage = lazy(() => import('@/pages/hosts/HostDetailPage').then(m => ({ default: m.HostDetailPage })));
+const ContainerDetailPage = lazy(() => import('@/pages/containers/ContainerDetailPage').then(m => ({ default: m.ContainerDetailPage })));
 const AlertsPage = lazy(() => import('@/pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
 const EndpointsPage = lazy(() => import('@/pages/EndpointsPage').then(m => ({ default: m.EndpointsPage })));
 const EndpointDetailPage = lazy(() => import('@/pages/EndpointDetailPage').then(m => ({ default: m.EndpointDetailPage })));
@@ -21,7 +21,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m
 const AddAgentPage = lazy(() => import('@/pages/AddAgentPage').then(m => ({ default: m.AddAgentPage })));
 const LogSplitPage = lazy(() => import('@/pages/LogSplitPage').then(m => ({ default: m.LogSplitPage })));
 const WebhooksPage = lazy(() => import('@/pages/WebhooksPage').then(m => ({ default: m.WebhooksPage })));
-const UpdatesPage = lazy(() => import('@/pages/UpdatesPage').then(m => ({ default: m.UpdatesPage })));
+const UpdatesPage = lazy(() => import('@/pages/updates/UpdatesPage').then(m => ({ default: m.UpdatesPage })));
 const WebhookFormPage = lazy(() => import('@/pages/WebhookFormPage').then(m => ({ default: m.WebhookFormPage })));
 const ServicesPage = lazy(() => import('@/pages/ServicesPage').then(m => ({ default: m.ServicesPage })));
 const ServiceDetailPage = lazy(() => import('@/pages/ServiceDetailPage').then(m => ({ default: m.ServiceDetailPage })));
@@ -31,7 +31,7 @@ const StatusPage = lazy(() => import('@/pages/StatusPage').then(m => ({ default:
 
 function PageLoading() {
   return (
-    <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh', color: 'var(--text-muted)' }}>
+    <div className="flex h-[50vh] items-center justify-center text-muted">
       Loading…
     </div>
   );
