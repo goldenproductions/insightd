@@ -4,9 +4,13 @@ on:
   push:
     tags: ['hub-v*']
 
+permissions:
+  contents: read
+
 jobs:
   publish:
     runs-on: ubuntu-latest
+    if: github.repository == 'goldenproductions/insightd'
     steps:
       - uses: actions/checkout@v4
 
