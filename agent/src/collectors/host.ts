@@ -117,7 +117,10 @@ function readLoadAvg(procPath: string): LoadAvg | null {
 function readUptime(procPath: string): number | null {
   try {
     const content = fs.readFileSync(path.join(procPath, 'uptime'), 'utf8');
-    return parseFloat(content.trim().split(/\s+/)[0]);
+    const value = parseFloat(content.trim().split(/\s+/)[0]);
+    // Guard against LXC/Proxmox overflow where /proc/uptime returns negative or absurd values
+    if (!isFinite(value) || value < 0 || value > 315360000) return null; // max ~10 years
+    return value;
   } catch {
     return null;
   }
