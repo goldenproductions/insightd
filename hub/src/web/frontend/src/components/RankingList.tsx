@@ -1,12 +1,15 @@
+import type { Analogy } from '@/lib/analogies';
+
 interface Props<T> {
   items: T[];
   valueKey: keyof T;
   formatFn: (value: number) => string;
+  analogyFn?: (value: number) => Analogy | null;
   nameKey?: keyof T;
   hostKey?: keyof T;
 }
 
-export function RankingList<T extends object>({ items, valueKey, formatFn, nameKey = 'container_name' as keyof T, hostKey = 'host_id' as keyof T }: Props<T>) {
+export function RankingList<T extends object>({ items, valueKey, formatFn, analogyFn, nameKey = 'container_name' as keyof T, hostKey = 'host_id' as keyof T }: Props<T>) {
   if (!items || items.length === 0) {
     return <p className="py-4 text-center text-xs text-muted">No data</p>;
   }
@@ -25,7 +28,10 @@ export function RankingList<T extends object>({ items, valueKey, formatFn, nameK
                 {String(item[nameKey])}
                 <span className="ml-1 text-muted">{String(item[hostKey])}</span>
               </span>
-              <span className="font-medium text-secondary">{formatFn(value)}</span>
+              <span className="font-medium text-secondary">
+                {formatFn(value)}
+                {analogyFn && (() => { const a = analogyFn(value); return a ? <span className="ml-1 text-[10px] text-muted">{a.emoji}</span> : null; })()}
+              </span>
             </div>
             <div className="mt-1 h-1.5 w-full rounded-full bg-border">
               <div className="h-1.5 rounded-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />

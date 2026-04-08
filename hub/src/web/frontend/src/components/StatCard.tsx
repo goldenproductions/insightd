@@ -10,7 +10,7 @@ export function StatsGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function StatCard({ value, label, color, rating, to }: { value: React.ReactNode; label: string; color?: string; rating?: MetricRating | null; to?: string }) {
+export function StatCard({ value, label, color, rating, to, analogy }: { value: React.ReactNode; label: string; color?: string; rating?: MetricRating | null; to?: string; analogy?: { emoji: string; label: string } | null }) {
   const content = (
     <div className="rounded-xl border border-border bg-surface p-4">
       <div className="text-2xl font-bold text-fg" style={color || rating ? { color: color || ratingColors[rating!.rating] } : undefined}>
@@ -24,6 +24,9 @@ export function StatCard({ value, label, color, rating, to }: { value: React.Rea
           </span>
         )}
       </div>
+      {analogy && (
+        <div className="text-[10px] text-muted mt-0.5">{analogy.emoji} {analogy.label}</div>
+      )}
     </div>
   );
 
