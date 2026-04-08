@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import type { ContainerDetail, ContainerAvailability, BaselineRow } from '@/types/api';
 import { Card } from '@/components/Card';
+import { Button } from '@/components/FormField';
 import { BarChart } from '@/components/BarChart';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
@@ -94,26 +95,22 @@ export function ContainerDetailPage() {
           <div className="flex items-center gap-2">
             {data.status !== 'running' && (
               <>
-                <button onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors bg-slate-700 hover:bg-slate-600 ${actionLoading != null ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}>
                   {actionLoading === `${containerName}:start` ? 'Starting...' : 'Start'}
-                </button>
-                <button onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors bg-red-600 hover:bg-red-700 ${actionLoading != null ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                </Button>
+                <Button variant="danger" size="sm" onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}>
                   {actionLoading === `${containerName}:remove` ? 'Removing...' : 'Remove'}
-                </button>
+                </Button>
               </>
             )}
             {data.status === 'running' && (
               <>
-                <button onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors bg-slate-700 hover:bg-slate-600 ${actionLoading != null ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
                   {actionLoading === `${containerName}:restart` ? 'Restarting...' : 'Restart'}
-                </button>
-                <button onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors bg-red-600 hover:bg-red-700 ${actionLoading != null ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                </Button>
+                <Button variant="danger" size="sm" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
                   {actionLoading === `${containerName}:stop` ? 'Stopping...' : 'Stop'}
-                </button>
+                </Button>
               </>
             )}
           </div>
@@ -202,7 +199,7 @@ export function ContainerDetailPage() {
                     <div className="space-y-1.5">
                       {availability.incidents.map((inc, i) => (
                         <div key={i} className="flex items-center gap-3 text-sm">
-                          <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" />
+                          <span className="h-2 w-2 shrink-0 rounded-full bg-danger" />
                           <span className="text-secondary">
                             {inc.ongoing ? 'Down since ' : ''}
                             {new Date(inc.start + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}

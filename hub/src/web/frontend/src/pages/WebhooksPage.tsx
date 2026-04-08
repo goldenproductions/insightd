@@ -1,5 +1,4 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
 import { apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { Webhook, WebhookTestResult } from '@/types/api';
@@ -7,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { Badge } from '@/components/Badge';
+import { LinkButton } from '@/components/FormField';
 import { useState } from 'react';
 import { PageTitle } from '@/components/PageTitle';
 import { EmptyState } from '@/components/EmptyState';
@@ -58,7 +58,7 @@ export function WebhooksPage() {
       accessor: r => (
         <button
           onClick={e => { e.stopPropagation(); toggleMutation.mutate({ id: r.id, enabled: !r.enabled }); }}
-          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${r.enabled ? 'bg-emerald-500/20 text-emerald-500' : 'bg-gray-500/20 text-gray-400'}`}
+          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${r.enabled ? 'bg-success/20 text-success' : 'bg-gray-500/20 text-gray-400'}`}
         >
           {r.enabled ? 'Enabled' : 'Disabled'}
         </button>
@@ -68,7 +68,7 @@ export function WebhooksPage() {
       header: 'Test',
       accessor: r => {
         const result = testResult[r.id];
-        if (result) return <span className={`text-xs ${result.ok ? 'text-emerald-500' : 'text-red-500'}`}>{result.msg}</span>;
+        if (result) return <span className={`text-xs ${result.ok ? 'text-success' : 'text-danger'}`}>{result.msg}</span>;
         return (
           <button
             onClick={e => { e.stopPropagation(); testMutation.mutate(r.id); }}
@@ -84,9 +84,9 @@ export function WebhooksPage() {
   return (
     <div className="space-y-6">
       <PageTitle actions={
-        <Link to="/webhooks/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+        <LinkButton to="/webhooks/new" variant="primary">
           Add Webhook
-        </Link>
+        </LinkButton>
       }>Webhooks</PageTitle>
       <Card>
         <DataTable columns={columns} data={webhooks || []} emptyText="No webhooks configured." />

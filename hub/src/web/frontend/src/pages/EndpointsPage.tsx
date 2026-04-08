@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { EndpointSummary } from '@/types/api';
@@ -8,6 +8,7 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { LinkButton } from '@/components/FormField';
 import { timeAgo } from '@/lib/formatters';
 import { PageTitle } from '@/components/PageTitle';
 
@@ -35,9 +36,9 @@ export function EndpointsPage() {
   return (
     <div className="space-y-6">
       <PageTitle actions={isAuthenticated ? (
-        <Link to="/endpoints/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+        <LinkButton to="/endpoints/new" variant="primary">
           Add Endpoint
-        </Link>
+        </LinkButton>
       ) : undefined}>Endpoints</PageTitle>
       <Card>
         <DataTable

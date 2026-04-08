@@ -1,4 +1,5 @@
 import React, { useId } from 'react';
+import { Link, type LinkProps } from 'react-router-dom';
 
 interface Props {
   label: string;
@@ -53,12 +54,32 @@ export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement> & { 
   );
 }
 
-export function Button({ variant = 'primary', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'danger' | 'secondary' }) {
-  const base = 'rounded-lg px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50';
+export function Button({ variant = 'primary', size = 'md', ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'primary' | 'danger' | 'secondary' | 'ghost';
+  size?: 'sm' | 'md';
+}) {
+  const sizeClass = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
+  const base = `rounded-lg ${sizeClass} font-medium transition-colors disabled:opacity-50`;
   const styles = {
     primary: `${base} bg-blue-600 text-white hover:bg-blue-700`,
     danger: `${base} bg-red-600 text-white hover:bg-red-700`,
     secondary: `${base} border border-border bg-bg-secondary text-fg hover:opacity-80`,
+    ghost: `${base} text-secondary hover:bg-surface-hover hover:text-fg`,
   };
-  return <button {...props} className={styles[variant]} />;
+  return <button {...props} className={`${styles[variant]} ${props.className || ''}`} />;
+}
+
+export function LinkButton({ variant = 'primary', size = 'md', ...props }: LinkProps & {
+  variant?: 'primary' | 'danger' | 'secondary' | 'ghost';
+  size?: 'sm' | 'md';
+}) {
+  const sizeClass = size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm';
+  const base = `inline-block rounded-lg ${sizeClass} font-medium transition-colors`;
+  const styles = {
+    primary: `${base} bg-blue-600 text-white hover:bg-blue-700`,
+    danger: `${base} bg-red-600 text-white hover:bg-red-700`,
+    secondary: `${base} border border-border bg-bg-secondary text-fg hover:opacity-80`,
+    ghost: `${base} text-secondary hover:bg-surface-hover hover:text-fg`,
+  };
+  return <Link {...props} className={`${styles[variant]} ${props.className || ''}`} />;
 }

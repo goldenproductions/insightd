@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
 import { apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { SettingsResponse } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { useFormMessage } from '@/hooks/useFormMessage';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
@@ -13,7 +14,7 @@ import { LoadingState } from '@/components/LoadingState';
 
 export function SettingsPage() {
   const { isAuthenticated, token, logout } = useAuth();
-  const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
+  const { msg, showSuccess, showWarning, showError } = useFormMessage();
   const formRef = useRef<Record<string, string>>({});
 
   const { data, error } = useQuery({
@@ -42,12 +43,12 @@ export function SettingsPage() {
     try {
       const result = await apiAuth<{ saved: boolean; restartRequired: boolean }>('PUT', '/settings', formRef.current, token);
       if (result.restartRequired) {
-        setMsg({ text: 'Settings saved. Some changes require a restart to take effect.', color: 'yellow' });
+        showWarning('Settings saved. Some changes require a restart to take effect.');
       } else {
-        setMsg({ text: 'Settings saved.', color: 'green' });
+        showSuccess('Settings saved.');
       }
     } catch (err) {
-      setMsg({ text: err instanceof Error ? err.message : 'Failed', color: 'red' });
+      showError(err);
     }
   };
 

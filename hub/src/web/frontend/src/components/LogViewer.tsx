@@ -75,8 +75,7 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
     <div className="space-y-3">
       {/* Controls row */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={stream} onChange={e => setStream(e.target.value)} className="!w-auto"
-          style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0' }}>
+        <Select value={stream} onChange={e => setStream(e.target.value)} className="!w-auto">
           <option value="both">All streams</option>
           <option value="stdout">stdout</option>
           <option value="stderr">stderr</option>
@@ -88,8 +87,7 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
             onChange={e => setLines(e.target.value)}
             min="1"
             max="1000"
-            className="w-20 rounded-lg px-3 py-2 text-sm"
-            style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0' }}
+            className="w-20 rounded-lg border border-border bg-bg-secondary px-3 py-2 text-sm text-fg"
           />
         )}
         <Button onClick={loadLogs} disabled={loading}>
@@ -97,7 +95,7 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
         </Button>
       </div>
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
       {/* Search bar (only show after logs are loaded) */}
       {logs && logs.logs && logs.logs.length > 0 && (
@@ -115,8 +113,7 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
       {logs && (
         <div
           ref={logEndRef}
-          className={`overflow-auto rounded-lg p-3 font-mono text-xs leading-relaxed ${compact ? 'max-h-64' : 'max-h-96'}`}
-          style={{ backgroundColor: '#0f172a', color: '#e2e8f0' }}
+          className={`overflow-auto rounded-lg border border-border bg-bg p-3 font-mono text-xs leading-relaxed text-fg ${compact ? 'max-h-64' : 'max-h-96'}`}
         >
           {filteredLogs.length > 0
             ? filteredLogs.map((l: LogLine, i: number) => (
@@ -128,7 +125,7 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
                   highlightPattern={searchMode === 'highlight' ? regex : null}
                 />
               ))
-            : <span className="text-slate-500">
+            : <span className="text-muted">
                 {searchValue && logs.logs && logs.logs.length > 0 ? 'No matching lines' : 'No logs available'}
               </span>
           }

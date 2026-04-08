@@ -1,4 +1,4 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -9,6 +9,7 @@ import { Card } from '@/components/Card';
 import { BarChart } from '@/components/BarChart';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
+import { LinkButton } from '@/components/FormField';
 import { timeAgo } from '@/lib/formatters';
 import { BackLink } from '@/components/BackLink';
 import { LoadingState } from '@/components/LoadingState';
@@ -43,7 +44,7 @@ export function EndpointDetailPage() {
         <StatusDot status={isUp ? 'up' : isUp === 0 ? 'down' : 'none'} size="lg" />
         <h1 className="text-xl font-bold text-fg">{data.name}</h1>
         {isAuthenticated && (
-          <Link to={`/endpoints/${endpointId}/edit`} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Edit</Link>
+          <LinkButton to={`/endpoints/${endpointId}/edit`} variant="primary" size="sm">Edit</LinkButton>
         )}
       </div>
 

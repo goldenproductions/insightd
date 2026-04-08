@@ -170,7 +170,7 @@ export function UpdatesPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2 text-sm font-medium text-fg">
-                      <span className={`h-2 w-2 rounded-full ${h.is_online ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                      <span className={`h-2 w-2 rounded-full ${h.is_online ? 'bg-success' : 'bg-danger'}`} />
                       {h.host_id}
                       {!h.is_online && <span className="text-xs font-normal text-muted">Offline</span>}
                     </div>

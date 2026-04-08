@@ -92,7 +92,7 @@ export function HistorySummary({ history }: { history: ContainerDetail['history'
             <div className="space-y-1.5">
               {events.slice(0, 20).map((e, i) => (
                 <div key={i} className="flex items-center gap-3 text-sm">
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${e.good ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${e.good ? 'bg-success' : 'bg-danger'}`} />
                   <span className="text-xs text-muted" style={{ minWidth: '4rem' }}>{timeAgo(e.time)}</span>
                   <span className="text-secondary">{e.message}</span>
                 </div>

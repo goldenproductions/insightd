@@ -49,7 +49,7 @@ export function LogSplitPage() {
                 isSelected ? 'bg-blue-600 text-white' : 'bg-surface border border-border text-secondary'
               }`}
             >
-              <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${c.status === 'running' ? 'bg-emerald-500' : 'bg-red-500'}`} />
+              <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${c.status === 'running' ? 'bg-success' : 'bg-danger'}`} />
               {c.container_name}
             </button>
           );
@@ -72,7 +72,7 @@ export function LogSplitPage() {
                 <h3 className="text-sm font-semibold text-fg">{name}</h3>
                 <button
                   onClick={() => toggleContainer(name)}
-                  className="text-xs text-slate-400 hover:text-red-400"
+                  className="text-xs text-slate-400 hover:text-danger"
                 >
                   ✕
                 </button>

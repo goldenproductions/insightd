@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import type { ApiKey } from '@/types/api';
 import { Card } from '@/components/Card';
 import { DataTable } from '@/components/DataTable';
+import { Button } from '@/components/FormField';
 import { timeAgo } from '@/lib/formatters';
 import { PageTitle } from '@/components/PageTitle';
 import { EmptyState } from '@/components/EmptyState';
@@ -47,7 +48,7 @@ export function ApiKeysPage() {
     { header: 'Created', accessor: (r: ApiKey) => timeAgo(r.created_at) },
     { header: 'Last Used', accessor: (r: ApiKey) => r.last_used_at ? timeAgo(r.last_used_at) : <span className="text-muted">never</span> },
     { header: '', accessor: (r: ApiKey) => (
-      <button onClick={() => revoke(r.id)} className="text-xs text-red-400 hover:text-red-300">
+      <button onClick={() => revoke(r.id)} className="text-xs text-danger hover:text-danger">
         Revoke
       </button>
     )},
@@ -71,10 +72,9 @@ export function ApiKeysPage() {
             className="flex-1 rounded-lg px-3 py-2 text-sm bg-bg-secondary border border-border text-fg"
             onKeyDown={e => e.key === 'Enter' && create()}
           />
-          <button onClick={create} disabled={creating || !name.trim()}
-            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50">
+          <Button variant="primary" onClick={create} disabled={creating || !name.trim()}>
             {creating ? 'Creating...' : 'Create'}
-          </button>
+          </Button>
         </div>
 
         {newKey && (
