@@ -25,12 +25,17 @@ No critical issues. Good week.
 - **Real-time alerts** — 10 alert types with cooldowns, auto-resolution, and webhook delivery
 - **Webhook notifications** — Slack, Discord, Telegram, ntfy, or any generic webhook
 - **Weekly digest emails** — HTML + plaintext summary of the week
-- **Container actions** — start/stop/restart containers from the UI (opt-in)
+- **Container actions** — start/stop/restart/remove containers from the UI (opt-in)
+- **Remove containers** — delete exited containers + clean all insightd data (alerts, history, baselines)
 - **Remote agent updates** — update agents from the hub UI via MQTT (opt-in)
 - **Image update detection** — compares local images against Docker Hub
+- **Explainable alerts** — every alert stores why it fired (value, threshold, message) so you can understand what happened
+- **Metric personalities** — baseline-aware human-friendly moods on every metric (e.g. "😌 Normal", "🔥 Way above normal")
+- **Health score breakdown** — click the system health score to see per-host factor analysis
 - **Service groups** — organize containers by purpose, auto-detect from Docker Compose/labels
 - **Public status page** — shareable uptime page, no auth required (opt-in)
 - **API keys** — programmatic access with hashed key storage
+- **Full UI onboarding** — setup wizard configures everything including SMTP, no .env file required
 
 ## Quick Start
 
@@ -88,13 +93,13 @@ Or use the setup command shown in the hub's **Add Agent** page.
 
 The hub serves a dashboard at `http://localhost:3000`:
 
-- **Dashboard** — health score, availability, compact status bar, unified "Needs Attention" feed
+- **Dashboard** — health score with clickable breakdown, availability, compact status bar, unified "Needs Attention" feed, metric personalities
 - **Hosts** — grid of all connected agents with status and metrics
 - **Host detail** — tabbed view: overview, resources, alerts
 - **Container detail** — CPU/memory gauges, logs, status history
 - **Endpoints** — HTTP endpoint monitoring with uptime timelines
 - **Services** — container groups with aggregate status
-- **Alerts** — full alert history with trigger/resolution
+- **Alerts** — full alert history with reason, trigger value, and threshold
 - **Updates** — available image updates, remote agent updates
 - **Status page** — public uptime view (enable with `INSIGHTD_STATUS_PAGE=true`)
 - **Settings** — email, alerts, thresholds, API keys
@@ -115,7 +120,7 @@ The hub serves a dashboard at `http://localhost:3000`:
 
 ## Configuration
 
-All configuration is via environment variables. See [`.env.example`](.env.example) for the full list.
+All configuration can be done via the **Setup Wizard** and **Settings page** in the UI — no `.env` file required. Environment variables are also supported and documented in [`.env.example`](.env.example).
 
 ### Key variables
 
