@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Outlet, NavLink } from 'react-router-dom';
+import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useShowInternal } from '@/hooks/useShowInternal';
@@ -13,6 +13,7 @@ export function Layout() {
   const { theme, toggleTheme } = useTheme();
   const { showInternal, toggleShowInternal } = useShowInternal();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const location = useLocation();
 
   const navGroups = useMemo<NavGroup[]>(() => [
     { label: 'Monitor', items: [
@@ -124,7 +125,9 @@ export function Layout() {
         <main id="main-content" className="flex-1 overflow-auto p-4 lg:p-6">
           <div className="mx-auto max-w-6xl">
             <UpdateBanner />
-            <Outlet />
+            <div key={location.pathname} className="animate-page-enter">
+              <Outlet />
+            </div>
           </div>
         </main>
       </div>

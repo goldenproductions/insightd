@@ -94,7 +94,7 @@ export function ContainerDetailPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="animate-fade-in space-y-6">
       <BackLink to={`/hosts/${hid}`} label={`Back to ${hostId}`} />
 
       <div className="flex items-center justify-between">

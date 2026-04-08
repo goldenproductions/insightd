@@ -99,6 +99,45 @@ pre, code, .log-line, [data-no-transition] {
   transition: none;
 }
 
+/* Content fade-in — applied when data replaces loading states */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fade-in 200ms ease-out;
+}
+
+/* Page transition — applied to route outlet */
+@keyframes page-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.animate-page-enter {
+  animation: page-enter 150ms ease-out;
+}
+
+/* Status dot pulse — subtle ring for online/running indicators */
+@keyframes dot-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 currentColor; }
+  50% { box-shadow: 0 0 0 3px transparent; }
+}
+.status-dot-live {
+  animation: dot-pulse 3s ease-in-out infinite;
+}
+
+/* Clickable card hover lift */
+.card-interactive {
+  transition: transform 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+.card-interactive:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.dark .card-interactive:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
