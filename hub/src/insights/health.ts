@@ -85,10 +85,13 @@ function rateValue(value: number | null | undefined, baseline: BaselineRow | und
   return 'critical';
 }
 
+type BaselineCache = Map<string, Record<string, BaselineRow>>;
+
 /**
  * Compute and store health scores for all hosts and containers.
+ * Accepts optional baseline cache from computeBaselines to avoid re-querying.
  */
-function computeHealthScores(db: Database.Database): void {
+function computeHealthScores(db: Database.Database, baselineCache?: BaselineCache | null): void {
   const upsert = db.prepare(`
     INSERT INTO health_scores (entity_type, entity_id, score, factors, computed_at)
     VALUES (?, ?, ?, ?, datetime('now'))
@@ -106,7 +109,7 @@ function computeHealthScores(db: Database.Database): void {
     const latest = db.prepare('SELECT * FROM host_snapshots WHERE host_id = ? ORDER BY collected_at DESC LIMIT 1').get(host_id) as HostSnapshotRow | undefined;
     const host = db.prepare('SELECT * FROM hosts WHERE host_id = ?').get(host_id) as HostRow | undefined;
     const activeAlerts = db.prepare("SELECT COUNT(*) as c FROM alert_state WHERE host_id = ? AND resolved_at IS NULL").get(host_id) as AlertCountRow | undefined;
-    const baselines = getEntityBaselines(db, 'host', host_id);
+    const baselines = baselineCache?.get(`host:${host_id}`) as Record<string, BaselineRow> ?? getEntityBaselines(db, 'host', host_id);
 
     const factors: Record<string, HealthFactor> = {};
     let totalScore = 0;
@@ -171,7 +174,7 @@ function computeHealthScores(db: Database.Database): void {
       WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1
     `).get(host_id, container_name) as ContainerSnapshotRow | undefined;
 
-    const baselines = getEntityBaselines(db, 'container', entityId);
+    const baselines = baselineCache?.get(`container:${entityId}`) as Record<string, BaselineRow> ?? getEntityBaselines(db, 'container', entityId);
 
     // Uptime in last 24h
     const uptimeData = db.prepare(`
