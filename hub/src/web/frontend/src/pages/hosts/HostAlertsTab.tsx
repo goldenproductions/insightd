@@ -7,7 +7,7 @@ import { timeAgo } from '@/lib/formatters';
 
 const alertsCols: Column<Alert>[] = [
   { header: 'Type', accessor: r => r.alert_type.replace(/_/g, ' ') },
-  { header: 'Target', accessor: r => r.target },
+  { header: 'Reason', accessor: r => <span className="text-xs text-secondary">{r.message || r.target}</span> },
   { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
   { header: 'Notifications', accessor: r => r.notify_count },
 ];

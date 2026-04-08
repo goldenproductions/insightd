@@ -62,6 +62,9 @@ interface AlertRow {
   resolved_at: string | null;
   last_notified: string;
   notify_count: number;
+  message: string | null;
+  trigger_value: string | null;
+  threshold: string | null;
 }
 
 interface CountRow {
@@ -149,6 +152,9 @@ interface ContainerAlertRow {
   triggered_at: string;
   resolved_at: string | null;
   last_notified: string;
+  message: string | null;
+  trigger_value: string | null;
+  threshold: string | null;
   notify_count: number;
 }
 
@@ -323,7 +329,7 @@ function getLatestUpdates(db: Database.Database, hostId: string): UpdateRow[] {
 
 function getAlerts(db: Database.Database, activeOnly?: boolean, hostId?: string): AlertRow[] {
   let sql = `
-    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count
+    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold
     FROM alert_state
   `;
   const conditions: string[] = [];
@@ -531,7 +537,7 @@ function getContainerHistory(db: Database.Database, hostId: string, containerNam
 
 function getContainerAlerts(db: Database.Database, hostId: string, containerName: string): ContainerAlertRow[] {
   return db.prepare(`
-    SELECT id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count
+    SELECT id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold
     FROM alert_state
     WHERE host_id = ? AND target = ?
     ORDER BY triggered_at DESC

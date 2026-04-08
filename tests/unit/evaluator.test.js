@@ -289,6 +289,34 @@ describe('processAlerts', () => {
     assert.equal(rows[0].alert_type, 'container_down');
   });
 
+  it('stores message, trigger_value, and threshold in alert_state', () => {
+    const triggered = [{
+      type: 'high_cpu', hostId: 'local', target: 'redis',
+      message: 'Container "redis" on local CPU at 95.5% (threshold: 90%)',
+      value: 95.5, threshold: 90,
+    }];
+    processAlerts(db, config, { triggered, resolved: [] });
+
+    const row = db.prepare('SELECT message, trigger_value, threshold FROM alert_state WHERE target = ?').get('redis');
+    assert.equal(row.message, 'Container "redis" on local CPU at 95.5% (threshold: 90%)');
+    assert.equal(row.trigger_value, '95.5');
+    assert.equal(row.threshold, '90');
+  });
+
+  it('stores null threshold for alerts without thresholds', () => {
+    const triggered = [{
+      type: 'container_down', hostId: 'local', target: 'web',
+      message: 'Container "web" on local is down (was running, now exited)',
+      value: 'exited',
+    }];
+    processAlerts(db, config, { triggered, resolved: [] });
+
+    const row = db.prepare('SELECT message, trigger_value, threshold FROM alert_state WHERE target = ?').get('web');
+    assert.equal(row.message, 'Container "web" on local is down (was running, now exited)');
+    assert.equal(row.trigger_value, 'exited');
+    assert.equal(row.threshold, null);
+  });
+
   it('suppresses alert within cooldown period', () => {
     seedAlertState(db, [
       { type: 'container_down', target: 'nginx', triggeredAt: ts(NOW), lastNotified: ts(NOW) },

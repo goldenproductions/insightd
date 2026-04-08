@@ -21,8 +21,8 @@ export function useAttentionItems(data: DashboardData | undefined): AttentionIte
       items.push({
         kind: 'alert',
         severity: 'critical',
-        title: alert.alert_type.replace(/_/g, ' '),
-        detail: alert.target,
+        title: alert.message || alert.alert_type.replace(/_/g, ' '),
+        detail: alert.message ? alert.target : alert.target,
         meta: alert.host_id,
         time: alert.triggered_at,
         to: `/hosts/${encodeURIComponent(alert.host_id)}/containers/${encodeURIComponent(alert.target)}`,
