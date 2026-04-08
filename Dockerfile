@@ -13,6 +13,8 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY package*.json ./
 COPY src/ ./src/
+COPY shared/ ./shared/
+COPY tsconfig.json ./
 
 # Data directory for SQLite
 RUN mkdir -p /data
@@ -22,4 +24,4 @@ ENV NODE_OPTIONS="--max-old-space-size=40"
 
 VOLUME ["/data"]
 
-CMD ["node", "src/index.js"]
+CMD ["npx", "tsx", "src/index.ts"]

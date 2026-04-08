@@ -15,10 +15,10 @@ Self-hosted server awareness tool for homelabbers. Monitors containers, hosts, a
 
 ## Tech Stack
 
-- Backend: Node.js 20, SQLite (better-sqlite3), dockerode, MQTT, Nodemailer, node-cron
+- Backend: Node.js 20, TypeScript (strict), SQLite (better-sqlite3), dockerode, MQTT, Nodemailer, node-cron, tsx
 - Frontend: React 19, TypeScript (strict), Tailwind CSS v4, Vite 6, React Router v6, TanStack Query v5
 - Docker multi-arch (amd64 + arm64)
-- Tests: 287 tests using `node:test` (zero external test dependencies)
+- Tests: ~300 tests using `node:test` + tsx (zero external test dependencies)
 
 ## Project Structure
 
@@ -57,7 +57,8 @@ insightd/
 ## Commands
 
 ```bash
-npm test                    # Run all 287 tests
+npm test                    # Run all tests via tsx
+npm run typecheck           # Type-check without emitting (tsc --noEmit)
 npm run build               # Build frontend (cd hub/src/web/frontend && npm run build)
 docker compose build        # Build hub + agent images
 docker compose up -d        # Run full stack (mosquitto + hub + agent)
@@ -74,7 +75,7 @@ docker compose up -d        # Run full stack (mosquitto + hub + agent)
 - `INSIGHTD_ALLOW_UPDATES` — enable remote agent updates (default false)
 - `INSIGHTD_ALLOW_ACTIONS` — enable container start/stop/restart (default false)
 - `INSIGHTD_STATUS_PAGE` — enable public status page (default false)
-- See hub/src/config.js and agent/src/config.js for full list (40+ vars)
+- See hub/src/config.ts and agent/src/config.ts for full list (40+ vars)
 
 ## Database
 
