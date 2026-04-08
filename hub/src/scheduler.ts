@@ -72,18 +72,13 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
   // Schedule insights engine — hourly baseline computation + health scores
   scheduledTasks.push(cron.schedule('0 * * * *', async () => {
     logger.info('scheduler', 'Computing insights...');
-    await safeCollect('baselines', () => {
-      const { computeBaselines } = require('./insights/baselines');
-      computeBaselines(db);
-    });
-    await safeCollect('health-scores', () => {
-      const { computeHealthScores } = require('./insights/health');
-      computeHealthScores(db);
-    });
-    await safeCollect('insights', () => {
-      const { generateInsights } = require('./insights/detector');
-      generateInsights(db);
-    });
+    const { computeBaselines } = require('./insights/baselines');
+    const { computeHealthScores } = require('./insights/health');
+    const { generateInsights } = require('./insights/detector');
+    // Compute baselines once and pass the cache to downstream functions
+    const baselineCache = await safeCollect('baselines', () => computeBaselines(db));
+    await safeCollect('health-scores', () => computeHealthScores(db, baselineCache));
+    await safeCollect('insights', () => generateInsights(db, baselineCache));
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'Insights engine scheduled: hourly');
 
