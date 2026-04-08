@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { HostDetail, TimelineEntry, ContainerSnapshot, BaselineRow } from '@/types/api';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
@@ -25,6 +26,7 @@ interface Props {
 
 export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthenticated, actionLoading, runAction, removeContainer, baselines }: Props) {
   const hm = data.hostMetrics;
+  const [showExtended, setShowExtended] = useState(false);
   // Don't show analogies until baselines have loaded (prevents flicker from static→baseline switch)
   const ready = baselines !== undefined;
   const bl = (metric: string) => findBaseline(baselines, metric);
@@ -84,16 +86,36 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
             <StatCard value={fmtUptime(hm.uptime_seconds)} label="Uptime" />
           </StatsGrid>
           {(hm.cpu_temperature_celsius != null || hm.gpu_utilization_percent != null || hm.disk_read_bytes_per_sec != null || hm.net_rx_bytes_per_sec != null) && (
-            <StatsGrid>
-              {hm.cpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.cpu_temperature_celsius)} label="CPU Temp" color={hm.cpu_temperature_celsius > 80 ? 'var(--color-danger)' : hm.cpu_temperature_celsius > 60 ? 'var(--color-warning)' : undefined} analogy={ready ? getAnalogy('temperature', hm.cpu_temperature_celsius) : null} />}
-              {hm.gpu_utilization_percent != null && <StatCard value={fmtPercent(hm.gpu_utilization_percent)} label="GPU" analogy={ready ? getAnalogy('cpu', hm.gpu_utilization_percent, null, bl('gpu_utilization_percent')) : null} />}
-              {hm.gpu_memory_total_mb != null && <StatCard value={`${Math.round(hm.gpu_memory_used_mb || 0)}/${Math.round(hm.gpu_memory_total_mb)} MB`} label="GPU Memory" analogy={ready ? getAnalogy('memory', hm.gpu_memory_used_mb, hm.gpu_memory_total_mb) : null} />}
-              {hm.gpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.gpu_temperature_celsius)} label="GPU Temp" color={hm.gpu_temperature_celsius > 85 ? 'var(--color-danger)' : hm.gpu_temperature_celsius > 70 ? 'var(--color-warning)' : undefined} analogy={ready ? getAnalogy('temperature', hm.gpu_temperature_celsius) : null} />}
-              {hm.disk_read_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_read_bytes_per_sec)} label="Disk Read" analogy={ready ? getAnalogy('network', hm.disk_read_bytes_per_sec, null, bl('disk_read_bytes_per_sec')) : null} />}
-              {hm.disk_write_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_write_bytes_per_sec)} label="Disk Write" analogy={ready ? getAnalogy('network', hm.disk_write_bytes_per_sec, null, bl('disk_write_bytes_per_sec')) : null} />}
-              {hm.net_rx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_rx_bytes_per_sec)} label="Net RX" analogy={ready ? getAnalogy('network', hm.net_rx_bytes_per_sec, null, bl('net_rx_bytes_per_sec')) : null} />}
-              {hm.net_tx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_tx_bytes_per_sec)} label="Net TX" analogy={ready ? getAnalogy('network', hm.net_tx_bytes_per_sec, null, bl('net_tx_bytes_per_sec')) : null} />}
-            </StatsGrid>
+            <div>
+              <button
+                onClick={() => setShowExtended(!showExtended)}
+                className="flex w-full items-center justify-between rounded-xl border border-border bg-surface px-4 py-3 text-sm transition-colors hover:bg-surface-hover"
+              >
+                <span className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+                  {hm.cpu_temperature_celsius != null && <span>CPU {fmtCelsius(hm.cpu_temperature_celsius)}</span>}
+                  {hm.gpu_utilization_percent != null && <span>GPU {fmtPercent(hm.gpu_utilization_percent)}</span>}
+                  {hm.net_rx_bytes_per_sec != null && <span>Net RX {fmtBytesPerSec(hm.net_rx_bytes_per_sec)}</span>}
+                  {hm.net_tx_bytes_per_sec != null && <span>Net TX {fmtBytesPerSec(hm.net_tx_bytes_per_sec)}</span>}
+                  {hm.disk_read_bytes_per_sec != null && <span>Disk R {fmtBytesPerSec(hm.disk_read_bytes_per_sec)}</span>}
+                  {hm.disk_write_bytes_per_sec != null && <span>Disk W {fmtBytesPerSec(hm.disk_write_bytes_per_sec)}</span>}
+                </span>
+                <span className="ml-3 shrink-0 text-xs text-muted">{showExtended ? '▲ Less' : '▼ More'}</span>
+              </button>
+              {showExtended && (
+                <div className="mt-3">
+                  <StatsGrid>
+                    {hm.cpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.cpu_temperature_celsius)} label="CPU Temp" color={hm.cpu_temperature_celsius > 80 ? 'var(--color-danger)' : hm.cpu_temperature_celsius > 60 ? 'var(--color-warning)' : undefined} analogy={ready ? getAnalogy('temperature', hm.cpu_temperature_celsius) : null} />}
+                    {hm.gpu_utilization_percent != null && <StatCard value={fmtPercent(hm.gpu_utilization_percent)} label="GPU" analogy={ready ? getAnalogy('cpu', hm.gpu_utilization_percent, null, bl('gpu_utilization_percent')) : null} />}
+                    {hm.gpu_memory_total_mb != null && <StatCard value={`${Math.round(hm.gpu_memory_used_mb || 0)}/${Math.round(hm.gpu_memory_total_mb)} MB`} label="GPU Memory" analogy={ready ? getAnalogy('memory', hm.gpu_memory_used_mb, hm.gpu_memory_total_mb) : null} />}
+                    {hm.gpu_temperature_celsius != null && <StatCard value={fmtCelsius(hm.gpu_temperature_celsius)} label="GPU Temp" color={hm.gpu_temperature_celsius > 85 ? 'var(--color-danger)' : hm.gpu_temperature_celsius > 70 ? 'var(--color-warning)' : undefined} analogy={ready ? getAnalogy('temperature', hm.gpu_temperature_celsius) : null} />}
+                    {hm.disk_read_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_read_bytes_per_sec)} label="Disk Read" analogy={ready ? getAnalogy('network', hm.disk_read_bytes_per_sec, null, bl('disk_read_bytes_per_sec')) : null} />}
+                    {hm.disk_write_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.disk_write_bytes_per_sec)} label="Disk Write" analogy={ready ? getAnalogy('network', hm.disk_write_bytes_per_sec, null, bl('disk_write_bytes_per_sec')) : null} />}
+                    {hm.net_rx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_rx_bytes_per_sec)} label="Net RX" analogy={ready ? getAnalogy('network', hm.net_rx_bytes_per_sec, null, bl('net_rx_bytes_per_sec')) : null} />}
+                    {hm.net_tx_bytes_per_sec != null && <StatCard value={fmtBytesPerSec(hm.net_tx_bytes_per_sec)} label="Net TX" analogy={ready ? getAnalogy('network', hm.net_tx_bytes_per_sec, null, bl('net_tx_bytes_per_sec')) : null} />}
+                  </StatsGrid>
+                </div>
+              )}
+            </div>
           )}
         </>
       )}

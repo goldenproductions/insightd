@@ -7,7 +7,7 @@ import { Card } from '@/components/Card';
 import { RankingList } from '@/components/RankingList';
 import { HealthBadge } from '@/components/HealthBadge';
 import { useShowInternal } from '@/hooks/useShowInternal';
-import { LoadingState } from '@/components/LoadingState';
+import { StatsGridSkeleton, CardSkeleton } from '@/components/Skeleton';
 import { useAttentionItems } from '@/hooks/useAttentionItems';
 import { getAnalogy } from '@/lib/analogies';
 import { queryKeys } from '@/lib/queryKeys';
@@ -22,7 +22,22 @@ export function DashboardPage() {
 
   const attentionItems = useAttentionItems(data);
 
-  if (!data) return <LoadingState />;
+  if (!data) return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-center gap-12 py-4">
+        <div className="flex flex-col items-center gap-2">
+          <div className="h-16 w-16 animate-pulse rounded-full bg-border" />
+          <div className="h-3 w-20 animate-pulse rounded bg-border" />
+        </div>
+        <div className="flex flex-col items-center gap-2">
+          <div className="h-10 w-16 animate-pulse rounded bg-border" />
+          <div className="h-3 w-24 animate-pulse rounded bg-border" />
+        </div>
+      </div>
+      <StatsGridSkeleton count={5} />
+      <CardSkeleton lines={4} />
+    </div>
+  );
 
   return (
     <div className="space-y-6">
@@ -71,6 +86,7 @@ const FACTOR_LABELS: Record<string, string> = { cpu: 'CPU', memory: 'Memory', lo
 
 function HealthHero({ systemHealthScore, availability }: { systemHealthScore: DashboardData['systemHealthScore']; availability: DashboardData['availability'] }) {
   const [expanded, setExpanded] = useState(false);
+  const [showAllFactors, setShowAllFactors] = useState(false);
 
   return (
     <div className="py-4">
@@ -105,22 +121,25 @@ function HealthHero({ systemHealthScore, availability }: { systemHealthScore: Da
                 const worstFactors = Object.entries(host.factors)
                   .filter(([, f]) => f.rating !== 'normal')
                   .sort(([, a], [, b]) => a.score - b.score);
+                const visibleFactors = showAllFactors ? worstFactors : worstFactors.slice(0, 2);
+                const hiddenCount = worstFactors.length - visibleFactors.length;
                 return (
                   <Link key={host.hostId} to={`/hosts/${encodeURIComponent(host.hostId)}`}
                     className="flex items-center gap-3 rounded-lg px-3 py-2 hover-surface">
                     <HealthBadge score={host.score} size="sm" />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm font-medium text-fg">{host.hostId}</div>
-                      {worstFactors.length > 0 ? (
+                      {visibleFactors.length > 0 ? (
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                          {worstFactors.map(([key, f]) => (
-                            <span key={key} className={`text-[11px] ${RATING_COLORS[f.rating] || 'text-muted'}`}>
+                          {visibleFactors.map(([key, f]) => (
+                            <span key={key} className={`text-xs ${RATING_COLORS[f.rating] || 'text-muted'}`}>
                               {RATING_EMOJI[f.rating] || ''} {FACTOR_LABELS[key] || key}: {typeof f.value === 'number' ? Math.round(f.value * 10) / 10 : f.value} ({f.rating})
                             </span>
                           ))}
+                          {hiddenCount > 0 && <span className="text-xs text-muted">+{hiddenCount} more</span>}
                         </div>
                       ) : (
-                        <span className="text-[11px] text-success">✅ All factors normal</span>
+                        <span className="text-xs text-success">All factors normal</span>
                       )}
                     </div>
                     <span className="text-lg font-bold" style={{ color: host.score >= 90 ? 'var(--color-success)' : host.score >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }}>
@@ -130,6 +149,14 @@ function HealthHero({ systemHealthScore, availability }: { systemHealthScore: Da
                 );
               })}
           </div>
+          {systemHealthScore.hostBreakdown.some(h => Object.values(h.factors).filter(f => f.rating !== 'normal').length > 2) && (
+            <button
+              onClick={e => { e.stopPropagation(); setShowAllFactors(!showAllFactors); }}
+              className="mt-2 text-xs text-muted hover:text-fg"
+            >
+              {showAllFactors ? '▲ Show less' : '▼ Show all factors'}
+            </button>
+          )}
         </div>
       )}
     </div>
