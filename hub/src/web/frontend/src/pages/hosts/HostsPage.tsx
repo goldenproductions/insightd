@@ -48,7 +48,7 @@ function HostCard({ host, onClick, showInternal }: { host: Host; onClick: () => 
   return (
     <div
       onClick={onClick}
-      className="cursor-pointer rounded-xl p-4 hover-surface bg-surface border border-border"
+      className="cursor-pointer rounded-xl p-4 hover-surface card-interactive bg-surface border border-border"
     >
       <div className="flex items-center justify-between">
         <span className="flex items-center gap-2 font-semibold text-fg">

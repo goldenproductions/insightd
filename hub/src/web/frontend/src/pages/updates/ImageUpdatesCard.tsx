@@ -21,7 +21,7 @@ export function ImageUpdatesCard({ imageUpdates }: ImageUpdatesCardProps) {
             {imageUpdates.map(u => (
               <Link key={`${u.host_id}/${u.container_name}`}
                 to={`/hosts/${encodeURIComponent(u.host_id)}/containers/${encodeURIComponent(u.container_name)}`}
-                className="flex items-center justify-between rounded-lg p-3 hover-border-info bg-bg-secondary border border-border"
+                className="flex items-center justify-between rounded-lg p-3 hover-border-info card-interactive bg-bg-secondary border border-border"
               >
                 <div>
                   <div className="text-sm font-medium text-fg">{u.container_name}</div>
