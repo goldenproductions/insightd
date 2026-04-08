@@ -72,11 +72,11 @@ interface BaseConfig {
 
 const SETTING_DEFS: SettingDef[] = [
   // Email/SMTP
-  { key: 'smtp.host', env: 'INSIGHTD_SMTP_HOST', type: 'string', category: 'Email', label: 'SMTP Host', hotReload: false, default: '' },
-  { key: 'smtp.port', env: 'INSIGHTD_SMTP_PORT', type: 'int', category: 'Email', label: 'SMTP Port', hotReload: false, default: '587' },
-  { key: 'smtp.user', env: 'INSIGHTD_SMTP_USER', type: 'string', category: 'Email', label: 'SMTP User', hotReload: false, default: '' },
-  { key: 'smtp.pass', env: 'INSIGHTD_SMTP_PASS', type: 'string', category: 'Email', label: 'SMTP Password', hotReload: false, default: '', sensitive: true },
-  { key: 'smtp.from', env: 'INSIGHTD_SMTP_FROM', type: 'string', category: 'Email', label: 'From Address', hotReload: false, default: '' },
+  { key: 'smtp.host', env: 'INSIGHTD_SMTP_HOST', type: 'string', category: 'Email', label: 'SMTP Host', hotReload: true, default: '' },
+  { key: 'smtp.port', env: 'INSIGHTD_SMTP_PORT', type: 'int', category: 'Email', label: 'SMTP Port', hotReload: true, default: '587' },
+  { key: 'smtp.user', env: 'INSIGHTD_SMTP_USER', type: 'string', category: 'Email', label: 'SMTP User', hotReload: true, default: '' },
+  { key: 'smtp.pass', env: 'INSIGHTD_SMTP_PASS', type: 'string', category: 'Email', label: 'SMTP Password', hotReload: true, default: '', sensitive: true },
+  { key: 'smtp.from', env: 'INSIGHTD_SMTP_FROM', type: 'string', category: 'Email', label: 'From Address', hotReload: true, default: '' },
 
   // Digest
   { key: 'digestTo', env: 'INSIGHTD_DIGEST_TO', type: 'string', category: 'Digest', label: 'Digest Recipient', hotReload: true, default: '' },

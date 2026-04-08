@@ -55,7 +55,7 @@ describe('settings', () => {
     });
 
     it('returns restartRequired for non-hot-reload settings', () => {
-      const result = putSettings(db, { 'smtp.host': 'new-host.com' });
+      const result = putSettings(db, { 'collectIntervalMinutes': '10' });
       assert.equal(result.restartRequired, true);
     });
 
