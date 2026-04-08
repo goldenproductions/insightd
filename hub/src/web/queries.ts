@@ -77,6 +77,7 @@ interface ContainerStatusRow {
 }
 
 interface HealthScoreRow {
+  entity_id: string;
   score: number;
   factors: string;
   computed_at: string;
