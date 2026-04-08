@@ -15,7 +15,7 @@ import { Tabs } from '@/components/Tabs';
 import { fmtBytes, fmtDurationMs } from '@/lib/formatters';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
-import { LoadingState } from '@/components/LoadingState';
+import { CardSkeleton } from '@/components/Skeleton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
@@ -31,6 +31,7 @@ export function ContainerDetailPage() {
   const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   const [showSnapshots, setShowSnapshots] = useState(false);
+  const [showCharts, setShowCharts] = useState(true);
   const navigate = useNavigate();
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
@@ -51,7 +52,17 @@ export function ContainerDetailPage() {
     refetchInterval: false,
   });
 
-  if (!data) return <LoadingState />;
+  if (!data) return (
+    <div className="space-y-6">
+      <div className="h-4 w-32 animate-pulse rounded bg-border" />
+      <div className="h-7 w-48 animate-pulse rounded bg-border" />
+      <div className="h-12 animate-pulse rounded-xl bg-border" />
+      <div className="grid gap-4 md:grid-cols-2">
+        <CardSkeleton lines={2} />
+        <CardSkeleton lines={2} />
+      </div>
+    </div>
+  );
 
   const findBl = (metric: string) => findBaseline(baselines, metric);
 
@@ -123,26 +134,36 @@ export function ContainerDetailPage() {
       {/* Overview Tab */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          {/* Compact status line */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-xl px-4 py-3 bg-surface border border-border">
-            <span className="flex items-center gap-2 text-sm">
-              <StatusDot status={data.status} />
-              <span className={`font-semibold ${data.status === 'running' ? 'text-success' : 'text-danger'}`}>{data.status}</span>
-            </span>
-            <span className="text-muted">&middot;</span>
-            <span className="text-sm">{healthBadge}</span>
-            <span className="text-muted">&middot;</span>
-            <span className="text-sm">
-              <span className="text-muted">Uptime</span>{' '}
-              <span className={`font-semibold ${uptimePct != null && uptimePct >= 99 ? 'text-success' : uptimePct != null && uptimePct >= 95 ? 'text-warning' : 'text-danger'}`}>
-                {uptimePct != null ? `${uptimePct}%` : '-'}
+          {/* Compact status line + I/O */}
+          <div className="rounded-xl border border-border bg-surface px-4 py-3">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+              <span className="flex items-center gap-2 text-sm">
+                <StatusDot status={data.status} />
+                <span className={`font-semibold ${data.status === 'running' ? 'text-success' : 'text-danger'}`}>{data.status}</span>
               </span>
-            </span>
-            <span className="text-muted">&middot;</span>
-            <span className="text-sm">
-              <span className="text-muted">Restarts</span>{' '}
-              <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
-            </span>
+              <span className="text-muted">&middot;</span>
+              <span className="text-sm">{healthBadge}</span>
+              <span className="text-muted">&middot;</span>
+              <span className="text-sm">
+                <span className="text-muted">Uptime</span>{' '}
+                <span className={`font-semibold ${uptimePct != null && uptimePct >= 99 ? 'text-success' : uptimePct != null && uptimePct >= 95 ? 'text-warning' : 'text-danger'}`}>
+                  {uptimePct != null ? `${uptimePct}%` : '-'}
+                </span>
+              </span>
+              <span className="text-muted">&middot;</span>
+              <span className="text-sm">
+                <span className="text-muted">Restarts</span>{' '}
+                <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
+              </span>
+            </div>
+            {(data.network_rx_bytes != null || data.blkio_read_bytes != null) && (
+              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 border-t border-border-light pt-2 text-xs text-muted">
+                {data.network_rx_bytes != null && <span>Net RX <span className="font-semibold text-fg">{fmtBytes(data.network_rx_bytes)}</span></span>}
+                {data.network_tx_bytes != null && <span>Net TX <span className="font-semibold text-fg">{fmtBytes(data.network_tx_bytes)}</span></span>}
+                {data.blkio_read_bytes != null && <span>Disk Read <span className="font-semibold text-fg">{fmtBytes(data.blkio_read_bytes)}</span></span>}
+                {data.blkio_write_bytes != null && <span>Disk Write <span className="font-semibold text-fg">{fmtBytes(data.blkio_write_bytes)}</span></span>}
+              </div>
+            )}
           </div>
 
           {/* CPU & Memory gauges */}
@@ -150,16 +171,6 @@ export function ContainerDetailPage() {
             <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={baselinesReady ? getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent')) : null} />
             <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={baselinesReady ? getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb')) : null} />
           </div>
-
-          {/* Compact I/O row */}
-          {(data.network_rx_bytes != null || data.blkio_read_bytes != null) && (
-            <div className="flex flex-wrap gap-x-5 gap-y-1 rounded-xl px-4 py-3 text-xs bg-surface border border-border text-muted">
-              {data.network_rx_bytes != null && <span>Net RX <span className="font-semibold text-fg">{fmtBytes(data.network_rx_bytes)}</span></span>}
-              {data.network_tx_bytes != null && <span>Net TX <span className="font-semibold text-fg">{fmtBytes(data.network_tx_bytes)}</span></span>}
-              {data.blkio_read_bytes != null && <span>Disk Read <span className="font-semibold text-fg">{fmtBytes(data.blkio_read_bytes)}</span></span>}
-              {data.blkio_write_bytes != null && <span>Disk Write <span className="font-semibold text-fg">{fmtBytes(data.blkio_write_bytes)}</span></span>}
-            </div>
-          )}
 
           {availability && (
             <Card title="Availability (7 days)">
@@ -221,16 +232,29 @@ export function ContainerDetailPage() {
             </Card>
           )}
 
-          {cpuValues.length > 1 && (
-            <Card title="CPU (last 24h)">
-              <BarChart values={cpuValues} minLabel="0%" maxLabel={`${Math.max(...cpuValues).toFixed(0)}%`} />
-            </Card>
-          )}
-
-          {memValues.length > 1 && (
-            <Card title="Memory (last 24h)">
-              <BarChart values={memValues} colorFn={() => 'var(--color-info)'} minLabel="0 MB" maxLabel={`${Math.max(...memValues).toFixed(0)} MB`} />
-            </Card>
+          {(cpuValues.length > 1 || memValues.length > 1) && (
+            <div>
+              <button
+                onClick={() => setShowCharts(!showCharts)}
+                className="mb-3 text-xs font-medium text-muted hover:text-fg"
+              >
+                {showCharts ? '▲ Hide charts' : '▼ Show charts'}
+              </button>
+              {showCharts && (
+                <div className="space-y-6">
+                  {cpuValues.length > 1 && (
+                    <Card title="CPU (last 24h)">
+                      <BarChart values={cpuValues} minLabel="0%" maxLabel={`${Math.max(...cpuValues).toFixed(0)}%`} />
+                    </Card>
+                  )}
+                  {memValues.length > 1 && (
+                    <Card title="Memory (last 24h)">
+                      <BarChart values={memValues} colorFn={() => 'var(--color-info)'} minLabel="0 MB" maxLabel={`${Math.max(...memValues).toFixed(0)} MB`} />
+                    </Card>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
