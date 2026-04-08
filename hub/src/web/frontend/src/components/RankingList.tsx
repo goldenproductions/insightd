@@ -34,7 +34,7 @@ export function RankingList<T extends object>({ items, valueKey, formatFn, analo
               </span>
             </div>
             <div className="mt-1 h-1.5 w-full rounded-full bg-border">
-              <div className="h-1.5 rounded-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
+              <div className="h-1.5 rounded-full bg-info transition-all" style={{ width: `${pct}%` }} />
             </div>
           </div>
         );

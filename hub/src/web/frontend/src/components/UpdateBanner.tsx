@@ -41,8 +41,7 @@ export function UpdateBanner() {
   };
 
   return (
-    <div className="mb-4 flex items-center justify-between rounded-lg px-4 py-2.5 text-sm text-info"
-      style={{ backgroundColor: 'rgba(59,130,246,0.1)', border: '1px solid rgba(59,130,246,0.3)' }}>
+    <div className="mb-4 flex items-center justify-between rounded-lg border border-info/30 bg-info/10 px-4 py-2.5 text-sm text-info">
 
       <span>{message}</span>
       <div className="flex items-center gap-2">

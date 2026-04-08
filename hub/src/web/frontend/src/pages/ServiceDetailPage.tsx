@@ -1,4 +1,4 @@
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -9,6 +9,7 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { Button, LinkButton } from '@/components/FormField';
 import { fmtPercent } from '@/lib/formatters';
 import { useState, useMemo } from 'react';
 import { BackLink } from '@/components/BackLink';
@@ -43,8 +44,8 @@ export function ServiceDetailPage() {
   if (!data) return <LoadingState />;
 
   const columns: Column<typeof data.members[number]>[] = [
-    { header: 'Container', accessor: r => <span className="flex items-center gap-2 text-blue-500"><StatusDot status={r.status || 'none'} />{r.container_name}</span> },
-    { header: 'Host', accessor: r => <span className="text-blue-500">{r.host_id}</span> },
+    { header: 'Container', accessor: r => <span className="flex items-center gap-2 text-info"><StatusDot status={r.status || 'none'} />{r.container_name}</span> },
+    { header: 'Host', accessor: r => <span className="text-info">{r.host_id}</span> },
     { header: 'Status', accessor: r => r.status ? <Badge text={r.status} color={r.status === 'running' ? 'green' : 'red'} /> : '-' },
     { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
     { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
@@ -54,7 +55,7 @@ export function ServiceDetailPage() {
       accessor: (r: typeof data.members[number]) => (
         <button
           onClick={e => { e.stopPropagation(); removeMutation.mutate({ hostId: r.host_id, containerName: r.container_name }); }}
-          className="text-xs text-red-400 hover:text-red-300"
+          className="text-xs text-danger hover:text-danger"
         >Remove</button>
       ),
     }] : []),
@@ -68,7 +69,7 @@ export function ServiceDetailPage() {
         {data.icon && <span className="text-2xl">{data.icon}</span>}
         <h1 className="text-xl font-bold text-fg">{data.name}</h1>
         {isAuthenticated && (
-          <Link to={`/services/${groupId}/edit`} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">Edit</Link>
+          <LinkButton to={`/services/${groupId}/edit`} variant="primary" size="sm">Edit</LinkButton>
         )}
       </div>
       {data.description && <p className="text-sm text-muted">{data.description}</p>}
@@ -83,9 +84,9 @@ export function ServiceDetailPage() {
       <Card title="Containers">
         {isAuthenticated && (
           <div className="mb-3 flex justify-end">
-            <button onClick={() => setShowAddForm(!showAddForm)} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600">
+            <Button variant="ghost" size="sm" onClick={() => setShowAddForm(!showAddForm)}>
               {showAddForm ? 'Cancel' : 'Add Container'}
-            </button>
+            </Button>
           </div>
         )}
         {showAddForm && <AddContainerForm groupId={parseInt(groupId!, 10)} token={token} onAdded={() => { setShowAddForm(false); queryClient.invalidateQueries({ queryKey: queryKeys.group(groupId) }); }} />}
@@ -136,7 +137,7 @@ function AddContainerForm({ groupId, token, onAdded }: { groupId: number; token:
           <option key={`${c.hostId}|${c.name}`} value={`${c.hostId}|${c.name}`}>{c.hostId} / {c.name}</option>
         ))}
       </select>
-      <button onClick={add} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">Add</button>
+      <Button variant="primary" onClick={add}>Add</Button>
     </div>
   );
 }

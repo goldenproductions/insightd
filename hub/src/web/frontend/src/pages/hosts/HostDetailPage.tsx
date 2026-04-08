@@ -4,6 +4,7 @@ import { api, apiAuth } from '@/lib/api';
 import type { HostDetail, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { Button } from '@/components/FormField';
 import { Tabs } from '@/components/Tabs';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
@@ -112,8 +113,6 @@ function RemoveHostButton({ hostId, confirm }: { hostId: string; confirm: (opts:
   };
 
   return (
-    <button onClick={remove} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700">
-      Remove Host
-    </button>
+    <Button variant="danger" size="sm" onClick={remove}>Remove Host</Button>
   );
 }

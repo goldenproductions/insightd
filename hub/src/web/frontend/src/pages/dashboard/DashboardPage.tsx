@@ -42,7 +42,7 @@ export function DashboardPage() {
               >
                 <div className="font-medium text-sm text-fg">{g.icon && <span className="mr-1">{g.icon}</span>}{g.name}</div>
                 <div className="text-xs mt-1 text-muted">
-                  <span className={g.running_count === g.member_count ? 'text-emerald-500' : 'text-red-500'}>{g.running_count}/{g.member_count}</span> running
+                  <span className={g.running_count === g.member_count ? 'text-success' : 'text-danger'}>{g.running_count}/{g.member_count}</span> running
                 </div>
               </Link>
             ))}

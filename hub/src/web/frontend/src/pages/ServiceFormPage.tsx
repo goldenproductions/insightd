@@ -5,6 +5,7 @@ import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { ServiceGroup } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { useFormMessage } from '@/hooks/useFormMessage';
 import { Card } from '@/components/Card';
 import { FormField, Input, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
@@ -36,21 +37,21 @@ function ServiceForm({ existing, isEdit, groupId, token }: { existing?: ServiceG
   const [description, setDescription] = useState(existing?.description ?? '');
   const [icon, setIcon] = useState(existing?.icon ?? '');
   const [color, setColor] = useState(existing?.color ?? '#3b82f6');
-  const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
+  const { msg, showSuccess, showError } = useFormMessage();
 
   const save = async () => {
     const body = { name, description: description || null, icon: icon || null, color: color || null };
     try {
       if (isEdit) {
         await apiAuth('PUT', `/groups/${groupId}`, body, token);
-        setMsg({ text: 'Group updated.', color: 'green' });
+        showSuccess('Group updated.');
       } else {
         const result = await apiAuth<{ id: number }>('POST', '/groups', body, token);
-        setMsg({ text: 'Group created.', color: 'green' });
+        showSuccess('Group created.');
         setTimeout(() => navigate(`/services/${result.id}`), 500);
       }
     } catch (err) {
-      setMsg({ text: err instanceof Error ? err.message : 'Failed', color: 'red' });
+      showError(err);
     }
   };
 
@@ -60,7 +61,7 @@ function ServiceForm({ existing, isEdit, groupId, token }: { existing?: ServiceG
       await apiAuth('DELETE', `/groups/${groupId}`, undefined, token);
       navigate('/services');
     } catch (err) {
-      setMsg({ text: err instanceof Error ? err.message : 'Failed', color: 'red' });
+      showError(err);
     }
   };
 

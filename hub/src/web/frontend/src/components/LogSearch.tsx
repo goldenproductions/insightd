@@ -10,8 +10,8 @@ interface Props {
 export function LogSearch({ value, onChange, matchCount, mode, onModeChange, isValid }: Props) {
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <div className="relative flex-1" style={{ minWidth: '180px' }}>
-        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500">
+      <div className="relative min-w-[180px] flex-1">
+        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted">
           <SearchIcon />
         </span>
         <input
@@ -19,15 +19,14 @@ export function LogSearch({ value, onChange, matchCount, mode, onModeChange, isV
           value={value}
           onChange={e => onChange(e.target.value)}
           placeholder="Search logs (regex)..."
-          className={`w-full rounded-lg py-1.5 pl-8 pr-8 text-xs font-mono outline-none ${
-            value && !isValid ? 'ring-1 ring-red-500' : ''
+          className={`w-full rounded-lg border border-border bg-bg-secondary py-1.5 pl-8 pr-8 text-xs font-mono text-fg outline-none ${
+            value && !isValid ? 'ring-1 ring-danger' : ''
           }`}
-          style={{ backgroundColor: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: '#e2e8f0' }}
         />
         {value && (
           <button
             onClick={() => onChange('')}
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-fg"
           >
             ✕
           </button>
@@ -35,16 +34,16 @@ export function LogSearch({ value, onChange, matchCount, mode, onModeChange, isV
       </div>
 
       {/* Mode toggle */}
-      <div className="flex rounded-lg overflow-hidden text-xs" style={{ border: '1px solid rgba(255,255,255,0.1)' }}>
+      <div className="flex overflow-hidden rounded-lg border border-border text-xs">
         <button
           onClick={() => onModeChange('filter')}
-          className={`px-2.5 py-1.5 transition-colors ${mode === 'filter' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+          className={`px-2.5 py-1.5 transition-colors ${mode === 'filter' ? 'bg-blue-600 text-white' : 'text-secondary hover:text-fg'}`}
         >
           Filter
         </button>
         <button
           onClick={() => onModeChange('highlight')}
-          className={`px-2.5 py-1.5 transition-colors ${mode === 'highlight' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-slate-200'}`}
+          className={`px-2.5 py-1.5 transition-colors ${mode === 'highlight' ? 'bg-blue-600 text-white' : 'text-secondary hover:text-fg'}`}
         >
           Highlight
         </button>
@@ -52,13 +51,13 @@ export function LogSearch({ value, onChange, matchCount, mode, onModeChange, isV
 
       {/* Match count */}
       {value && isValid && (
-        <span className="rounded-full bg-slate-700 px-2 py-0.5 text-xs text-slate-300">
+        <span className="rounded-full bg-bg-secondary px-2 py-0.5 text-xs text-secondary">
           {matchCount} match{matchCount !== 1 ? 'es' : ''}
         </span>
       )}
 
       {value && !isValid && (
-        <span className="text-xs text-red-400">Invalid regex</span>
+        <span className="text-xs text-danger">Invalid regex</span>
       )}
     </div>
   );

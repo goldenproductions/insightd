@@ -1,10 +1,10 @@
-import { Link } from 'react-router-dom';
 import type { HostDetail, TimelineEntry, ContainerSnapshot, BaselineRow } from '@/types/api';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { LinkButton } from '@/components/FormField';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { fmtPercent, fmtUptime, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
 import { getAnalogy, findBaseline } from '@/lib/analogies';
@@ -50,18 +50,18 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
                   {loading && actionLoading === `${r.container_name}:restart` ? '...' : 'Restart'}
                 </button>
                 <button onClick={() => runAction(r.container_name, 'stop')} disabled={!!loading}
-                  className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-slate-700 disabled:opacity-50">
+                  className="rounded px-2 py-0.5 text-xs text-danger hover:bg-slate-700 disabled:opacity-50">
                   {loading && actionLoading === `${r.container_name}:stop` ? '...' : 'Stop'}
                 </button>
               </>
             ) : (
               <>
                 <button onClick={() => runAction(r.container_name, 'start')} disabled={!!loading}
-                  className="rounded px-2 py-0.5 text-xs text-emerald-400 hover:bg-slate-700 disabled:opacity-50">
+                  className="rounded px-2 py-0.5 text-xs text-success hover:bg-slate-700 disabled:opacity-50">
                   {loading && actionLoading === `${r.container_name}:start` ? '...' : 'Start'}
                 </button>
                 <button onClick={() => removeContainer(r.container_name)} disabled={!!loading}
-                  className="rounded px-2 py-0.5 text-xs text-red-400 hover:bg-slate-700 disabled:opacity-50">
+                  className="rounded px-2 py-0.5 text-xs text-danger hover:bg-slate-700 disabled:opacity-50">
                   {loading && actionLoading === `${r.container_name}:remove` ? '...' : 'Remove'}
                 </button>
               </>
@@ -106,9 +106,7 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
 
       <Card title="Containers">
         <div className="mb-3 flex justify-end">
-          <Link to={`/hosts/${hid}/logs`} className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-600">
-            Split Logs
-          </Link>
+          <LinkButton to={`/hosts/${hid}/logs`} variant="ghost" size="sm">Split Logs</LinkButton>
         </div>
         <DataTable
           columns={containerCols}

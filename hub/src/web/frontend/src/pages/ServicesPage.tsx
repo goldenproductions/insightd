@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { ServiceGroupSummary } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/Badge';
+import { LinkButton } from '@/components/FormField';
 import { useShowInternal } from '@/hooks/useShowInternal';
 import { PageTitle } from '@/components/PageTitle';
 import { EmptyState } from '@/components/EmptyState';
@@ -19,9 +20,9 @@ export function ServicesPage() {
   return (
     <div className="space-y-6">
       <PageTitle actions={isAuthenticated ? (
-        <Link to="/services/new" className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700">
+        <LinkButton to="/services/new" variant="primary">
           Create Group
-        </Link>
+        </LinkButton>
       ) : undefined}>Services</PageTitle>
 
       {!groups || groups.length === 0 ? (
@@ -47,7 +48,7 @@ export function ServicesPage() {
               )}
               <div className="mt-3 flex items-center gap-4 text-xs text-secondary">
                 <span>
-                  <span className={`font-semibold ${g.running_count === g.member_count ? 'text-emerald-500' : 'text-red-500'}`}>
+                  <span className={`font-semibold ${g.running_count === g.member_count ? 'text-success' : 'text-danger'}`}>
                     {g.running_count}/{g.member_count}
                   </span> running
                 </span>

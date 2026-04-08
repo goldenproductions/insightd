@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, apiAuth } from '@/lib/api';
+import { useFormMessage } from '@/hooks/useFormMessage';
 import { Button, Input, Select } from '@/components/FormField';
 import { FormField } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
@@ -21,7 +22,7 @@ export function SetupWizardPage({ onComplete, mode }: Props) {
         {/* Progress */}
         <div className="mb-8 flex justify-center gap-2">
           {Array.from({ length: totalSteps }).map((_, i) => (
-            <div key={i} className={`h-2 w-8 rounded-full transition-colors ${i <= step ? 'bg-blue-500' : 'bg-border'}`} />
+            <div key={i} className={`h-2 w-8 rounded-full transition-colors ${i <= step ? 'bg-info' : 'bg-border'}`} />
           ))}
         </div>
 
@@ -98,7 +99,7 @@ function EmailStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void 
   const [pass, setPass] = useState('');
   const [from] = useState('');
   const [to, setTo] = useState('');
-  const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
+  const { msg, showSuccess, showError } = useFormMessage();
 
   const save = async () => {
     try {
@@ -106,9 +107,9 @@ function EmailStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void 
         'smtp.host': host, 'smtp.port': port, 'smtp.user': user, 'smtp.pass': pass, 'smtp.from': from || user, 'digestTo': to,
         'alerts.enabled': 'true', 'alerts.to': to,
       });
-      setMsg({ text: 'Email configured!', color: 'green' });
+      showSuccess('Email configured!');
       setTimeout(onNext, 1000);
-    } catch { setMsg({ text: 'Failed to save', color: 'red' }); }
+    } catch (err) { showError(err); }
   };
 
   return (
@@ -227,7 +228,7 @@ function WaitingStep({ mode, onNext, onSkip }: { mode: string; onNext: () => voi
           <h2 className="text-xl font-bold mb-2 text-fg">Waiting for Agent</h2>
           <p className="mb-5 text-sm text-muted">Run the command from the previous step on your host...</p>
           <div className="h-1 w-48 mx-auto rounded-full overflow-hidden bg-border">
-            <div className="h-full w-1/3 rounded-full bg-blue-500 animate-pulse" />
+            <div className="h-full w-1/3 rounded-full bg-info animate-pulse" />
           </div>
         </>
       ) : (

@@ -5,6 +5,7 @@ import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { EndpointDetail } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { useFormMessage } from '@/hooks/useFormMessage';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
@@ -40,7 +41,7 @@ function EndpointForm({ existing, isEdit, endpointId, token }: { existing?: Endp
   const [timeoutMs, setTimeoutMs] = useState(String(existing?.timeout_ms ?? 10000));
   const [headers, setHeaders] = useState(existing?.headers ?? '');
   const [enabled, setEnabled] = useState(existing?.enabled != null ? (existing.enabled ? '1' : '0') : '1');
-  const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
+  const { msg, showSuccess, showError } = useFormMessage();
 
   const save = async () => {
     const body = {
@@ -54,14 +55,14 @@ function EndpointForm({ existing, isEdit, endpointId, token }: { existing?: Endp
     try {
       if (isEdit) {
         await apiAuth('PUT', `/endpoints/${endpointId}`, body, token);
-        setMsg({ text: 'Endpoint updated.', color: 'green' });
+        showSuccess('Endpoint updated.');
       } else {
         const result = await apiAuth<{ id: number }>('POST', '/endpoints', body, token);
-        setMsg({ text: 'Endpoint created.', color: 'green' });
+        showSuccess('Endpoint created.');
         setTimeout(() => navigate(`/endpoints/${result.id}`), 500);
       }
     } catch (err) {
-      setMsg({ text: err instanceof Error ? err.message : 'Failed', color: 'red' });
+      showError(err);
     }
   };
 
@@ -71,7 +72,7 @@ function EndpointForm({ existing, isEdit, endpointId, token }: { existing?: Endp
       await apiAuth('DELETE', `/endpoints/${endpointId}`, undefined, token);
       navigate('/endpoints');
     } catch (err) {
-      setMsg({ text: err instanceof Error ? err.message : 'Failed', color: 'red' });
+      showError(err);
     }
   };
 

@@ -5,6 +5,7 @@ import { apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { Webhook } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
+import { useFormMessage } from '@/hooks/useFormMessage';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select, Button } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
@@ -47,21 +48,21 @@ function WebhookForm({ existing, isEdit, webhookId, token }: { existing?: Webhoo
   const [onAlert, setOnAlert] = useState(existing?.on_alert != null ? (existing.on_alert ? '1' : '0') : '1');
   const [onDigest, setOnDigest] = useState(existing?.on_digest != null ? (existing.on_digest ? '1' : '0') : '1');
   const [enabled, setEnabled] = useState(existing?.enabled != null ? (existing.enabled ? '1' : '0') : '1');
-  const [msg, setMsg] = useState<{ text: string; color: string } | null>(null);
+  const { msg, showSuccess, showError } = useFormMessage();
 
   const save = async () => {
     const body = { name, type, url, secret: secret || null, onAlert: onAlert === '1', onDigest: onDigest === '1', enabled: enabled === '1' };
     try {
       if (isEdit) {
         await apiAuth('PUT', `/webhooks/${webhookId}`, body, token);
-        setMsg({ text: 'Webhook updated.', color: 'green' });
+        showSuccess('Webhook updated.');
       } else {
         await apiAuth('POST', '/webhooks', body, token);
-        setMsg({ text: 'Webhook created.', color: 'green' });
+        showSuccess('Webhook created.');
         setTimeout(() => navigate('/webhooks'), 500);
       }
     } catch (err) {
-      setMsg({ text: err instanceof Error ? err.message : 'Failed', color: 'red' });
+      showError(err);
     }
   };
 
@@ -71,7 +72,7 @@ function WebhookForm({ existing, isEdit, webhookId, token }: { existing?: Webhoo
       await apiAuth('DELETE', `/webhooks/${webhookId}`, undefined, token);
       navigate('/webhooks');
     } catch (err) {
-      setMsg({ text: err instanceof Error ? err.message : 'Failed', color: 'red' });
+      showError(err);
     }
   };
 
