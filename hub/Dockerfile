@@ -22,6 +22,7 @@ COPY hub/package*.json ./hub/
 COPY hub/src/ ./hub/src/
 COPY shared/ ./shared/
 COPY src/ ./src/
+COPY tsconfig.json ./
 
 # Copy built frontend assets (overwrites source public/ files)
 COPY --from=frontend /app/hub/src/web/public/ ./hub/src/web/public/
@@ -39,4 +40,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/api/health',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>process.exit(r.statusCode===200?0:1))})"
 
-CMD ["node", "hub/src/index.js"]
+CMD ["npx", "tsx", "hub/src/index.ts"]
