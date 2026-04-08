@@ -3,7 +3,7 @@ import type Dockerode from 'dockerode';
 
 const { config } = require('./config') as { config: { allowActions: boolean } };
 
-const VALID_ACTIONS = ['start', 'stop', 'restart'] as const;
+const VALID_ACTIONS = ['start', 'stop', 'restart', 'remove'] as const;
 type ContainerAction = typeof VALID_ACTIONS[number];
 
 async function performContainerAction(docker: Dockerode, containerName: string, action: string): Promise<{ status: string; message: string }> {
@@ -27,6 +27,11 @@ async function performContainerAction(docker: Dockerode, containerName: string, 
     throw new Error(`Cannot ${action} internal insightd container "${containerName}"`);
   }
 
+  // Block remove on running containers
+  if (action === 'remove' && match.State === 'running') {
+    throw new Error(`Container "${containerName}" is running. Stop it before removing.`);
+  }
+
   const container = docker.getContainer(match.Id);
 
   logger.info('actions', `Performing ${action} on ${containerName} (${match.Id.slice(0, 12)})`);
@@ -37,10 +42,13 @@ async function performContainerAction(docker: Dockerode, containerName: string, 
     await container.stop({ t: 10 });
   } else if (action === 'restart') {
     await container.restart({ t: 10 });
+  } else if (action === 'remove') {
+    await container.remove();
   }
 
+  const past = action === 'stop' ? 'stopped' : action === 'remove' ? 'removed' : `${action}ed`;
   logger.info('actions', `${action} completed on ${containerName}`);
-  return { status: 'success', message: `Container "${containerName}" ${action}ed successfully` };
+  return { status: 'success', message: `Container "${containerName}" ${past} successfully` };
 }
 
 module.exports = { performContainerAction };

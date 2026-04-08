@@ -1,3 +1,5 @@
+import { getAnalogy } from '@/lib/analogies';
+
 interface Props {
   score: number;
   size?: 'sm' | 'md' | 'lg';
@@ -38,7 +40,7 @@ export function HealthBadge({ score, size = 'md' }: Props) {
           {score}
         </span>
       </div>
-      <span className="text-[10px] font-medium" style={{ color }}>{scoreLabel(score)}</span>
+      <span className="text-[10px] font-medium" style={{ color }}>{getAnalogy('health', score)?.emoji} {scoreLabel(score)}</span>
     </div>
   );
 }

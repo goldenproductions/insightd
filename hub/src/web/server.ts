@@ -53,6 +53,7 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/logs', handlers.handleContainerLogs);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/availability', handlers.handleContainerAvailability);
   router.add('POST', '/api/hosts/:hostId/containers/:containerName/action', handlers.handleContainerAction);
+  router.add('DELETE', '/api/hosts/:hostId/containers/:containerName', handlers.handleDeleteContainer);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName', handlers.handleContainerDetail);
   router.add('GET', '/api/hosts/:hostId/containers', handlers.handleHostContainers);
   router.add('GET', '/api/hosts/:hostId/disk', handlers.handleHostDisk);

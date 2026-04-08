@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, BaselineRow } from '@/types/api';
+import type { Baseline } from '@/lib/analogies';
 import { Card } from '@/components/Card';
 import { BarChart } from '@/components/BarChart';
 import { StatusDot } from '@/components/StatusDot';
@@ -20,6 +21,7 @@ import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useTab } from '@/hooks/useTab';
 import { MetricGauge } from './MetricGauge';
+import { getAnalogy } from '@/lib/analogies';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
 
 export function ContainerDetailPage() {
@@ -29,8 +31,9 @@ export function ContainerDetailPage() {
   const { isAuthenticated } = useAuth();
   const { activeTab, setActiveTab } = useTab('overview');
   const [showSnapshots, setShowSnapshots] = useState(false);
+  const navigate = useNavigate();
   const { confirm, dialogProps } = useConfirm();
-  const { actionLoading, actionResult, runAction } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
+  const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
 
   const { data } = useQuery({
     queryKey: ['container', hostId, containerName],
@@ -41,8 +44,21 @@ export function ContainerDetailPage() {
     queryKey: ['container-availability', hostId, containerName],
     queryFn: () => api<ContainerAvailability>(`/hosts/${hid}/containers/${cname}/availability?days=7`),
   });
+  const entityId = encodeURIComponent(`${hostId}/${containerName}`);
+  const { data: baselines } = useQuery({
+    queryKey: ['baselines', 'container', hostId, containerName],
+    queryFn: () => api<BaselineRow[]>(`/baselines/container/${entityId}`).catch(() => []),
+    refetchInterval: false,
+  });
 
   if (!data) return <LoadingState />;
+
+  const findBl = (metric: string): Baseline | null => {
+    if (!baselines) return null;
+    const row = baselines.find(b => b.metric === metric && b.time_bucket === 'all');
+    if (!row || row.p50 == null) return null;
+    return { p50: row.p50, p75: row.p75, p90: row.p90, p95: row.p95, p99: row.p99 };
+  };
 
   const history = data.history || [];
 
@@ -83,10 +99,16 @@ export function ContainerDetailPage() {
         {isAuthenticated && (
           <div className="flex items-center gap-2">
             {data.status !== 'running' && (
-              <button onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}
-                className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors bg-slate-700 hover:bg-slate-600 ${actionLoading != null ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                {actionLoading === `${containerName}:start` ? 'Starting...' : 'Start'}
-              </button>
+              <>
+                <button onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors bg-slate-700 hover:bg-slate-600 ${actionLoading != null ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  {actionLoading === `${containerName}:start` ? 'Starting...' : 'Start'}
+                </button>
+                <button onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors bg-red-600 hover:bg-red-700 ${actionLoading != null ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                  {actionLoading === `${containerName}:remove` ? 'Removing...' : 'Remove'}
+                </button>
+              </>
             )}
             {data.status === 'running' && (
               <>
@@ -134,8 +156,8 @@ export function ContainerDetailPage() {
 
           {/* CPU & Memory gauges */}
           <div className="grid gap-4 md:grid-cols-2">
-            <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} />
-            <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} />
+            <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent'))} />
+            <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb'))} />
           </div>
 
           {/* Compact I/O row */}

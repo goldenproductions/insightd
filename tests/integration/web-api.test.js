@@ -1,7 +1,7 @@
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('http');
-const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedUpdateChecks } = require('../helpers/db');
+const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedUpdateChecks, seedServiceGroups, seedGroupMembers, seedBaselines, seedHealthScores } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 
 const recent = ts(new Date(NOW - 2 * 60 * 1000));
@@ -19,6 +19,20 @@ function fetch(port, path) {
         resolve({ status: res.statusCode, headers: res.headers, body, json: () => JSON.parse(body) });
       });
     }).on('error', reject);
+  });
+}
+
+function fetchMethod(port, method, path) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(`http://127.0.0.1:${port}${path}`, { method }, (res) => {
+      let body = '';
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        resolve({ status: res.statusCode, headers: res.headers, body, json: () => JSON.parse(body) });
+      });
+    });
+    req.on('error', reject);
+    req.end();
   });
 }
 
@@ -58,7 +72,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.status, 'ok');
-    assert.equal(data.schemaVersion, 12);
+    assert.equal(data.schemaVersion, 13);
   });
 
   it('GET /api/hosts returns host list', async () => {
@@ -181,5 +195,58 @@ describe('Web API integration', () => {
   it('GET /api/hosts/:hostId/containers/:name/availability returns 404 for unknown', async () => {
     const res = await fetch(port, '/api/hosts/h1/containers/unknown/availability');
     assert.equal(res.status, 404);
+  });
+
+  // DELETE /api/hosts/:hostId/containers/:containerName
+  it('DELETE container cleans up all DB tables', async () => {
+    seedHost(db, 'h1', recent);
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'old-test', status: 'exited', at: recent },
+    ]);
+    seedUpdateChecks(db, [
+      { hostId: 'h1', name: 'old-test', at: recent },
+    ]);
+    seedAlertState(db, [
+      { hostId: 'h1', type: 'container_down', target: 'old-test', triggeredAt: recent },
+    ]);
+    const [groupId] = seedServiceGroups(db, [{ name: 'test-group' }]);
+    seedGroupMembers(db, [{ groupId, hostId: 'h1', containerName: 'old-test' }]);
+    seedBaselines(db, [
+      { entityType: 'container', entityId: 'h1/old-test' },
+    ]);
+    seedHealthScores(db, [
+      { entityType: 'container', entityId: 'h1/old-test' },
+    ]);
+
+    // Also seed another container that should NOT be deleted
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'keep-this', status: 'running', at: recent },
+    ]);
+
+    const res = await fetchMethod(port, 'DELETE', '/api/hosts/h1/containers/old-test');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.equal(data.deleted, true);
+
+    // Verify all records for old-test are gone
+    assert.equal(db.prepare('SELECT COUNT(*) as c FROM container_snapshots WHERE container_name = ?').get('old-test').c, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) as c FROM update_checks WHERE container_name = ?').get('old-test').c, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) as c FROM alert_state WHERE target = ?').get('old-test').c, 0);
+    assert.equal(db.prepare('SELECT COUNT(*) as c FROM service_group_members WHERE container_name = ?').get('old-test').c, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) as c FROM baselines WHERE entity_id = ?").get('h1/old-test').c, 0);
+    assert.equal(db.prepare("SELECT COUNT(*) as c FROM health_scores WHERE entity_id = ?").get('h1/old-test').c, 0);
+
+    // Verify other container data is intact
+    assert.equal(db.prepare('SELECT COUNT(*) as c FROM container_snapshots WHERE container_name = ?').get('keep-this').c, 1);
+  });
+
+  it('DELETE container works even without Docker context', async () => {
+    seedHost(db, 'h1', recent);
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'gone', status: 'exited', at: recent },
+    ]);
+    const res = await fetchMethod(port, 'DELETE', '/api/hosts/h1/containers/gone');
+    assert.equal(res.status, 200);
+    assert.equal(db.prepare('SELECT COUNT(*) as c FROM container_snapshots WHERE container_name = ?').get('gone').c, 0);
   });
 });

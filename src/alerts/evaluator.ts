@@ -8,6 +8,7 @@ interface AlertItem {
   target: string;
   message: string;
   value?: any;
+  threshold?: any;
   triggeredAt?: string;
   isResolution?: boolean;
   reminderNumber?: number;
@@ -313,9 +314,9 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
 
     if (!active) {
       db.prepare(`
-        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'), 1)
-      `).run(alert.hostId, alert.type, alert.target);
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, message, trigger_value, threshold)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'), 1, ?, ?, ?)
+      `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
       toSend.push({ ...alert, reminderNumber: 0 });
     } else {
       const minutesSinceLast = (db.prepare(

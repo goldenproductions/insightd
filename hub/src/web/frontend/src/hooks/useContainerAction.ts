@@ -43,5 +43,30 @@ export function useContainerAction(hostId: string, invalidateKeys: unknown[][], 
     setActionLoading(null);
   };
 
-  return { actionLoading, actionResult, runAction };
+  const removeContainer = async (containerName: string): Promise<boolean> => {
+    const confirmed = await confirmFn({
+      title: 'Remove Container',
+      message: `Remove container "${containerName}" and all its data from insightd? If the container still exists in Docker, it will also be removed. This cannot be undone.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (!confirmed) return false;
+    setActionLoading(`${containerName}:remove`);
+    setActionResult(null);
+    try {
+      await apiAuth('DELETE', `/hosts/${encodeURIComponent(hostId)}/containers/${encodeURIComponent(containerName)}`, undefined, token);
+      setActionResult({ ok: true, message: `Container "${containerName}" removed successfully` });
+      for (const key of invalidateKeys) {
+        await queryClient.invalidateQueries({ queryKey: key });
+      }
+      return true;
+    } catch (err) {
+      setActionResult({ ok: false, message: err instanceof Error ? err.message : 'Remove failed' });
+      return false;
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  return { actionLoading, actionResult, runAction, removeContainer };
 }

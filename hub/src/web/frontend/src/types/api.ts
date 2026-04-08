@@ -149,6 +149,9 @@ export interface Alert {
   resolved_at: string | null;
   last_notified: string;
   notify_count: number;
+  message: string | null;
+  trigger_value: string | null;
+  threshold: string | null;
 }
 
 // Timeline
@@ -363,4 +366,18 @@ export interface ServiceGroupMember {
 
 export interface ServiceGroupDetail extends ServiceGroup {
   members: ServiceGroupMember[];
+}
+
+// Baselines
+export interface BaselineRow {
+  metric: string;
+  time_bucket: string;
+  p50: number | null;
+  p75: number | null;
+  p90: number | null;
+  p95: number | null;
+  p99: number | null;
+  min_val: number | null;
+  max_val: number | null;
+  sample_count: number;
 }

@@ -8,6 +8,7 @@ import { HealthBadge } from '@/components/HealthBadge';
 import { useShowInternal } from '@/hooks/useShowInternal';
 import { LoadingState } from '@/components/LoadingState';
 import { useAttentionItems } from '@/hooks/useAttentionItems';
+import { getAnalogy } from '@/lib/analogies';
 import { StatusRow } from './StatusRow';
 import { AttentionList } from './AttentionList';
 
@@ -69,10 +70,10 @@ export function DashboardPage() {
       {rankings && (
         <div className="grid gap-4 md:grid-cols-2">
           <Card title="Top CPU">
-            <RankingList items={rankings.byCpu} valueKey="cpu_percent" formatFn={v => v.toFixed(1) + '%'} />
+            <RankingList items={rankings.byCpu} valueKey="cpu_percent" formatFn={v => v.toFixed(1) + '%'} analogyFn={v => getAnalogy('cpu', v)} />
           </Card>
           <Card title="Top Memory">
-            <RankingList items={rankings.byMemory} valueKey="memory_mb" formatFn={v => Math.round(v) + ' MB'} />
+            <RankingList items={rankings.byMemory} valueKey="memory_mb" formatFn={v => Math.round(v) + ' MB'} analogyFn={v => getAnalogy('memory', v, 1024)} />
           </Card>
         </div>
       )}

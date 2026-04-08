@@ -118,4 +118,26 @@ function seedGroupMembers(db, rows) {
   }
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks, seedServiceGroups, seedGroupMembers };
+function seedBaselines(db, rows) {
+  const insert = db.prepare(`
+    INSERT INTO baselines (entity_type, entity_id, metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, sample_count, computed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
+  for (const r of rows) {
+    insert.run(r.entityType, r.entityId, r.metric || 'cpu_percent', r.timeBucket || 'all',
+      r.p50 ?? 10, r.p75 ?? 20, r.p90 ?? 30, r.p95 ?? 40, r.p99 ?? 50, r.min ?? 1, r.max ?? 60, r.sampleCount ?? 100);
+  }
+}
+
+function seedHealthScores(db, rows) {
+  const insert = db.prepare(`
+    INSERT INTO health_scores (entity_type, entity_id, score, factors, computed_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(entity_type, entity_id) DO UPDATE SET score=excluded.score, factors=excluded.factors
+  `);
+  for (const r of rows) {
+    insert.run(r.entityType, r.entityId, r.score ?? 85, r.factors || '{}');
+  }
+}
+
+module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks, seedServiceGroups, seedGroupMembers, seedBaselines, seedHealthScores };

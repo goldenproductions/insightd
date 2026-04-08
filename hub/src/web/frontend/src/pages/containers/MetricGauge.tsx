@@ -1,5 +1,6 @@
-export function MetricGauge({ label, current, avg, peak, unit, max }: {
+export function MetricGauge({ label, current, avg, peak, unit, max, analogy }: {
   label: string; current: number | null; avg: number | null; peak: number | null; unit: string; max: number;
+  analogy?: { emoji: string; label: string } | null;
 }) {
   const pct = current != null ? Math.min(100, Math.round((current / max) * 100)) : 0;
   const avgPct = avg != null ? Math.min(100, Math.round((avg / max) * 100)) : null;
@@ -20,9 +21,12 @@ export function MetricGauge({ label, current, avg, peak, unit, max }: {
             title={`avg ${avg}${unit}`} />
         )}
       </div>
-      <div className="mt-2 flex gap-4 text-xs text-muted">
-        <span>avg <span className="font-medium text-secondary">{avg != null ? `${avg}${unit}` : '-'}</span></span>
-        <span>peak <span className="font-medium text-secondary">{peak != null ? `${peak}${unit}` : '-'}</span></span>
+      <div className="mt-2 flex items-center justify-between text-xs text-muted">
+        <div className="flex gap-4">
+          <span>avg <span className="font-medium text-secondary">{avg != null ? `${avg}${unit}` : '-'}</span></span>
+          <span>peak <span className="font-medium text-secondary">{peak != null ? `${peak}${unit}` : '-'}</span></span>
+        </div>
+        {analogy && <span className="text-[10px]">{analogy.emoji} {analogy.label}</span>}
       </div>
     </div>
   );

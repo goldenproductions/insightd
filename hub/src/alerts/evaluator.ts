@@ -9,6 +9,7 @@ interface AlertItem {
   target: string;
   message: string;
   value?: any;
+  threshold?: any;
   triggeredAt?: string;
   isResolution?: boolean;
   reminderNumber?: number;
@@ -135,7 +136,7 @@ function checkContainerDown(db: Database.Database, hostId: string): AlertItem[] 
         type: 'container_down',
         hostId,
         target: container_name,
-        message: `Container "${container_name}" on ${hostId} is down`,
+        message: `Container "${container_name}" on ${hostId} is down (was running, now ${latest.status})`,
         value: latest.status,
       });
     }
@@ -168,8 +169,9 @@ function checkRestartLoop(db: Database.Database, hostId: string, threshold: numb
         type: 'restart_loop',
         hostId,
         target: container_name,
-        message: `Container "${container_name}" on ${hostId} restarted ${delta} times in 30 minutes`,
+        message: `Container "${container_name}" on ${hostId} restarted ${delta} times in 30 minutes (threshold: ${threshold})`,
         value: delta,
+        threshold,
       });
     }
   }
@@ -190,8 +192,9 @@ function checkHighCpu(db: Database.Database, hostId: string, threshold: number):
       type: 'high_cpu',
       hostId,
       target: r.container_name,
-      message: `Container "${r.container_name}" on ${hostId} CPU at ${r.cpu_percent}%`,
+      message: `Container "${r.container_name}" on ${hostId} CPU at ${r.cpu_percent}% (threshold: ${threshold}%)`,
       value: r.cpu_percent,
+      threshold,
     }));
 }
 
@@ -209,8 +212,9 @@ function checkHighMemory(db: Database.Database, hostId: string, threshold: numbe
       type: 'high_memory',
       hostId,
       target: r.container_name,
-      message: `Container "${r.container_name}" on ${hostId} using ${Math.round(r.memory_mb)}MB RAM`,
+      message: `Container "${r.container_name}" on ${hostId} using ${Math.round(r.memory_mb)}MB RAM (threshold: ${threshold}MB)`,
       value: r.memory_mb,
+      threshold,
     }));
 }
 
@@ -226,8 +230,9 @@ function checkDiskFull(db: Database.Database, threshold: number): AlertItem[] {
       type: 'disk_full',
       hostId: r.host_id,
       target: r.mount_point,
-      message: `Disk "${r.mount_point}" on ${r.host_id} at ${r.used_percent}% (${r.used_gb}/${r.total_gb}GB)`,
+      message: `Disk "${r.mount_point}" on ${r.host_id} at ${r.used_percent}% (${r.used_gb}/${r.total_gb}GB, threshold: ${threshold}%)`,
       value: r.used_percent,
+      threshold,
     }));
 }
 
@@ -238,8 +243,9 @@ function checkHighHostCpu(db: Database.Database, hostId: string, threshold: numb
   if (!latest || latest.cpu_percent <= threshold) return [];
   return [{
     type: 'high_host_cpu', hostId, target: 'system',
-    message: `Host "${hostId}" CPU at ${latest.cpu_percent}%`,
+    message: `Host "${hostId}" CPU at ${latest.cpu_percent}% (threshold: ${threshold}%)`,
     value: latest.cpu_percent,
+    threshold,
   }];
 }
 
@@ -250,8 +256,9 @@ function checkLowHostMemory(db: Database.Database, hostId: string, thresholdMb: 
   if (!latest || latest.memory_available_mb >= thresholdMb) return [];
   return [{
     type: 'low_host_memory', hostId, target: 'system',
-    message: `Host "${hostId}" available memory low: ${Math.round(latest.memory_available_mb)}MB`,
+    message: `Host "${hostId}" available memory low: ${Math.round(latest.memory_available_mb)}MB (threshold: ${thresholdMb}MB)`,
     value: latest.memory_available_mb,
+    threshold: thresholdMb,
   }];
 }
 
@@ -262,8 +269,9 @@ function checkHighLoad(db: Database.Database, hostId: string, threshold: number)
   if (!latest || latest.load_5 <= threshold) return [];
   return [{
     type: 'high_load', hostId, target: 'system',
-    message: `Host "${hostId}" load average: ${latest.load_5}`,
+    message: `Host "${hostId}" load average: ${latest.load_5} (threshold: ${threshold})`,
     value: latest.load_5,
+    threshold,
   }];
 }
 
@@ -295,7 +303,8 @@ function checkEndpointDown(db: Database.Database, failureThreshold: number): Ale
         type: 'endpoint_down',
         hostId: 'hub',
         target: ep.name,
-        message: `Endpoint "${ep.name}" (${ep.url}) is down (${failureThreshold} consecutive failures)`,
+        message: `Endpoint "${ep.name}" (${ep.url}) is down (${failureThreshold} consecutive failures, threshold: ${failureThreshold})`,
+        threshold: failureThreshold,
         value: ep.url,
       });
     }
@@ -399,9 +408,9 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
 
     if (!active) {
       db.prepare(`
-        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'), 1)
-      `).run(alert.hostId, alert.type, alert.target);
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, message, trigger_value, threshold)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'), 1, ?, ?, ?)
+      `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
       toSend.push({ ...alert, reminderNumber: 0 });
     } else {
       const minutesSinceLast = (db.prepare(

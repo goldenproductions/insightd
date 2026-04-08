@@ -17,6 +17,10 @@ function createMockDocker(options = {}) {
     getContainer: (id) => ({
       inspect: async () => inspectResult,
       stats: async () => statsResult,
+      start: async () => {},
+      stop: async () => {},
+      restart: async () => {},
+      remove: async () => {},
     }),
     getImage: (name) => ({
       inspect: async () => imageInspect,

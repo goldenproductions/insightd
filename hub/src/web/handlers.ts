@@ -86,11 +86,68 @@ async function handleDeleteHost(req: HandlerReq, res: ServerResponse, db: Databa
   db.prepare('DELETE FROM container_snapshots WHERE host_id = ?').run(hostId);
   db.prepare('DELETE FROM host_snapshots WHERE host_id = ?').run(hostId);
   db.prepare('DELETE FROM disk_snapshots WHERE host_id = ?').run(hostId);
+  db.prepare('DELETE FROM update_checks WHERE host_id = ?').run(hostId);
   db.prepare('DELETE FROM alert_state WHERE host_id = ?').run(hostId);
   db.prepare('DELETE FROM service_group_members WHERE host_id = ?').run(hostId);
+  db.prepare("DELETE FROM baselines WHERE entity_id = ? OR entity_id LIKE ?").run(hostId, `${hostId}/%`);
+  db.prepare("DELETE FROM health_scores WHERE entity_id = ? OR entity_id LIKE ?").run(hostId, `${hostId}/%`);
   db.prepare('DELETE FROM hosts WHERE host_id = ?').run(hostId);
 
   return { deleted: true, hostId };
+}
+
+async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const hostId = decodeURIComponent(params.hostId);
+  const containerName = decodeURIComponent(params.containerName);
+
+  // Best-effort Docker remove
+  try {
+    if (ctx.docker) {
+      const containers = await ctx.docker.listContainers({ all: true });
+      const match = containers.find((c: Dockerode.ContainerInfo) => c.Names.some(n => n === `/${containerName}` || n === containerName));
+      if (match) {
+        if (match.State === 'running') {
+          res.statusCode = 409;
+          return { error: `Container "${containerName}" is running. Stop it before removing.` };
+        }
+        if (match.Labels && match.Labels['insightd.internal'] === 'true') {
+          res.statusCode = 403;
+          return { error: 'Cannot remove internal insightd containers' };
+        }
+        await ctx.docker.getContainer(match.Id).remove();
+      }
+    } else if (ctx.requestAction) {
+      try {
+        const result = await ctx.requestAction(hostId, containerName, 'remove') as { status: string; error?: string };
+        if (result.status === 'failed' && result.error) {
+          if (result.error.includes('running')) {
+            res.statusCode = 409;
+            return { error: result.error };
+          }
+          // "not found" is fine — container already gone
+        }
+      } catch {
+        // Timeout or MQTT error — proceed to DB cleanup anyway
+      }
+    }
+  } catch {
+    // Docker remove failed (already gone, etc.) — proceed to DB cleanup
+  }
+
+  // DB cleanup — remove all container records
+  const entityId = `${hostId}/${containerName}`;
+  const cleanup = db.transaction(() => {
+    db.prepare('DELETE FROM container_snapshots WHERE host_id = ? AND container_name = ?').run(hostId, containerName);
+    db.prepare('DELETE FROM update_checks WHERE host_id = ? AND container_name = ?').run(hostId, containerName);
+    db.prepare('DELETE FROM alert_state WHERE host_id = ? AND target = ?').run(hostId, containerName);
+    db.prepare('DELETE FROM service_group_members WHERE host_id = ? AND container_name = ?').run(hostId, containerName);
+    db.prepare("DELETE FROM baselines WHERE entity_type = 'container' AND entity_id = ?").run(entityId);
+    db.prepare("DELETE FROM health_scores WHERE entity_type = 'container' AND entity_id = ?").run(entityId);
+  });
+  cleanup();
+
+  return { deleted: true, hostId, containerName };
 }
 
 function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
@@ -708,7 +765,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
