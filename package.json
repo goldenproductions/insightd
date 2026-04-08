@@ -2,13 +2,13 @@
   "name": "insightd",
   "version": "1.0.0",
   "description": "Self-hosted server awareness tool — proactive digests, not dashboards",
-  "main": "src/index.js",
+  "main": "src/index.ts",
   "scripts": {
-    "start": "node src/index.js",
-    "collect": "node -e \"require('./src/index.js')\"",
-    "test": "tsx --test tests/**/*.test.js",
-    "test:unit": "tsx --test tests/unit/*.test.js",
-    "test:integration": "tsx --test tests/integration/*.test.js",
+    "start": "tsx src/index.ts",
+    "collect": "tsx -e \"require('./src/index.ts')\"",
+    "test": "tsx --test tests/**/*.test.ts",
+    "test:unit": "tsx --test tests/unit/*.test.ts",
+    "test:integration": "tsx --test tests/integration/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -23,7 +23,8 @@
     "better-sqlite3": "^12.8.0",
     "dockerode": "^4.0.10",
     "node-cron": "^4.2.1",
-    "nodemailer": "^8.0.4"
+    "nodemailer": "^8.0.4",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",

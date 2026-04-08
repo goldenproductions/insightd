@@ -26,14 +26,14 @@
     "hub/src/**/*.ts",
     "hub/src/**/*.js",
     "src/**/*.ts",
-    "src/**/*.js"
+    "src/**/*.js",
+    "tests/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     "**/node_modules",
     "hub/src/web/frontend",
     "hub/src/web/public",
-    "dist",
-    "tests"
+    "dist"
   ]
 }
