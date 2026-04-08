@@ -478,11 +478,18 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
   return result;
 }
 
-function getSystemHealthScore(db: Database.Database): { score: number; factors: any; computedAt: string } | null {
+function getSystemHealthScore(db: Database.Database): { score: number; factors: any; hostBreakdown: any[]; computedAt: string } | null {
   try {
     const row = db.prepare("SELECT score, factors, computed_at FROM health_scores WHERE entity_type = 'system' AND entity_id = 'system'").get() as HealthScoreRow | undefined;
     if (!row) return null;
-    return { score: row.score, factors: JSON.parse(row.factors), computedAt: row.computed_at };
+    // Include per-host factor breakdowns so the frontend can explain the score
+    const hostRows = db.prepare("SELECT entity_id, score, factors FROM health_scores WHERE entity_type = 'host'").all() as HealthScoreRow[];
+    const hostBreakdown = hostRows.map(h => ({
+      hostId: h.entity_id,
+      score: h.score,
+      factors: JSON.parse(h.factors),
+    }));
+    return { score: row.score, factors: JSON.parse(row.factors), hostBreakdown, computedAt: row.computed_at };
   } catch { return null; }
 }
 

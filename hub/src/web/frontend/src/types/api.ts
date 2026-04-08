@@ -24,7 +24,12 @@ export interface DashboardData {
   endpointsUp: number;
   endpointsDown: number;
   groups: ServiceGroupSummary[];
-  systemHealthScore: { score: number; factors: Record<string, unknown>; computedAt: string } | null;
+  systemHealthScore: {
+    score: number;
+    factors: Record<string, unknown>;
+    hostBreakdown: { hostId: string; score: number; factors: Record<string, { score: number; weight: number; value: number | string; rating: string }> }[];
+    computedAt: string;
+  } | null;
   topInsights: { entity_type: string; entity_id: string; category: string; severity: string; title: string; message: string }[];
   availability: { overallPercent: number | null; downContainers: { hostId: string; name: string; uptimePercent: number; downMinutes: number }[] };
 }
