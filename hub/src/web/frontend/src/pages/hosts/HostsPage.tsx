@@ -9,11 +9,12 @@ import { useShowInternal } from '@/hooks/useShowInternal';
 import { PageTitle } from '@/components/PageTitle';
 import { LoadingState } from '@/components/LoadingState';
 import { EmptyState } from '@/components/EmptyState';
+import { queryKeys } from '@/lib/queryKeys';
 
 export function HostsPage() {
   const navigate = useNavigate();
   const { showInternal } = useShowInternal();
-  const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts'), refetchInterval: 30_000 });
+  const { data: hosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<Host[]>('/hosts'), refetchInterval: 30_000 });
 
   if (!hosts) return <LoadingState />;
 
@@ -36,7 +37,7 @@ export function HostsPage() {
 function HostCard({ host, onClick, showInternal }: { host: Host; onClick: () => void; showInternal: boolean }) {
   const si = showInternal ? '?showInternal=true' : '';
   const { data: containers } = useQuery({
-    queryKey: ['host-containers', host.host_id, showInternal],
+    queryKey: queryKeys.hostContainers(host.host_id, showInternal),
     queryFn: () => api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(host.host_id)}/containers${si}`),
     refetchInterval: 30_000,
   });

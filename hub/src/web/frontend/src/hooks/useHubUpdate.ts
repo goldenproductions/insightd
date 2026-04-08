@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
 
+// Uses raw fetch intentionally: the hub goes down mid-request during updates,
+// so we need custom error handling that api()/apiAuth() don't support.
 type HubStatus = 'idle' | 'updating' | 'restarting' | 'done' | 'failed';
 
 export function useHubUpdate() {

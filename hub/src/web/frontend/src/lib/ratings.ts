@@ -1,13 +1,4 @@
-export interface Baseline {
-  metric: string;
-  time_bucket: string;
-  p50: number | null;
-  p75: number | null;
-  p90: number | null;
-  p95: number | null;
-  p99: number | null;
-  sample_count: number;
-}
+import type { BaselineRow } from '@/types/api';
 
 export interface MetricRating {
   rating: 'normal' | 'elevated' | 'high' | 'critical';
@@ -15,7 +6,7 @@ export interface MetricRating {
   label: string;
 }
 
-export function rateMetric(value: number | null | undefined, baseline: Baseline | undefined): MetricRating | null {
+export function rateMetric(value: number | null | undefined, baseline: BaselineRow | undefined): MetricRating | null {
   if (value == null || !baseline || baseline.sample_count < 288) return null;
   if (baseline.p75 == null || baseline.p95 == null || baseline.p99 == null) return null;
 

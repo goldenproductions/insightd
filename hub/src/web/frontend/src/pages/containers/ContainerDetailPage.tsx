@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import type { ContainerDetail, ContainerAvailability, BaselineRow } from '@/types/api';
-import type { Baseline } from '@/lib/analogies';
 import { Card } from '@/components/Card';
 import { BarChart } from '@/components/BarChart';
 import { StatusDot } from '@/components/StatusDot';
@@ -19,46 +18,41 @@ import { LoadingState } from '@/components/LoadingState';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
-import { useTab } from '@/hooks/useTab';
 import { MetricGauge } from './MetricGauge';
-import { getAnalogy } from '@/lib/analogies';
+import { getAnalogy, findBaseline } from '@/lib/analogies';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
+import { queryKeys } from '@/lib/queryKeys';
 
 export function ContainerDetailPage() {
   const { hostId, containerName } = useParams();
   const hid = encodeURIComponent(hostId!);
   const cname = encodeURIComponent(containerName!);
   const { isAuthenticated } = useAuth();
-  const { activeTab, setActiveTab } = useTab('overview');
+  const [activeTab, setActiveTab] = useState('overview');
   const [showSnapshots, setShowSnapshots] = useState(false);
   const navigate = useNavigate();
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
 
   const { data } = useQuery({
-    queryKey: ['container', hostId, containerName],
+    queryKey: queryKeys.container(hostId, containerName),
     queryFn: () => api<ContainerDetail>(`/hosts/${hid}/containers/${cname}`),
     refetchInterval: 30_000,
   });
   const { data: availability } = useQuery({
-    queryKey: ['container-availability', hostId, containerName],
+    queryKey: queryKeys.containerAvailability(hostId, containerName),
     queryFn: () => api<ContainerAvailability>(`/hosts/${hid}/containers/${cname}/availability?days=7`),
   });
   const entityId = encodeURIComponent(`${hostId}/${containerName}`);
   const { data: baselines, isFetched: baselinesReady } = useQuery({
-    queryKey: ['baselines', 'container', hostId, containerName],
+    queryKey: queryKeys.containerBaselines(hostId, containerName),
     queryFn: () => api<BaselineRow[]>(`/baselines/container/${entityId}`).catch(() => []),
     refetchInterval: false,
   });
 
   if (!data) return <LoadingState />;
 
-  const findBl = (metric: string): Baseline | null => {
-    if (!baselines) return null;
-    const row = baselines.find(b => b.metric === metric && b.time_bucket === 'all');
-    if (!row || row.p50 == null) return null;
-    return { p50: row.p50, p75: row.p75, p90: row.p90, p95: row.p95, p99: row.p99 };
-  };
+  const findBl = (metric: string) => findBaseline(baselines, metric);
 
   const history = data.history || [];
 

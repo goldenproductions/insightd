@@ -2,33 +2,21 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Link } from 'react-router-dom';
-
-interface VersionInfo {
-  currentVersion: string;
-  latestHubVersion: string | null;
-  latestAgentVersion: string | null;
-  hubUpdateAvailable: boolean;
-  checkedAt: string | null;
-}
-
-interface Host {
-  host_id: string;
-  agent_version: string | null;
-  is_online: number;
-}
+import type { VersionInfo, HostWithAgent } from '@/types/api';
+import { queryKeys } from '@/lib/queryKeys';
 
 export function UpdateBanner() {
   const [dismissed, setDismissed] = useState(() => sessionStorage.getItem('insightd-update-dismissed'));
 
   const { data: version } = useQuery({
-    queryKey: ['version-check'],
+    queryKey: queryKeys.versionCheck(),
     queryFn: () => api<VersionInfo>('/version-check'),
     refetchInterval: 30 * 60 * 1000,
   });
 
   const { data: hosts } = useQuery({
-    queryKey: ['hosts'],
-    queryFn: () => api<Host[]>('/hosts'),
+    queryKey: queryKeys.hosts(),
+    queryFn: () => api<HostWithAgent[]>('/hosts'),
   });
 
   const hubOutdated = version?.hubUpdateAvailable;

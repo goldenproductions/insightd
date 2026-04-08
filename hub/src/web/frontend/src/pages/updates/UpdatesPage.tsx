@@ -10,41 +10,17 @@ import { PageTitle } from '@/components/PageTitle';
 import { useHubUpdate } from '@/hooks/useHubUpdate';
 import { HubUpdateCard } from './HubUpdateCard';
 import { ImageUpdatesCard } from './ImageUpdatesCard';
-
-export interface VersionInfo {
-  currentVersion: string;
-  latestHubVersion: string | null;
-  latestAgentVersion: string | null;
-  hubUpdateAvailable: boolean;
-  checkedAt: string | null;
-  // backward compat
-  latestVersion: string | null;
-  updateAvailable: boolean;
-}
-
-export interface Host {
-  host_id: string;
-  agent_version: string | null;
-  is_online: number;
-}
-
-export interface ImageUpdate {
-  host_id: string;
-  container_name: string;
-  image: string;
-  checked_at: string;
-}
-
-export type UpdateResult = { status: string; message?: string; error?: string };
+import type { VersionInfo, HostWithAgent, ImageUpdate, UpdateResult } from '@/types/api';
+import { queryKeys } from '@/lib/queryKeys';
 
 export function UpdatesPage() {
   const { isAuthenticated, token } = useAuth();
   const queryClient = useQueryClient();
   const [results, setResults] = useState<Record<string, UpdateResult>>({});
 
-  const { data: version } = useQuery({ queryKey: ['version-check'], queryFn: () => api<VersionInfo>('/version-check') });
-  const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<Host[]>('/hosts') });
-  const { data: imageUpdates } = useQuery({ queryKey: ['image-updates'], queryFn: () => api<ImageUpdate[]>('/image-updates') });
+  const { data: version } = useQuery({ queryKey: queryKeys.versionCheck(), queryFn: () => api<VersionInfo>('/version-check') });
+  const { data: hosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<HostWithAgent[]>('/hosts') });
+  const { data: imageUpdates } = useQuery({ queryKey: queryKeys.imageUpdates(), queryFn: () => api<ImageUpdate[]>('/image-updates') });
 
   const updateAgent = useMutation({
     mutationFn: async (hostId: string) => {
@@ -68,7 +44,7 @@ export function UpdatesPage() {
     onSuccess: (data, hostId) => {
       setResults(prev => ({ ...prev, [hostId]: data }));
       if (data.status === 'success') {
-        setTimeout(() => queryClient.invalidateQueries({ queryKey: ['hosts'] }), 10000);
+        setTimeout(() => queryClient.invalidateQueries({ queryKey: queryKeys.hosts() }), 10000);
       }
     },
     onError: (err, hostId) => setResults(prev => ({ ...prev, [hostId]: { status: 'failed', error: err instanceof Error ? err.message : 'Failed' } })),
@@ -86,7 +62,7 @@ export function UpdatesPage() {
       const map: Record<string, UpdateResult> = {};
       for (const r of data.results) map[r.hostId] = r;
       setResults(prev => ({ ...prev, ...map }));
-      setTimeout(() => queryClient.invalidateQueries({ queryKey: ['hosts'] }), 10000);
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: queryKeys.hosts() }), 10000);
     },
   });
 
@@ -97,7 +73,7 @@ export function UpdatesPage() {
   const checkedAt = version?.checkedAt ? new Date(version.checkedAt).toLocaleString() : null;
 
   const { outdatedAgents, hasOutdatedOnline } = useMemo(() => {
-    const outdated: Host[] = [];
+    const outdated: HostWithAgent[] = [];
     let hasOnline = false;
     for (const h of hosts || []) {
       if (latestAgent && h.agent_version && h.agent_version !== latestAgent) {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { AgentSetup } from '@/types/api';
 import { Card } from '@/components/Card';
 import { FormField, Input, Select } from '@/components/FormField';
@@ -9,7 +10,7 @@ import { PageTitle } from '@/components/PageTitle';
 
 export function AddAgentPage() {
   const { data: defaults } = useQuery({
-    queryKey: ['agent-setup'],
+    queryKey: queryKeys.agentSetup(),
     queryFn: () => api<AgentSetup>('/agent-setup'),
     refetchInterval: false,
   });

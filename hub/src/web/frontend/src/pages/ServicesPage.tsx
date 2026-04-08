@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { ServiceGroupSummary } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Badge } from '@/components/Badge';
@@ -13,7 +14,7 @@ export function ServicesPage() {
   const { isAuthenticated } = useAuth();
   const { showInternal } = useShowInternal();
   const si = showInternal ? '?showInternal=true' : '';
-  const { data: groups } = useQuery({ queryKey: ['groups', showInternal], queryFn: () => api<ServiceGroupSummary[]>(`/groups${si}`), refetchInterval: 30_000 });
+  const { data: groups } = useQuery({ queryKey: queryKeys.groups(showInternal), queryFn: () => api<ServiceGroupSummary[]>(`/groups${si}`), refetchInterval: 30_000 });
 
   return (
     <div className="space-y-6">

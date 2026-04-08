@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiAuth } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { Webhook } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
@@ -24,7 +25,7 @@ export function WebhookFormPage() {
   const isEdit = !!webhookId;
 
   const { data: existing, isLoading } = useQuery({
-    queryKey: ['webhook', webhookId],
+    queryKey: queryKeys.webhook(webhookId),
     queryFn: () => apiAuth<Webhook>('GET', `/webhooks/${webhookId}`, undefined, token),
     enabled: isEdit && isAuthenticated,
     refetchInterval: false,

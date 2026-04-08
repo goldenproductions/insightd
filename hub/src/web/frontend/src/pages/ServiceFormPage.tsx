@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { ServiceGroup } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
@@ -16,7 +17,7 @@ export function ServiceFormPage() {
   const isEdit = !!groupId;
 
   const { data: existing, isLoading } = useQuery({
-    queryKey: ['group-edit', groupId],
+    queryKey: queryKeys.groupEdit(groupId),
     queryFn: () => api<ServiceGroup>(`/groups/${groupId}`),
     enabled: isEdit,
     refetchInterval: false,

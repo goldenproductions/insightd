@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
 import { apiAuth } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { SettingsResponse } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
@@ -16,7 +17,7 @@ export function SettingsPage() {
   const formRef = useRef<Record<string, string>>({});
 
   const { data, error } = useQuery({
-    queryKey: ['settings'],
+    queryKey: queryKeys.settings(),
     queryFn: () => apiAuth<SettingsResponse>('GET', '/settings', undefined, token),
     enabled: isAuthenticated,
     refetchInterval: false,

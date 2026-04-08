@@ -1,7 +1,7 @@
 import { Link } from 'react-router-dom';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
-import type { ImageUpdate } from './UpdatesPage';
+import type { ImageUpdate } from '@/types/api';
 
 interface ImageUpdatesCardProps {
   imageUpdates: ImageUpdate[] | undefined;

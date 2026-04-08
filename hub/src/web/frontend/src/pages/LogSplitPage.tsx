@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { ContainerSnapshot } from '@/types/api';
 import { LogViewer } from '@/components/LogViewer';
 import { Card } from '@/components/Card';
@@ -16,7 +17,7 @@ export function LogSplitPage() {
   const selectedSet = useMemo(() => new Set(selectedContainers), [selectedContainers]);
 
   const { data: containers } = useQuery({
-    queryKey: ['host-containers', hostId],
+    queryKey: queryKeys.hostContainers(hostId),
     queryFn: () => api<ContainerSnapshot[]>(`/hosts/${hid}/containers`),
   });
 
