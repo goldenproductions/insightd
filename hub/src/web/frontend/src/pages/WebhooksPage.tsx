@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { apiAuth } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { Webhook, WebhookTestResult } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
@@ -20,7 +21,7 @@ export function WebhooksPage() {
   const [testResult, setTestResult] = useState<Record<number, { ok: boolean; msg: string }>>({});
 
   const { data: webhooks } = useQuery({
-    queryKey: ['webhooks'],
+    queryKey: queryKeys.webhooks(),
     queryFn: () => apiAuth<Webhook[]>('GET', '/webhooks', undefined, token),
     enabled: isAuthenticated,
     refetchInterval: false,
@@ -29,7 +30,7 @@ export function WebhooksPage() {
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) =>
       apiAuth('PUT', `/webhooks/${id}`, { enabled }, token),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['webhooks'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.webhooks() }),
   });
 
   const testMutation = useMutation({

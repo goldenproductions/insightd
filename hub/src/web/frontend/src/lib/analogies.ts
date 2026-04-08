@@ -1,16 +1,10 @@
+import type { BaselinePercentiles, BaselineRow } from '@/types/api';
+
 export type MetricType = 'cpu' | 'memory' | 'disk' | 'network' | 'load' | 'temperature' | 'health';
 
 export interface Analogy {
   emoji: string;
   label: string;
-}
-
-export interface Baseline {
-  p50: number | null;
-  p75: number | null;
-  p90: number | null;
-  p95: number | null;
-  p99: number | null;
 }
 
 type Tier = [number, string, string]; // [threshold, emoji, label]
@@ -97,7 +91,7 @@ function matchTier(tiers: Tier[], value: number): Analogy {
 // Compares value against the entity's own percentiles.
 // "Normal" is defined by what THIS container/host usually does.
 
-function matchBaseline(value: number, bl: Baseline): Analogy {
+function matchBaseline(value: number, bl: BaselinePercentiles): Analogy {
   if (bl.p99 != null && value >= bl.p99) return { emoji: '💀', label: 'Uncharted territory' };
   if (bl.p95 != null && value >= bl.p95) return { emoji: '🔥', label: 'Way above normal' };
   if (bl.p90 != null && value >= bl.p90) return { emoji: '😰', label: 'Above normal' };
@@ -123,7 +117,7 @@ export function getAnalogy(
   metric: MetricType,
   value: number | null | undefined,
   max?: number | null,
-  baseline?: Baseline | null,
+  baseline?: BaselinePercentiles | null,
 ): Analogy | null {
   if (value == null) return null;
   let v = value;
@@ -137,4 +131,12 @@ export function getAnalogy(
   }
 
   return matchTier(TIER_MAP[metric], v);
+}
+
+/** Extract the percentile subset from a BaselineRow array for a given metric. */
+export function findBaseline(baselines: BaselineRow[] | undefined, metric: string): BaselinePercentiles | null {
+  if (!baselines) return null;
+  const row = baselines.find(b => b.metric === metric && b.time_bucket === 'all');
+  if (!row || row.p50 == null) return null;
+  return { p50: row.p50, p75: row.p75, p90: row.p90, p95: row.p95, p99: row.p99 };
 }

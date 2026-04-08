@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useParams, useNavigate, Navigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { EndpointDetail } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
@@ -16,7 +17,7 @@ export function EndpointFormPage() {
   const isEdit = !!endpointId;
 
   const { data: existing, isLoading } = useQuery({
-    queryKey: ['endpoint', endpointId],
+    queryKey: queryKeys.endpoint(endpointId),
     queryFn: () => api<EndpointDetail>(`/endpoints/${endpointId}`),
     enabled: isEdit,
     refetchInterval: false,

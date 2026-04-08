@@ -10,14 +10,15 @@ import { useShowInternal } from '@/hooks/useShowInternal';
 import { LoadingState } from '@/components/LoadingState';
 import { useAttentionItems } from '@/hooks/useAttentionItems';
 import { getAnalogy } from '@/lib/analogies';
+import { queryKeys } from '@/lib/queryKeys';
 import { StatusRow } from './StatusRow';
 import { AttentionList } from './AttentionList';
 
 export function DashboardPage() {
   const { showInternal } = useShowInternal();
   const si = showInternal ? '?showInternal=true' : '';
-  const { data } = useQuery({ queryKey: ['dashboard', showInternal], queryFn: () => api<DashboardData>(`/dashboard${si}`), refetchInterval: 30_000 });
-  const { data: rankings } = useQuery({ queryKey: ['rankings'], queryFn: () => api<Rankings>('/rankings?limit=5'), refetchInterval: 30_000 });
+  const { data } = useQuery({ queryKey: queryKeys.dashboard(showInternal), queryFn: () => api<DashboardData>(`/dashboard${si}`), refetchInterval: 30_000 });
+  const { data: rankings } = useQuery({ queryKey: queryKeys.rankings(), queryFn: () => api<Rankings>('/rankings?limit=5'), refetchInterval: 30_000 });
 
   const attentionItems = useAttentionItems(data);
 

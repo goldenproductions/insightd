@@ -1,6 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { EndpointDetail, EndpointCheck } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { StatCard, StatsGrid } from '@/components/StatCard';
@@ -15,8 +16,8 @@ import { LoadingState } from '@/components/LoadingState';
 export function EndpointDetailPage() {
   const { endpointId } = useParams();
   const { isAuthenticated } = useAuth();
-  const { data } = useQuery({ queryKey: ['endpoint', endpointId], queryFn: () => api<EndpointDetail>(`/endpoints/${endpointId}`), refetchInterval: 30_000 });
-  const { data: checks } = useQuery({ queryKey: ['endpoint-checks', endpointId], queryFn: () => api<EndpointCheck[]>(`/endpoints/${endpointId}/checks?hours=24`), refetchInterval: 30_000 });
+  const { data } = useQuery({ queryKey: queryKeys.endpoint(endpointId), queryFn: () => api<EndpointDetail>(`/endpoints/${endpointId}`), refetchInterval: 30_000 });
+  const { data: checks } = useQuery({ queryKey: queryKeys.endpointChecks(endpointId), queryFn: () => api<EndpointCheck[]>(`/endpoints/${endpointId}/checks?hours=24`), refetchInterval: 30_000 });
 
   if (!data) return <LoadingState />;
 

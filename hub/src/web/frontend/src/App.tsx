@@ -5,6 +5,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { ShowInternalProvider } from '@/hooks/useShowInternal';
 import { Layout } from '@/components/Layout';
+import { api } from '@/lib/api';
 import { useState, useEffect, lazy, Suspense } from 'react';
 
 const SetupWizardPage = lazy(() => import('@/pages/SetupWizardPage').then(m => ({ default: m.SetupWizardPage })));
@@ -42,9 +43,8 @@ export function App() {
   const [mode, setMode] = useState('hub');
 
   useEffect(() => {
-    fetch('/api/setup/status')
-      .then(r => r.json())
-      .then((d: { setupComplete: boolean; mode: string }) => {
+    api<{ setupComplete: boolean; mode: string }>('/setup/status')
+      .then(d => {
         setSetupComplete(d.setupComplete);
         setMode(d.mode);
       })

@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/context/AuthContext';
 import type { ApiKey } from '@/types/api';
 import { Card } from '@/components/Card';
@@ -17,7 +18,7 @@ export function ApiKeysPage() {
   const [creating, setCreating] = useState(false);
 
   const { data: keys } = useQuery({
-    queryKey: ['api-keys'],
+    queryKey: queryKeys.apiKeys(),
     queryFn: () => api<ApiKey[]>('/api-keys'),
     enabled: isAuthenticated,
   });
@@ -29,7 +30,7 @@ export function ApiKeysPage() {
       const res = await apiAuth('POST', '/api-keys', { name: name.trim() }, token) as { key: string };
       setNewKey(res.key);
       setName('');
-      queryClient.invalidateQueries({ queryKey: ['api-keys'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
     } catch { /* error */ }
     setCreating(false);
   };
@@ -37,7 +38,7 @@ export function ApiKeysPage() {
   const revoke = useCallback(async (id: number) => {
     if (!confirm('Revoke this API key? Any scripts using it will stop working.')) return;
     await apiAuth('DELETE', `/api-keys/${id}`, undefined, token);
-    queryClient.invalidateQueries({ queryKey: ['api-keys'] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.apiKeys() });
   }, [token, queryClient]);
 
   const keyCols = useMemo(() => [

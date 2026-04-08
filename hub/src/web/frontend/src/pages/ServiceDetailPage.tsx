@@ -1,6 +1,7 @@
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { ServiceGroupDetail, ContainerSnapshot } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { StatCard, StatsGrid } from '@/components/StatCard';
@@ -20,12 +21,12 @@ export function ServiceDetailPage() {
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
 
-  const { data } = useQuery({ queryKey: ['group', groupId], queryFn: () => api<ServiceGroupDetail>(`/groups/${groupId}`), refetchInterval: 30_000 });
+  const { data } = useQuery({ queryKey: queryKeys.group(groupId), queryFn: () => api<ServiceGroupDetail>(`/groups/${groupId}`), refetchInterval: 30_000 });
 
   const removeMutation = useMutation({
     mutationFn: ({ hostId, containerName }: { hostId: string; containerName: string }) =>
       apiAuth('DELETE', `/groups/${groupId}/members`, { hostId, containerName }, token),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['group', groupId] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.group(groupId) }),
   });
 
   const { running, totalCpu, totalMem } = useMemo(() => {
@@ -87,7 +88,7 @@ export function ServiceDetailPage() {
             </button>
           </div>
         )}
-        {showAddForm && <AddContainerForm groupId={parseInt(groupId!, 10)} token={token} onAdded={() => { setShowAddForm(false); queryClient.invalidateQueries({ queryKey: ['group', groupId] }); }} />}
+        {showAddForm && <AddContainerForm groupId={parseInt(groupId!, 10)} token={token} onAdded={() => { setShowAddForm(false); queryClient.invalidateQueries({ queryKey: queryKeys.group(groupId) }); }} />}
         <DataTable
           columns={columns}
           data={data.members}
@@ -104,9 +105,9 @@ function AddContainerForm({ groupId, token, onAdded }: { groupId: number; token:
   const [containerName, setContainerName] = useState('');
 
   // Fetch all containers across all hosts
-  const { data: hosts } = useQuery({ queryKey: ['hosts'], queryFn: () => api<{ host_id: string }[]>('/hosts') });
+  const { data: hosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<{ host_id: string }[]>('/hosts') });
   const { data: allContainers } = useQuery({
-    queryKey: ['all-containers', hosts?.map(h => h.host_id).sort().join(',')],
+    queryKey: queryKeys.allContainers(hosts?.map(h => h.host_id).sort().join(',')),
     queryFn: async () => {
       if (!hosts) return [];
       const results: { hostId: string; name: string }[] = [];

@@ -386,3 +386,34 @@ export interface BaselineRow {
   max_val: number | null;
   sample_count: number;
 }
+
+/** Percentile subset used by analogies and ratings (no metadata fields) */
+export type BaselinePercentiles = Pick<BaselineRow, 'p50' | 'p75' | 'p90' | 'p95' | 'p99'>;
+
+// Version / Updates
+export interface VersionInfo {
+  currentVersion: string;
+  latestHubVersion: string | null;
+  latestAgentVersion: string | null;
+  hubUpdateAvailable: boolean;
+  checkedAt: string | null;
+  /** @deprecated backward compat */
+  latestVersion?: string | null;
+  /** @deprecated backward compat */
+  updateAvailable?: boolean;
+}
+
+export interface HostWithAgent {
+  host_id: string;
+  agent_version: string | null;
+  is_online: number;
+}
+
+export interface ImageUpdate {
+  host_id: string;
+  container_name: string;
+  image: string;
+  checked_at: string;
+}
+
+export type UpdateResult = { status: string; message?: string; error?: string };

@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { PublicStatus } from '@/types/api';
 import { timeAgo } from '@/lib/formatters';
 
@@ -11,7 +12,7 @@ const statusConfig = {
 
 export function StatusPage() {
   const { data, error } = useQuery({
-    queryKey: ['public-status'],
+    queryKey: queryKeys.publicStatus(),
     queryFn: () => api<PublicStatus>('/status'),
     refetchInterval: 60000,
   });

@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
+import { api, apiAuth } from '@/lib/api';
+import type { HealthData } from '@/types/api';
 
 interface AuthState {
   token: string | null;
@@ -17,9 +19,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isHubMode, setIsHubMode] = useState(false);
 
   useEffect(() => {
-    fetch('/api/health')
-      .then(r => r.json())
-      .then((data: { authEnabled?: boolean; mode?: string }) => {
+    api<HealthData>('/health')
+      .then(data => {
         setAuthEnabled(!!data.authEnabled);
         setIsHubMode(data.mode === 'hub');
       })
@@ -27,13 +28,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (password: string) => {
-    const res = await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
-    const data = await res.json() as { token?: string; error?: string };
-    if (!res.ok || !data.token) throw new Error(data.error || 'Login failed');
+    const data = await apiAuth<{ token: string }>('POST', '/auth', { password });
+    if (!data.token) throw new Error('Login failed');
     setToken(data.token);
     sessionStorage.setItem('insightd-token', data.token);
   }, []);

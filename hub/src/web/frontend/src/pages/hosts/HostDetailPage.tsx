@@ -13,7 +13,8 @@ import { useShowInternal } from '@/hooks/useShowInternal';
 import { useAuth } from '@/context/AuthContext';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
-import { useTab } from '@/hooks/useTab';
+import { useState } from 'react';
+import { queryKeys } from '@/lib/queryKeys';
 import { HostOverviewTab } from './HostOverviewTab';
 import { HostResourcesTab } from './HostResourcesTab';
 import { HostAlertsTab } from './HostAlertsTab';
@@ -25,15 +26,15 @@ export function HostDetailPage() {
   const { showInternal } = useShowInternal();
   const hid = encodeURIComponent(hostId!);
   const si = showInternal ? '?showInternal=true' : '';
-  const { activeTab, setActiveTab } = useTab('overview');
+  const [activeTab, setActiveTab] = useState('overview');
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['host', hostId, showInternal]], confirm);
 
-  const { data } = useQuery({ queryKey: ['host', hostId, showInternal], queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`), refetchInterval: 30_000 });
-  const { data: timeline } = useQuery({ queryKey: ['timeline', hostId], queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
-  const { data: trends } = useQuery({ queryKey: ['trends', hostId], queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
-  const { data: events } = useQuery({ queryKey: ['events', hostId], queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
-  const { data: baselines, isFetched: baselinesReady } = useQuery({ queryKey: ['baselines', 'host', hostId], queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
+  const { data } = useQuery({ queryKey: queryKeys.host(hostId, showInternal), queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`), refetchInterval: 30_000 });
+  const { data: timeline } = useQuery({ queryKey: queryKeys.timeline(hostId), queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
+  const { data: trends } = useQuery({ queryKey: queryKeys.trends(hostId), queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
+  const { data: events } = useQuery({ queryKey: queryKeys.events(hostId), queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
+  const { data: baselines, isFetched: baselinesReady } = useQuery({ queryKey: queryKeys.hostBaselines(hostId), queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
 
   if (!data) return <LoadingState />;
 

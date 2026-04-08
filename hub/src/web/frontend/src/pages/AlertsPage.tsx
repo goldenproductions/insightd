@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { Alert } from '@/types/api';
 import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
@@ -20,7 +21,7 @@ const columns: Column<Alert>[] = [
 
 export function AlertsPage() {
   const navigate = useNavigate();
-  const { data: alerts } = useQuery({ queryKey: ['alerts'], queryFn: () => api<Alert[]>('/alerts?active=false'), refetchInterval: 30_000 });
+  const { data: alerts } = useQuery({ queryKey: queryKeys.alerts(), queryFn: () => api<Alert[]>('/alerts?active=false'), refetchInterval: 30_000 });
 
   return (
     <div className="space-y-6">

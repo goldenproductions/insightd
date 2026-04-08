@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
 import type { EndpointSummary } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
@@ -13,7 +14,7 @@ import { PageTitle } from '@/components/PageTitle';
 export function EndpointsPage() {
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const { data: endpoints } = useQuery({ queryKey: ['endpoints'], queryFn: () => api<EndpointSummary[]>('/endpoints'), refetchInterval: 30_000 });
+  const { data: endpoints } = useQuery({ queryKey: queryKeys.endpoints(), queryFn: () => api<EndpointSummary[]>('/endpoints'), refetchInterval: 30_000 });
 
   const columns: Column<EndpointSummary>[] = [
     {

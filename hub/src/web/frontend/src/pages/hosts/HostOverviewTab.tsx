@@ -1,6 +1,5 @@
 import { Link } from 'react-router-dom';
 import type { HostDetail, TimelineEntry, ContainerSnapshot, BaselineRow } from '@/types/api';
-import type { Baseline } from '@/lib/analogies';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
@@ -8,8 +7,8 @@ import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { fmtPercent, fmtUptime, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
-import { getAnalogy } from '@/lib/analogies';
-import { isInternalContainer } from '@/hooks/useShowInternal';
+import { getAnalogy, findBaseline } from '@/lib/analogies';
+import { isInternalContainer } from '@/lib/containers';
 
 interface Props {
   data: HostDetail;
@@ -22,13 +21,6 @@ interface Props {
   runAction: (containerName: string, action: string, needsConfirm?: boolean) => void;
   removeContainer: (containerName: string) => Promise<boolean>;
   baselines?: BaselineRow[];
-}
-
-function findBaseline(baselines: BaselineRow[] | undefined, metric: string): Baseline | null {
-  if (!baselines) return null;
-  const row = baselines.find(b => b.metric === metric && b.time_bucket === 'all');
-  if (!row || row.p50 == null) return null;
-  return { p50: row.p50, p75: row.p75, p90: row.p90, p95: row.p95, p99: row.p99 };
 }
 
 export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthenticated, actionLoading, runAction, removeContainer, baselines }: Props) {
