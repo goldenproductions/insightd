@@ -33,7 +33,7 @@ export function HostDetailPage() {
   const { data: timeline } = useQuery({ queryKey: ['timeline', hostId], queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
   const { data: trends } = useQuery({ queryKey: ['trends', hostId], queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
   const { data: events } = useQuery({ queryKey: ['events', hostId], queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
-  const { data: baselines } = useQuery({ queryKey: ['baselines', 'host', hostId], queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
+  const { data: baselines, isFetched: baselinesReady } = useQuery({ queryKey: ['baselines', 'host', hostId], queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
 
   if (!data) return <LoadingState />;
 
@@ -73,7 +73,7 @@ export function HostDetailPage() {
           actionLoading={actionLoading}
           runAction={runAction}
           removeContainer={removeContainer}
-          baselines={baselines}
+          baselines={baselinesReady ? baselines : undefined}
         />
       )}
 

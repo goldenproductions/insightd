@@ -45,7 +45,7 @@ export function ContainerDetailPage() {
     queryFn: () => api<ContainerAvailability>(`/hosts/${hid}/containers/${cname}/availability?days=7`),
   });
   const entityId = encodeURIComponent(`${hostId}/${containerName}`);
-  const { data: baselines } = useQuery({
+  const { data: baselines, isFetched: baselinesReady } = useQuery({
     queryKey: ['baselines', 'container', hostId, containerName],
     queryFn: () => api<BaselineRow[]>(`/baselines/container/${entityId}`).catch(() => []),
     refetchInterval: false,
@@ -156,8 +156,8 @@ export function ContainerDetailPage() {
 
           {/* CPU & Memory gauges */}
           <div className="grid gap-4 md:grid-cols-2">
-            <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent'))} />
-            <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb'))} />
+            <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={baselinesReady ? getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent')) : null} />
+            <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={baselinesReady ? getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb')) : null} />
           </div>
 
           {/* Compact I/O row */}
