@@ -26,10 +26,10 @@ export function EndpointsPage() {
         return <span className="flex items-center gap-2"><StatusDot status={status} /> {r.name}</span>;
       },
     },
-    { header: 'URL', accessor: r => <span className="max-w-[250px] truncate text-xs text-muted">{r.url}</span> },
+    { header: 'URL', accessor: r => <span className="max-w-[250px] truncate text-xs text-muted">{r.url}</span>, hideOnMobile: true },
     { header: 'Uptime (24h)', accessor: r => r.uptimePercent24h != null ? `${r.uptimePercent24h}%` : '-' },
-    { header: 'Avg Response', accessor: r => r.avgResponseMs != null ? `${r.avgResponseMs}ms` : '-' },
-    { header: 'Last Check', accessor: r => r.lastCheck ? timeAgo(r.lastCheck.checked_at) : 'never' },
+    { header: 'Avg Response', accessor: r => r.avgResponseMs != null ? `${r.avgResponseMs}ms` : '-', hideOnMobile: true },
+    { header: 'Last Check', accessor: r => r.lastCheck ? timeAgo(r.lastCheck.checked_at) : 'never', hideOnMobile: true },
     { header: 'Status', accessor: r => r.enabled ? <Badge text="on" color="green" /> : <Badge text="off" color="red" /> },
   ];
 

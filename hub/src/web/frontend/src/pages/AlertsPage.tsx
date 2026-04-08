@@ -12,11 +12,11 @@ import { PageTitle } from '@/components/PageTitle';
 
 const columns: Column<Alert>[] = [
   { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.resolved_at ? 'green' : 'red'} /> {r.alert_type.replace(/_/g, ' ')}</span> },
-  { header: 'Reason', accessor: r => <span className="text-xs text-secondary">{r.message || `${r.alert_type.replace(/_/g, ' ')} on ${r.target}`}</span> },
+  { header: 'Reason', accessor: r => <span className="text-xs text-secondary">{r.message || `${r.alert_type.replace(/_/g, ' ')} on ${r.target}`}</span>, hideOnMobile: true },
   { header: 'Host', accessor: r => <span className="text-info">{r.host_id}</span> },
   { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
-  { header: 'Resolved', accessor: r => r.resolved_at ? timeAgo(r.resolved_at) : <Badge text="active" color="red" /> },
-  { header: 'Notifications', accessor: r => r.notify_count },
+  { header: 'Resolved', accessor: r => r.resolved_at ? timeAgo(r.resolved_at) : <Badge text="active" color="red" />, hideOnMobile: true },
+  { header: 'Notifications', accessor: r => r.notify_count, hideOnMobile: true },
 ];
 
 export function AlertsPage() {
