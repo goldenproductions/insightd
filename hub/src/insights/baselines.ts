@@ -79,10 +79,14 @@ interface ContainerSnapshotRow {
   [key: string]: any;
 }
 
+type BaselineCache = Map<string, Record<string, Percentiles & { sample_count: number }>>;
+
 /**
  * Compute and store baselines for all hosts and containers.
+ * Returns a cache keyed by "entityType:entityId" for downstream use.
  */
-function computeBaselines(db: Database.Database): void {
+function computeBaselines(db: Database.Database): BaselineCache {
+  const cache: BaselineCache = new Map();
   const upsert = db.prepare(`
     INSERT INTO baselines (entity_type, entity_id, metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, sample_count, computed_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
@@ -95,10 +99,18 @@ function computeBaselines(db: Database.Database): void {
     if (values.length === 0) return false;
     const p = computePercentiles(values);
     upsert.run(entityType, entityId, metric, bucket, p.p50, p.p75, p.p90, p.p95, p.p99, p.min, p.max, p.count);
+    // Cache the 'all' bucket for downstream use
+    if (bucket === 'all') {
+      const key = `${entityType}:${entityId}`;
+      if (!cache.has(key)) cache.set(key, {});
+      cache.get(key)![metric] = { ...p, sample_count: p.count };
+    }
     return true;
   }
 
   let count = 0;
+
+  const runAll = db.transaction(() => {
 
   // --- Host baselines ---
   const hosts = db.prepare("SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= datetime('now', '-30 days')").all() as { host_id: string }[];
@@ -163,9 +175,15 @@ function computeBaselines(db: Database.Database): void {
     }
   }
 
-  if (count > 0) {
-    logger.info('baselines', `Computed ${count} baselines for ${hosts.length} hosts and ${containers.length} containers`);
-  }
+    if (count > 0) {
+      logger.info('baselines', `Computed ${count} baselines for ${hosts.length} hosts and ${containers.length} containers`);
+    }
+  }); // end transaction wrapper
+
+  runAll();
+
+  return cache;
 }
 
 module.exports = { computeBaselines, percentile, HOST_METRICS, CONTAINER_METRICS, TIME_PERIODS, getTimePeriod, MIN_PERIOD_SAMPLES };
+export type { BaselineCache };

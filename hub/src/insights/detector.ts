@@ -90,11 +90,14 @@ interface AlertStateRow {
   target: string;
 }
 
+type BaselineCache = Map<string, Record<string, BaselineRow>>;
+
 /**
  * Generate insights by analyzing metrics against baselines.
  * Clears and regenerates the insights table each run.
+ * Accepts optional baseline cache from computeBaselines to avoid re-querying.
  */
-function generateInsights(db: Database.Database): void {
+function generateInsights(db: Database.Database, baselineCache?: BaselineCache | null): void {
   db.prepare('DELETE FROM insights').run();
 
   const insert = db.prepare(`
@@ -108,7 +111,7 @@ function generateInsights(db: Database.Database): void {
   const hosts = db.prepare('SELECT DISTINCT host_id FROM hosts').all() as HostIdRow[];
 
   for (const { host_id } of hosts) {
-    const baselines = getBaselines(db, 'host', host_id);
+    const baselines = baselineCache?.get(`host:${host_id}`) as Record<string, BaselineRow> ?? getBaselines(db, 'host', host_id);
 
     // Sustained elevation: last 6 snapshots (30 min) all above P95
     const recent = db.prepare(
@@ -170,7 +173,7 @@ function generateInsights(db: Database.Database): void {
 
   for (const { host_id, container_name } of containers) {
     const entityId = `${host_id}/${container_name}`;
-    const baselines = getBaselines(db, 'container', entityId);
+    const baselines = baselineCache?.get(`container:${entityId}`) as Record<string, BaselineRow> ?? getBaselines(db, 'container', entityId);
 
     // Sustained elevation
     const recent = db.prepare(`
@@ -422,18 +425,15 @@ function enrichInsightsWithCorrelations(db: Database.Database): void {
       : insight.entity_id.split('/')[0];
 
     const recentEvents = db.prepare(`
-      SELECT cs1.container_name, cs1.status as new_status, cs2.status as old_status
-      FROM container_snapshots cs1
-      JOIN container_snapshots cs2 ON cs1.host_id = cs2.host_id
-        AND cs1.container_name = cs2.container_name
-        AND cs2.collected_at = (
-          SELECT MAX(collected_at) FROM container_snapshots
-          WHERE host_id = cs1.host_id AND container_name = cs1.container_name
-            AND collected_at < cs1.collected_at
-        )
-      WHERE cs1.host_id = ? AND cs1.status != cs2.status
-        AND cs1.collected_at >= datetime('now', '-1 hour')
-      ORDER BY cs1.collected_at DESC
+      WITH ordered AS (
+        SELECT container_name, status,
+          LAG(status) OVER (PARTITION BY container_name ORDER BY collected_at) as prev_status
+        FROM container_snapshots
+        WHERE host_id = ? AND collected_at >= datetime('now', '-2 hours')
+      )
+      SELECT container_name, status as new_status, prev_status as old_status
+      FROM ordered
+      WHERE status != prev_status AND prev_status IS NOT NULL
     `).all(hostId) as StatusChangeRow[];
 
     const recentAlerts = db.prepare(`
