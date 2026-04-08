@@ -286,10 +286,11 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
       const remaining = bl.p90 - pred.current;
       const daysUntil = Math.round(remaining / pred.dailyGrowth);
       if (daysUntil > 14 || daysUntil <= 0) continue;
-      const severity = daysUntil <= 7 ? 'critical' : 'warning';
+      const severity = daysUntil <= 3 ? 'critical' : 'warning';
+      const dayWord = daysUntil === 1 ? 'day' : 'days';
       insert.run('host', host_id, 'prediction', severity,
         `${label} trending up on ${host_id}`,
-        `${label} growing ${round(pred.dailyGrowth)}${unit}/day — will exceed normal range (P90: ${round(bl.p90)}${unit}) in ~${daysUntil} days`,
+        `${label} at ${round(pred.current)}${unit}, growing ${round(pred.dailyGrowth)}${unit}/day — will exceed P90 (${round(bl.p90)}${unit}) in ~${daysUntil} ${dayWord}`,
         metric, pred.current, bl.p90);
       count++;
     }
@@ -301,6 +302,8 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
     WHERE collected_at >= datetime('now', '-7 days') AND status = 'running'
   `).all() as ContainerIdRow[];
   for (const { host_id, container_name } of containers) {
+    // Skip insightd internal containers — their minor memory growth is expected and not actionable
+    if (container_name.startsWith('insightd-')) continue;
     const entityId = `${host_id}/${container_name}`;
     for (const [metric, label, unit] of [['cpu_percent', 'CPU', '%'], ['memory_mb', 'Memory', ' MB']] as const) {
       const pred = computeMetricTrend(db, 'container_snapshots', 'host_id', host_id, metric, container_name);
@@ -314,10 +317,11 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
       const remaining = bl.p90 - pred.current;
       const daysUntil = Math.round(remaining / pred.dailyGrowth);
       if (daysUntil > 14 || daysUntil <= 0) continue;
-      const severity = daysUntil <= 7 ? 'critical' : 'warning';
+      const severity = daysUntil <= 3 ? 'critical' : 'warning';
+      const dayWord = daysUntil === 1 ? 'day' : 'days';
       insert.run('container', entityId, 'prediction', severity,
         `${container_name} ${label.toLowerCase()} trending up`,
-        `${container_name} ${label.toLowerCase()} growing ${round(pred.dailyGrowth)}${unit}/day — will exceed normal range in ~${daysUntil} days`,
+        `${container_name} ${label.toLowerCase()} at ${round(pred.current)}${unit}, growing ${round(pred.dailyGrowth)}${unit}/day — will exceed P90 (${round(bl.p90)}${unit}) in ~${daysUntil} ${dayWord}`,
         metric, pred.current, bl.p90);
       count++;
     }
@@ -358,6 +362,9 @@ function computeMetricTrend(db: Database.Database, table: string, hostCol: strin
   const dailyGrowth = (last - first) / days;
   // Skip if growth is less than 1% of current value per day
   if (last > 0 && Math.abs(dailyGrowth / last) < 0.01) return null;
+  // Skip if absolute growth is too small to be meaningful
+  const minGrowth: Record<string, number> = { cpu_percent: 1, memory_mb: 5, memory_used_mb: 5, load_5: 0.5 };
+  if (minGrowth[metric] != null && Math.abs(dailyGrowth) < minGrowth[metric]) return null;
 
   return { current: last, dailyGrowth };
 }
