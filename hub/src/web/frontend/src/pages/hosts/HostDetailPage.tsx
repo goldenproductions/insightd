@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, TimelineEntry, Trends, EventItem } from '@/types/api';
+import type { HostDetail, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { Tabs } from '@/components/Tabs';
@@ -27,12 +27,13 @@ export function HostDetailPage() {
   const si = showInternal ? '?showInternal=true' : '';
   const { activeTab, setActiveTab } = useTab('overview');
   const { confirm, dialogProps } = useConfirm();
-  const { actionLoading, actionResult, runAction } = useContainerAction(hostId!, [['host', hostId, showInternal]], confirm);
+  const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['host', hostId, showInternal]], confirm);
 
   const { data } = useQuery({ queryKey: ['host', hostId, showInternal], queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`), refetchInterval: 30_000 });
   const { data: timeline } = useQuery({ queryKey: ['timeline', hostId], queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
   const { data: trends } = useQuery({ queryKey: ['trends', hostId], queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
   const { data: events } = useQuery({ queryKey: ['events', hostId], queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
+  const { data: baselines } = useQuery({ queryKey: ['baselines', 'host', hostId], queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
 
   if (!data) return <LoadingState />;
 
@@ -71,6 +72,8 @@ export function HostDetailPage() {
           isAuthenticated={isAuthenticated}
           actionLoading={actionLoading}
           runAction={runAction}
+          removeContainer={removeContainer}
+          baselines={baselines}
         />
       )}
 
