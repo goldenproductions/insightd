@@ -119,7 +119,7 @@ function WebhookForm({ existing, isEdit, webhookId, token }: { existing?: Webhoo
             </FormField>
           )}
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <FormField label="Send Alerts">
               <Select value={onAlert} onChange={e => setOnAlert(e.target.value)}>
                 <option value="1">Yes</option>

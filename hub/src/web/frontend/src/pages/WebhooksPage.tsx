@@ -51,8 +51,8 @@ export function WebhooksPage() {
   const columns: Column<Webhook>[] = [
     { header: 'Name', accessor: r => r.name },
     { header: 'Type', accessor: r => <Badge text={typeLabels[r.type] || r.type} color="blue" /> },
-    { header: 'Alerts', accessor: r => r.on_alert ? <Badge text="on" color="green" /> : <Badge text="off" color="gray" /> },
-    { header: 'Digest', accessor: r => r.on_digest ? <Badge text="on" color="green" /> : <Badge text="off" color="gray" /> },
+    { header: 'Alerts', accessor: r => r.on_alert ? <Badge text="on" color="green" /> : <Badge text="off" color="gray" />, hideOnMobile: true },
+    { header: 'Digest', accessor: r => r.on_digest ? <Badge text="on" color="green" /> : <Badge text="off" color="gray" />, hideOnMobile: true },
     {
       header: 'Enabled',
       accessor: r => (

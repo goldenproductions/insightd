@@ -1,9 +1,11 @@
-import type { ReactNode } from 'react';
+import type { ReactNode, KeyboardEvent } from 'react';
 
 export interface Column<T> {
   header: string;
   accessor: (row: T) => ReactNode;
   className?: string;
+  /** Hide this column below sm breakpoint on mobile */
+  hideOnMobile?: boolean;
 }
 
 interface Props<T> {
@@ -18,13 +20,20 @@ export function DataTable<T>({ columns, data, onRowClick, emptyText = 'No data' 
     return <p className="py-8 text-center text-sm text-muted">{emptyText}</p>;
   }
 
+  const handleKeyDown = (e: KeyboardEvent, row: T) => {
+    if (onRowClick && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      onRowClick(row);
+    }
+  };
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border">
             {columns.map((col, i) => (
-              <th key={i} scope="col" className={`px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted ${col.className || ''}`}>
+              <th key={i} scope="col" className={`px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted ${col.hideOnMobile ? 'hidden sm:table-cell' : ''} ${col.className || ''}`}>
                 {col.header}
               </th>
             ))}
@@ -35,10 +44,13 @@ export function DataTable<T>({ columns, data, onRowClick, emptyText = 'No data' 
             <tr
               key={i}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
-              className={`border-b border-border-light ${onRowClick ? 'cursor-pointer hover-surface' : ''}`}
+              onKeyDown={onRowClick ? (e) => handleKeyDown(e, row) : undefined}
+              tabIndex={onRowClick ? 0 : undefined}
+              role={onRowClick ? 'button' : undefined}
+              className={`border-b border-border-light ${onRowClick ? 'cursor-pointer hover-surface focus-visible:bg-surface-hover' : ''}`}
             >
               {columns.map((col, j) => (
-                <td key={j} className={`px-3 py-2.5 text-fg ${col.className || ''}`}>
+                <td key={j} className={`px-3 py-2.5 text-fg ${col.hideOnMobile ? 'hidden sm:table-cell' : ''} ${col.className || ''}`}>
                   {col.accessor(row)}
                 </td>
               ))}
