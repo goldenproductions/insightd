@@ -56,15 +56,17 @@ Then deploy [`andreas404/insightd-agent`](https://hub.docker.com/r/andreas404/in
 ## Features
 
 - **Dashboard** — health scores, availability, unified "Needs Attention" feed
+- **Multi-runtime** — Docker and Kubernetes/k3s (via the agent's DaemonSet mode)
+- **Host grouping** — collapsible Hosts page sections by cluster, environment, or location
 - **Container monitoring** — status, CPU, RAM, restarts, network/block I/O, health checks
-- **Host metrics** — CPU, memory, load, disk, GPU, temperature
+- **Host metrics** — CPU, memory, load, disk, GPU, temperature (Docker mode); CPU, memory, uptime from kubelet (k8s mode)
 - **HTTP endpoint monitoring** — uptime tracking, response times
 - **Insights engine** — time-of-day baselines, anomaly detection, predictive alerts, correlations
 - **Real-time alerts** — 10 alert types with cooldowns and auto-resolution
 - **Webhooks** — Slack, Discord, Telegram, ntfy, or generic
 - **Weekly digest emails** — HTML + plaintext summaries
-- **Container actions** — start/stop/restart from the UI (opt-in)
-- **Service groups** — organize containers across hosts
+- **Container actions** — start/stop/restart from the UI (opt-in, Docker mode)
+- **Stacks** — container groups across hosts (auto-detected from Docker Compose, or create your own)
 - **Public status page** — shareable uptime page at `/status` (opt-in)
 - **API keys** — programmatic access with hashed storage
 

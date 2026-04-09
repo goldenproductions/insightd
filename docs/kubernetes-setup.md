@@ -46,10 +46,43 @@ the hub, and the pods running on that node appear as "containers".
 
 - **One host per node** in the insightd UI, named after the node
 - **Each pod's containers** appear as containers under that host
-- **Container names** use the format `{namespace}/{pod-name}/{container-name}`
-- **CPU/memory metrics** from the kubelet's cAdvisor endpoint
+- **Container names** use the format `{namespace}/{pod-name}/{container-name}` (stable across pod rollouts — derived from owner references, so consecutive Deployment/ReplicaSet pods share one entry)
+- **Per-container metrics** (CPU, memory, network, fs I/O) from the kubelet's cAdvisor endpoint (`/metrics/cadvisor`)
+- **Per-node host metrics** (CPU%, memory used/available/total, uptime) from the kubelet's `/stats/summary` endpoint plus the Node API for total capacity
 - **Restart count** directly from the pod status
 - **Logs** via the Kubernetes API
+
+## What gets reported as NULL in k8s mode (and why)
+
+`/proc/*` and `/sys/*` inside the agent pod reflect the underlying machine's kernel — not the node the agent reports on. Reading them would give the wrong values, so insightd explicitly suppresses them in k8s mode:
+
+- **Load average** — kernel concept that doesn't map cleanly to a single k8s node
+- **CPU temperature** — physical sensors aren't exposed per-node
+- **GPU metrics** — not collected (would need device-plugin integration)
+- **Disk I/O** and **network I/O** rates — would report the underlying VM's view
+
+These appear as `null` in the API and as missing values in the UI, rather than misleading numbers.
+
+## Host group / cluster organization
+
+Set `INSIGHTD_HOST_GROUP` on the DaemonSet to label all nodes in this cluster as belonging to a single group on the Hosts page:
+
+```yaml
+- name: INSIGHTD_HOST_GROUP
+  value: production-cluster
+```
+
+The Hosts page renders one collapsible section per group, with an "Ungrouped" section for hosts that haven't set one. Individual hosts can also be retagged from the host detail page in the UI — the manual override beats the env var.
+
+## Memory total caveat for k3d / unconstrained nodes
+
+The kubelet reports the node's *allocatable* memory, which is whatever the OS thinks is available. **k3d nodes don't set Docker memory limits by default**, so each k3d node reports the entire host machine's RAM as its total — even though k3s only uses a small fraction.
+
+Real production k8s clusters with proper node sizing get correct totals. To fix it for k3d, pass `--servers-memory` / `--agents-memory` at cluster creation:
+
+```bash
+k3d cluster create my-cluster --servers-memory 4G --agents-memory 4G
+```
 
 ## What's not supported in k8s mode
 
@@ -67,8 +100,9 @@ runtime mode instead.
 The DaemonSet uses a ServiceAccount with these cluster permissions:
 
 - `pods` and `pods/log` — get, list, watch (to discover pods on the node and read logs)
-- `nodes` — get, list (to verify the node exists at startup)
-- `nodes/metrics`, `nodes/stats`, `nodes/proxy` — get (to query the kubelet's cAdvisor endpoint)
+- `nodes` — get, list (to verify the node exists, read capacity for total memory, read `creationTimestamp` for uptime)
+- `nodes/metrics`, `nodes/stats`, `nodes/proxy` — get (to query the kubelet's `/metrics/cadvisor` and `/stats/summary` endpoints)
+- `replicasets` (apps API group) — get, list (to walk pod owner references up to the parent Deployment for stable container names across rollouts)
 
 These are read-only permissions. The agent never modifies anything in the cluster.
 
