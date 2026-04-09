@@ -17,9 +17,10 @@ No critical issues. Good week.
 ## Features
 
 - **Multi-host monitoring** — deploy agents on each server, all reporting to a central hub via MQTT
-- **Multi-runtime support** — Docker (default) and Kubernetes/k3s (DaemonSet mode), one agent per node
+- **Multi-runtime support** — Docker (default) and Kubernetes/k3s (DaemonSet mode), one agent per node. K8s mode uses kubelet stats for accurate per-node CPU/memory.
+- **Host grouping** — organize hosts by cluster, environment, or location with `INSIGHTD_HOST_GROUP`. The Hosts page renders collapsible sections per group, with a UI override per host for users without env-var access.
 - **Container monitoring** — status, CPU, RAM, restarts, network/block I/O, health checks
-- **Host system metrics** — CPU, memory, load, uptime, GPU, temperature, disk I/O, network I/O
+- **Host system metrics** — CPU, memory, load, uptime, GPU, temperature, disk I/O, network I/O (Docker mode); CPU, memory, uptime (k8s mode)
 - **Disk monitoring** — usage warnings with "X days until full" forecasts
 - **HTTP endpoint monitoring** — uptime, response time, configurable intervals
 - **Smart insights engine** — capacity-based health scoring (only flags actual saturation, not baseline deviation), time-of-day baselines, predictive alerts, correlation detection
@@ -34,7 +35,7 @@ No critical issues. Good week.
 - **Explainable alerts** — every alert stores why it fired (value, threshold, message) so you can understand what happened
 - **Metric personalities** — baseline-aware human-friendly moods on every metric (e.g. "😌 Normal", "🔥 Way above normal")
 - **Health score breakdown** — click the system health score to see per-host factor analysis
-- **Service groups** — organize containers by purpose, auto-detect from Docker Compose/labels
+- **Stacks** — organize containers by purpose across hosts, auto-detected from Docker Compose project labels (UI label, formerly "Services")
 - **Public status page** — shareable uptime page, no auth required (opt-in)
 - **API keys** — programmatic access with hashed key storage
 - **Full UI onboarding** — setup wizard configures everything including SMTP, no .env file required
@@ -100,18 +101,18 @@ kubectl apply -f agent/k8s/rbac.yaml
 kubectl apply -f agent/k8s/daemonset.yaml
 ```
 
-Edit `agent/k8s/daemonset.yaml` first to set your `INSIGHTD_MQTT_URL`. Each pod's containers appear in insightd as `{namespace}/{pod-name}/{container-name}`. K8s mode is read-only — actions and image update checks aren't supported (those are managed by the cluster).
+Edit `agent/k8s/daemonset.yaml` first to set your `INSIGHTD_MQTT_URL`. Each pod's containers appear in insightd as `{namespace}/{pod-name}/{container-name}`. K8s mode is read-only — actions and image update checks aren't supported (those are managed by the cluster). Host CPU, memory, and uptime come from the kubelet (`/stats/summary` + Node API), not `/proc` — see [`docs/kubernetes-setup.md`](docs/kubernetes-setup.md) for details.
 
 ## Web UI
 
 The hub serves a dashboard at `http://localhost:3000`:
 
 - **Dashboard** — health score with clickable breakdown, availability, compact status bar, unified "Needs Attention" feed, metric personalities
-- **Hosts** — grid of all connected agents with status and metrics
-- **Host detail** — tabbed view: overview, resources, alerts
+- **Hosts** — collapsible sections per host group, with status, metrics, and inline group editing
+- **Host detail** — tabbed view: overview, resources, alerts; click the group badge to retag the host
 - **Container detail** — CPU/memory gauges, logs, status history
 - **Endpoints** — HTTP endpoint monitoring with uptime timelines
-- **Services** — container groups with aggregate status
+- **Stacks** — container groups with aggregate status (auto-detected from Docker Compose, or create your own)
 - **Alerts** — full alert history with reason, trigger value, and threshold
 - **Insights** — analytical signals (predictions, trends, performance) with thumbs up/down feedback
 - **Updates** — available image updates, remote agent updates
@@ -142,6 +143,7 @@ All configuration can be done via the **Setup Wizard** and **Settings page** in 
 |----------|---------|-------------|
 | `INSIGHTD_MQTT_URL` | — | MQTT broker URL (enables hub mode) |
 | `INSIGHTD_HOST_ID` | `local` | Identifies this host in multi-host setups |
+| `INSIGHTD_HOST_GROUP` | — | Optional logical group label for the Hosts page (e.g. `production`, `k3d-test`) |
 | `INSIGHTD_RUNTIME` | `auto` | Container runtime: `auto`, `docker`, or `kubernetes` |
 | `INSIGHTD_ADMIN_PASSWORD` | — | Admin password for the web UI |
 | `INSIGHTD_ALLOW_ACTIONS` | `false` | Enable container start/stop/restart from UI |
