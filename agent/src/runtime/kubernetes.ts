@@ -342,6 +342,35 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   /**
+   * Use the Node object's creationTimestamp as the uptime source.
+   *
+   * /proc/uptime is a kernel-namespace value, so inside a containerized
+   * agent (e.g. k3d, where each "node" is a Docker container running k3s)
+   * it reports the underlying machine's uptime, not the node's. K8s nodes
+   * register with the API on startup, so creationTimestamp is the closest
+   * authoritative signal for "when did this node come online".
+   *
+   * Limitation: if a node container is restarted while the Node object
+   * persists in etcd (e.g. kubelet rejoins under the same name), this
+   * still reports from the original cluster registration. Acceptable
+   * trade-off — for the common k3d/fresh-cluster case it's correct.
+   */
+  async getHostUptimeSeconds(): Promise<number | null> {
+    if (!this.coreApi) return null;
+    try {
+      const node = await this.coreApi.readNode({ name: this.nodeName });
+      const ct = node.metadata?.creationTimestamp;
+      if (!ct) return null;
+      const ms = new Date(ct).getTime();
+      if (!Number.isFinite(ms)) return null;
+      const sec = Math.floor((Date.now() - ms) / 1000);
+      return sec >= 0 ? sec : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Fetch raw Prometheus metrics from the local kubelet's cAdvisor endpoint.
    * Uses the service account token for authentication.
    */
