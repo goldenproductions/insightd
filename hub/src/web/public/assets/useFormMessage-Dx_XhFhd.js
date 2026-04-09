@@ -1,0 +1,1 @@
+import{r as e}from"./index-DirzWjJK.js";function u(){const[r,s]=e.useState(null);return{msg:r,showSuccess:o=>s({text:o,color:"green"}),showError:o=>s({text:o instanceof Error?o.message:"Failed",color:"red"}),showWarning:o=>s({text:o,color:"yellow"}),clear:()=>s(null)}}export{u};

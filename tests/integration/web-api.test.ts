@@ -22,16 +22,20 @@ function fetch(port: number, path: string) {
   });
 }
 
-function fetchMethod(port: number, method: string, path: string) {
+function fetchMethod(port: number, method: string, path: string, body?: any) {
   return new Promise<{ status: number; headers: any; body: string; json: () => any }>((resolve, reject) => {
-    const req = http.request(`http://127.0.0.1:${port}${path}`, { method }, (res: any) => {
-      let body = '';
-      res.on('data', (chunk: string) => { body += chunk; });
+    const payload = body !== undefined ? JSON.stringify(body) : undefined;
+    const headers: Record<string, string> = {};
+    if (payload) { headers['Content-Type'] = 'application/json'; headers['Content-Length'] = String(Buffer.byteLength(payload)); }
+    const req = http.request(`http://127.0.0.1:${port}${path}`, { method, headers }, (res: any) => {
+      let resBody = '';
+      res.on('data', (chunk: string) => { resBody += chunk; });
       res.on('end', () => {
-        resolve({ status: res.statusCode, headers: res.headers, body, json: () => JSON.parse(body) });
+        resolve({ status: res.statusCode, headers: res.headers, body: resBody, json: () => JSON.parse(resBody) });
       });
     });
     req.on('error', reject);
+    if (payload) req.write(payload);
     req.end();
   });
 }
@@ -74,7 +78,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.status, 'ok');
-    assert.equal(data.schemaVersion, 16);
+    assert.equal(data.schemaVersion, 17);
   });
 
   it('GET /api/hosts returns host list', async () => {
@@ -250,5 +254,67 @@ describe('Web API integration', () => {
     const res = await fetchMethod(port, 'DELETE', '/api/hosts/h1/containers/gone');
     assert.equal(res.status, 200);
     assert.equal(db.prepare('SELECT COUNT(*) as c FROM container_snapshots WHERE container_name = ?').get('gone').c, 0);
+  });
+
+  // PUT /api/hosts/:hostId/group — manual override for host grouping
+  it('PUT host group sets manual override that wins over agent value', async () => {
+    seedHost(db, 'h1', recent);
+    db.prepare("UPDATE hosts SET host_group = ? WHERE host_id = ?").run('from-agent', 'h1');
+
+    // Resolved value starts as the agent value
+    let res = await fetch(port, '/api/hosts');
+    assert.equal(res.json()[0].host_group, 'from-agent');
+    assert.equal(res.json()[0].host_group_override, null);
+
+    // Set manual override
+    res = await fetchMethod(port, 'PUT', '/api/hosts/h1/group', { host_group: 'manual-set' });
+    assert.equal(res.status, 200);
+    assert.equal(res.json().host_group_override, 'manual-set');
+
+    // Resolved value reflects the override
+    res = await fetch(port, '/api/hosts');
+    assert.equal(res.json()[0].host_group, 'manual-set');
+    assert.equal(res.json()[0].host_group_override, 'manual-set');
+
+    // Even when the agent ingests a new value, the override still wins (resolved is COALESCE-driven)
+    db.prepare("UPDATE hosts SET host_group = ? WHERE host_id = ?").run('agent-changed', 'h1');
+    res = await fetch(port, '/api/hosts');
+    assert.equal(res.json()[0].host_group, 'manual-set');
+  });
+
+  it('PUT host group with null body sets manually-ungrouped (empty override)', async () => {
+    seedHost(db, 'h1', recent);
+    db.prepare("UPDATE hosts SET host_group = ? WHERE host_id = ?").run('from-agent', 'h1');
+
+    const res = await fetchMethod(port, 'PUT', '/api/hosts/h1/group', { host_group: null });
+    assert.equal(res.status, 200);
+    assert.equal(res.json().host_group_override, '');
+
+    // Resolved value is empty string (UI treats this as ungrouped)
+    const list = await fetch(port, '/api/hosts');
+    assert.equal(list.json()[0].host_group, '');
+  });
+
+  it('PUT host group returns 404 for unknown host', async () => {
+    const res = await fetchMethod(port, 'PUT', '/api/hosts/nope/group', { host_group: 'foo' });
+    assert.equal(res.status, 404);
+  });
+
+  // DELETE /api/hosts/:hostId/group — clear override, fall back to agent value
+  it('DELETE host group clears override and resolved value falls back to agent', async () => {
+    seedHost(db, 'h1', recent);
+    db.prepare("UPDATE hosts SET host_group = ?, host_group_override = ? WHERE host_id = ?")
+      .run('from-agent', 'manual-set', 'h1');
+
+    let res = await fetch(port, '/api/hosts');
+    assert.equal(res.json()[0].host_group, 'manual-set');
+
+    res = await fetchMethod(port, 'DELETE', '/api/hosts/h1/group');
+    assert.equal(res.status, 200);
+    assert.equal(res.json().reset, true);
+
+    res = await fetch(port, '/api/hosts');
+    assert.equal(res.json()[0].host_group, 'from-agent');
+    assert.equal(res.json()[0].host_group_override, null);
   });
 });

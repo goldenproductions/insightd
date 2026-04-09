@@ -96,6 +96,28 @@ async function handleDeleteHost(req: HandlerReq, res: ServerResponse, db: Databa
   return { deleted: true, hostId };
 }
 
+async function handleSetHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const hostId = decodeURIComponent(params.hostId);
+  const exists = db.prepare('SELECT 1 FROM hosts WHERE host_id = ?').get(hostId);
+  if (!exists) { res.statusCode = 404; return { error: 'Host not found' }; }
+  const body = await readBody(req);
+  const raw = body?.host_group;
+  // null → manually ungrouped (empty string in DB). string → trimmed manual value.
+  const value = raw == null ? '' : String(raw).trim();
+  db.prepare('UPDATE hosts SET host_group_override = ? WHERE host_id = ?').run(value, hostId);
+  return { hostId, host_group_override: value };
+}
+
+function handleResetHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const hostId = decodeURIComponent(params.hostId);
+  const exists = db.prepare('SELECT 1 FROM hosts WHERE host_id = ?').get(hostId);
+  if (!exists) { res.statusCode = 404; return { error: 'Host not found' }; }
+  db.prepare('UPDATE hosts SET host_group_override = NULL WHERE host_id = ?').run(hostId);
+  return { hostId, reset: true };
+}
+
 async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const hostId = decodeURIComponent(params.hostId);
@@ -787,7 +809,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleDeleteHost, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }

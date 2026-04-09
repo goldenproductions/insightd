@@ -45,6 +45,8 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/health', handlers.handleHealth);
   router.add('GET', '/api/hosts', handlers.handleHosts);
   router.add('DELETE', '/api/hosts/:hostId', handlers.handleDeleteHost);
+  router.add('PUT', '/api/hosts/:hostId/group', handlers.handleSetHostGroup);
+  router.add('DELETE', '/api/hosts/:hostId/group', handlers.handleResetHostGroup);
   router.add('GET', '/api/hosts/:hostId', handlers.handleHostDetail);
   router.add('GET', '/api/hosts/:hostId/timeline', handlers.handleTimeline);
   router.add('GET', '/api/hosts/:hostId/trends', handlers.handleTrends);

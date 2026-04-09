@@ -14,6 +14,7 @@ interface HostRow {
   agent_version: string | null;
   runtime_type: string;
   host_group: string | null;
+  host_group_override: string | null;
   is_online: number;
 }
 
@@ -23,6 +24,7 @@ interface HostDetailRow {
   last_seen: string;
   runtime_type: string;
   host_group: string | null;
+  host_group_override: string | null;
   is_online: number;
 }
 
@@ -259,7 +261,9 @@ function getHealth(db: Database.Database): { status: string; uptime: number; ver
 
 function getHosts(db: Database.Database, onlineThresholdMinutes: number): HostRow[] {
   return db.prepare(`
-    SELECT host_id, first_seen, last_seen, agent_version, runtime_type, host_group,
+    SELECT host_id, first_seen, last_seen, agent_version, runtime_type,
+      COALESCE(host_group_override, host_group) AS host_group,
+      host_group_override,
       CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
         THEN 1 ELSE 0 END as is_online
     FROM hosts ORDER BY host_id
@@ -268,7 +272,9 @@ function getHosts(db: Database.Database, onlineThresholdMinutes: number): HostRo
 
 function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMinutes: number, showInternal: boolean = false): any {
   const host = db.prepare(`
-    SELECT host_id, first_seen, last_seen, runtime_type, host_group,
+    SELECT host_id, first_seen, last_seen, runtime_type,
+      COALESCE(host_group_override, host_group) AS host_group,
+      host_group_override,
       CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
         THEN 1 ELSE 0 END as is_online
     FROM hosts WHERE host_id = ?
@@ -702,20 +708,22 @@ function getTrends(db: Database.Database, hostId: string): { containers: any[]; 
 function getEvents(db: Database.Database, hostId: string, days: number): Array<{ time: string; type: string; target: string; message: string; good: boolean }> {
   const events: Array<{ time: string; type: string; target: string; message: string; good: boolean }> = [];
 
-  // Status changes
+  // Status changes — single pass with LAG window function. The previous
+  // O(N²) correlated subquery took ~90s on hosts with thousands of snapshots.
   const changes = db.prepare(`
-    SELECT cs1.container_name, cs1.status as new_status, cs2.status as old_status, cs1.collected_at as time
-    FROM container_snapshots cs1
-    JOIN container_snapshots cs2 ON cs1.host_id = cs2.host_id
-      AND cs1.container_name = cs2.container_name
-      AND cs2.collected_at = (
-        SELECT MAX(collected_at) FROM container_snapshots
-        WHERE host_id = cs1.host_id AND container_name = cs1.container_name
-          AND collected_at < cs1.collected_at
-      )
-    WHERE cs1.host_id = ? AND cs1.status != cs2.status
-      AND cs1.collected_at >= datetime('now', '-' || ? || ' days')
-    ORDER BY cs1.collected_at DESC
+    SELECT container_name, new_status, old_status, time
+    FROM (
+      SELECT
+        container_name,
+        status AS new_status,
+        LAG(status) OVER (PARTITION BY container_name ORDER BY collected_at) AS old_status,
+        collected_at AS time
+      FROM container_snapshots
+      WHERE host_id = ?
+        AND collected_at >= datetime('now', '-' || ? || ' days')
+    )
+    WHERE old_status IS NOT NULL AND new_status != old_status
+    ORDER BY time DESC
   `).all(hostId, days) as StatusChangeRow[];
 
   for (const c of changes) {
