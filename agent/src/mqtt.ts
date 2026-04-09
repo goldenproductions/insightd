@@ -49,6 +49,7 @@ interface CollectionData {
   diskIO?: { readBytesPerSec?: number; writeBytesPerSec?: number } | null;
   networkIO?: { rxBytesPerSec?: number; txBytesPerSec?: number } | null;
   runtimeName?: string;
+  hostGroup?: string;
 }
 
 interface UpdateData {
@@ -231,6 +232,7 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
     host_id: hostId,
     agent_version: VERSION,
     runtime_type: data.runtimeName ?? 'docker',
+    host_group: data.hostGroup || null,
     collected_at: new Date().toISOString(),
     containers: data.containers.map(c => ({
       name: c.name,

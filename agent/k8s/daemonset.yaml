@@ -48,6 +48,11 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
+            # Optional: organize hosts on the Hosts page into collapsible sections.
+            # Set this to your cluster name (or environment, location, etc.)
+            # so all nodes in this DaemonSet appear under the same group.
+            # - name: INSIGHTD_HOST_GROUP
+            #   value: production-cluster
             - name: INSIGHTD_MQTT_URL
               # Replace with your mosquitto broker URL
               value: mqtt://your-mqtt-broker:1883

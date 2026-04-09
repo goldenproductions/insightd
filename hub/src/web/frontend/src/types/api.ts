@@ -53,6 +53,7 @@ export interface Host {
   last_seen: string;
   is_online: number;
   runtime_type?: string;
+  host_group?: string | null;
 }
 
 export interface HostMetrics {

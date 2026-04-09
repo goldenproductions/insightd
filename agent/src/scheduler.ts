@@ -8,6 +8,7 @@ const { publishCollection, publishUpdates } = require('./mqtt') as { publishColl
 
 interface SchedulerConfig {
   hostId: string;
+  hostGroup?: string;
   collectIntervalMinutes: number;
   updateCheckCron: string;
   timezone: string;
@@ -43,7 +44,7 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     // Publish to MQTT
     if (containers) {
       await safeCollect('mqtt-publish', () =>
-        publishCollection(config.hostId, { containers, disk, host, gpu, temperature, diskIO, networkIO, runtimeName: runtime.name })
+        publishCollection(config.hostId, { containers, disk, host, gpu, temperature, diskIO, networkIO, runtimeName: runtime.name, hostGroup: config.hostGroup })
       );
     }
 
