@@ -116,11 +116,15 @@ function computeHealthScores(db: Database.Database, baselineCache?: BaselineCach
     let totalScore = 0;
     let totalWeight = 0;
 
-    // CPU vs baseline (weight 20)
+    // CPU — only degrade when actually saturated. A server at 20% CPU is healthy.
     if (latest?.cpu_percent != null) {
-      const bl = baselines.cpu_percent;
-      const score = scoreMetricVsBaseline(latest.cpu_percent, bl);
-      factors.cpu = { score, weight: 20, value: latest.cpu_percent, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.cpu_percent, bl) };
+      let score: number;
+      let rating: string;
+      if (latest.cpu_percent < 70)      { score = 100; rating = 'normal'; }
+      else if (latest.cpu_percent < 85) { score = 70;  rating = 'elevated'; }
+      else if (latest.cpu_percent < 95) { score = 40;  rating = 'high'; }
+      else                              { score = 10;  rating = 'critical'; }
+      factors.cpu = { score, weight: 20, value: round(latest.cpu_percent), rating };
       totalScore += score * 20;
       totalWeight += 20;
     }
@@ -140,11 +144,15 @@ function computeHealthScores(db: Database.Database, baselineCache?: BaselineCach
       totalWeight += 20;
     }
 
-    // Load vs baseline (weight 15)
+    // Load — capacity-based. Load under 4 is fine for typical homelab servers.
     if (latest?.load_5 != null) {
-      const bl = baselines.load_5;
-      const score = scoreMetricVsBaseline(latest.load_5, bl);
-      factors.load = { score, weight: 15, value: latest.load_5, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.load_5, bl) };
+      let score: number;
+      let rating: string;
+      if (latest.load_5 < 4)       { score = 100; rating = 'normal'; }
+      else if (latest.load_5 < 8)  { score = 70;  rating = 'elevated'; }
+      else if (latest.load_5 < 16) { score = 40;  rating = 'high'; }
+      else                         { score = 10;  rating = 'critical'; }
+      factors.load = { score, weight: 15, value: round(latest.load_5), rating };
       totalScore += score * 15;
       totalWeight += 15;
     }
@@ -201,13 +209,17 @@ function computeHealthScores(db: Database.Database, baselineCache?: BaselineCach
     let totalScore = 0;
     let totalWeight = 0;
 
-    // CPU (weight 20)
+    // CPU (weight 15) — baseline comparison but require meaningful absolute value.
+    // Container CPU <50% should never degrade the score regardless of baseline.
     if (latest?.cpu_percent != null) {
       const bl = baselines.cpu_percent;
-      const score = scoreMetricVsBaseline(latest.cpu_percent, bl);
-      factors.cpu = { score, weight: 20, value: latest.cpu_percent, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.cpu_percent, bl) };
-      totalScore += score * 20;
-      totalWeight += 20;
+      let score = scoreMetricVsBaseline(latest.cpu_percent, bl);
+      let rating = rateValue(latest.cpu_percent, bl);
+      if (latest.cpu_percent < 50) { score = 100; rating = 'normal'; }
+      else if (latest.cpu_percent < 80) { score = Math.max(score, 70); if (rating === 'critical' || rating === 'high') rating = 'elevated'; }
+      factors.cpu = { score, weight: 15, value: round(latest.cpu_percent), baseline_p75: bl?.p75 ?? null, rating };
+      totalScore += score * 15;
+      totalWeight += 15;
     }
 
     // Memory (weight 10) — lower weight since we can't know the container's memory limit.
