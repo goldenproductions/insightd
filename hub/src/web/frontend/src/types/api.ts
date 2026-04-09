@@ -54,6 +54,7 @@ export interface Host {
   is_online: number;
   runtime_type?: string;
   host_group?: string | null;
+  host_group_override?: string | null;
 }
 
 export interface HostMetrics {

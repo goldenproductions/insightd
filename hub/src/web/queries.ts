@@ -14,6 +14,7 @@ interface HostRow {
   agent_version: string | null;
   runtime_type: string;
   host_group: string | null;
+  host_group_override: string | null;
   is_online: number;
 }
 
@@ -23,6 +24,7 @@ interface HostDetailRow {
   last_seen: string;
   runtime_type: string;
   host_group: string | null;
+  host_group_override: string | null;
   is_online: number;
 }
 
@@ -259,7 +261,9 @@ function getHealth(db: Database.Database): { status: string; uptime: number; ver
 
 function getHosts(db: Database.Database, onlineThresholdMinutes: number): HostRow[] {
   return db.prepare(`
-    SELECT host_id, first_seen, last_seen, agent_version, runtime_type, host_group,
+    SELECT host_id, first_seen, last_seen, agent_version, runtime_type,
+      COALESCE(host_group_override, host_group) AS host_group,
+      host_group_override,
       CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
         THEN 1 ELSE 0 END as is_online
     FROM hosts ORDER BY host_id
@@ -268,7 +272,9 @@ function getHosts(db: Database.Database, onlineThresholdMinutes: number): HostRo
 
 function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMinutes: number, showInternal: boolean = false): any {
   const host = db.prepare(`
-    SELECT host_id, first_seen, last_seen, runtime_type, host_group,
+    SELECT host_id, first_seen, last_seen, runtime_type,
+      COALESCE(host_group_override, host_group) AS host_group,
+      host_group_override,
       CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
         THEN 1 ELSE 0 END as is_online
     FROM hosts WHERE host_id = ?

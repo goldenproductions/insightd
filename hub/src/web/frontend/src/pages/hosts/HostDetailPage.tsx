@@ -1,10 +1,10 @@
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import type { HostDetail, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
-import { Button } from '@/components/FormField';
+import { Button, Input } from '@/components/FormField';
 import { Tabs } from '@/components/Tabs';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
@@ -66,9 +66,7 @@ export function HostDetailPage() {
           {data.runtime_type && data.runtime_type !== 'docker' && (
             <Badge text={data.runtime_type === 'kubernetes' ? 'k8s' : data.runtime_type} color="blue" />
           )}
-          {data.host_group && (
-            <Badge text={data.host_group} color="gray" />
-          )}
+          <HostGroupEditor hostId={hostId!} group={data.host_group ?? null} override={data.host_group_override ?? null} />
         </div>
         <RemoveHostButton hostId={hostId!} confirm={confirm} />
       </div>
@@ -101,6 +99,75 @@ export function HostDetailPage() {
       )}
 
       <ConfirmDialog {...dialogProps} />
+    </div>
+  );
+}
+
+function HostGroupEditor({ hostId, group, override }: { hostId: string; group: string | null; override: string | null }) {
+  const { isAuthenticated, token } = useAuth();
+  const queryClient = useQueryClient();
+  // editing === null → not editing; otherwise the current input value
+  const [editing, setEditing] = useState<string | null>(null);
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['host', hostId] });
+    queryClient.invalidateQueries({ queryKey: ['hosts'] });
+  };
+
+  const saveMutation = useMutation({
+    mutationFn: (value: string) =>
+      apiAuth('PUT', `/hosts/${encodeURIComponent(hostId)}/group`, { host_group: value || null }, token),
+    onSuccess: () => { invalidate(); setEditing(null); },
+  });
+
+  const resetMutation = useMutation({
+    mutationFn: () => apiAuth('DELETE', `/hosts/${encodeURIComponent(hostId)}/group`, undefined, token),
+    onSuccess: () => { invalidate(); setEditing(null); },
+  });
+
+  // Read-only render for unauthenticated users (or when no group at all)
+  if (!isAuthenticated) {
+    return group ? <Badge text={group} color="gray" /> : null;
+  }
+
+  if (editing === null) {
+    return (
+      <button
+        type="button"
+        onClick={() => setEditing(override ?? group ?? '')}
+        className="inline-flex items-center gap-1 cursor-pointer"
+        title="Edit host group"
+      >
+        {group
+          ? <Badge text={group} color="gray" />
+          : <span className="text-xs text-muted underline decoration-dotted">set group</span>}
+        {override != null && <span className="text-xs text-muted">(manual)</span>}
+        <span className="text-xs text-muted">✎</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="inline-flex items-center gap-1">
+      <Input
+        type="text"
+        value={editing}
+        autoFocus
+        placeholder="group name"
+        onChange={(e) => setEditing(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') saveMutation.mutate(editing.trim());
+          if (e.key === 'Escape') setEditing(null);
+        }}
+        className="!w-32 !py-1 !text-xs"
+      />
+      <Button size="sm" variant="primary" onClick={() => saveMutation.mutate(editing.trim())} disabled={saveMutation.isPending}>Save</Button>
+      <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+      {override != null && (
+        <Button size="sm" variant="ghost" onClick={() => resetMutation.mutate()} disabled={resetMutation.isPending} title="Revert to agent value">
+          Reset
+        </Button>
+      )}
     </div>
   );
 }
