@@ -294,15 +294,19 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
       const pred = computeMetricTrend(db, table, 'host_id', host_id, metric, null);
       if (!pred) continue;
       const bl = db.prepare(
-        "SELECT p90 FROM baselines WHERE entity_type = 'host' AND entity_id = ? AND metric = ? AND time_bucket = 'all'"
-      ).get(host_id, metric) as { p90: number | null } | undefined;
+        "SELECT p50, p75, p90 FROM baselines WHERE entity_type = 'host' AND entity_id = ? AND metric = ? AND time_bucket = 'all'"
+      ).get(host_id, metric) as { p50: number | null; p75: number | null; p90: number | null } | undefined;
       if (!bl || bl.p90 == null) continue;
       if (pred.current >= bl.p90) continue; // already above threshold
       if (pred.dailyGrowth <= 0) continue;
+      // If the live value is below P75, the trend doesn't match reality — skip
+      if (pred.liveValue != null && bl.p75 != null && pred.liveValue < bl.p75) continue;
       const remaining = bl.p90 - pred.current;
       const daysUntil = Math.round(remaining / pred.dailyGrowth);
       if (daysUntil > 14 || daysUntil <= 0) continue;
-      const severity = daysUntil <= 3 ? 'critical' : 'warning';
+      // Predictions are inherently uncertain — only "critical" if live value also above P75
+      const liveSupports = pred.liveValue != null && bl.p75 != null && pred.liveValue >= bl.p75;
+      const severity = daysUntil <= 3 && liveSupports ? 'critical' : 'warning';
       const dayWord = daysUntil === 1 ? 'day' : 'days';
       insert.run('host', host_id, 'prediction', severity,
         `${label} trending up on ${host_id}`,
@@ -325,15 +329,18 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
       const pred = computeMetricTrend(db, 'container_snapshots', 'host_id', host_id, metric, container_name);
       if (!pred) continue;
       const bl = db.prepare(
-        "SELECT p90 FROM baselines WHERE entity_type = 'container' AND entity_id = ? AND metric = ? AND time_bucket = 'all'"
-      ).get(entityId, metric) as { p90: number | null } | undefined;
+        "SELECT p50, p75, p90 FROM baselines WHERE entity_type = 'container' AND entity_id = ? AND metric = ? AND time_bucket = 'all'"
+      ).get(entityId, metric) as { p50: number | null; p75: number | null; p90: number | null } | undefined;
       if (!bl || bl.p90 == null) continue;
       if (pred.current >= bl.p90) continue;
       if (pred.dailyGrowth <= 0) continue;
+      // If the live value is below P75, the trend doesn't match reality — skip
+      if (pred.liveValue != null && bl.p75 != null && pred.liveValue < bl.p75) continue;
       const remaining = bl.p90 - pred.current;
       const daysUntil = Math.round(remaining / pred.dailyGrowth);
       if (daysUntil > 14 || daysUntil <= 0) continue;
-      const severity = daysUntil <= 3 ? 'critical' : 'warning';
+      const liveSupports = pred.liveValue != null && bl.p75 != null && pred.liveValue >= bl.p75;
+      const severity = daysUntil <= 3 && liveSupports ? 'critical' : 'warning';
       const dayWord = daysUntil === 1 ? 'day' : 'days';
       insert.run('container', entityId, 'prediction', severity,
         `${container_name} ${label.toLowerCase()} trending up`,
@@ -346,11 +353,20 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
   return count;
 }
 
+interface LatestSnapshotRow {
+  val: number | null;
+}
+
 /**
  * Compute 7-day linear trend for a metric.
- * Returns { current, dailyGrowth } or null if insufficient data.
+ * Returns { current, liveValue, dailyGrowth } or null if insufficient data.
+ *
+ * Validates trend consistency: requires majority of day-over-day changes to be
+ * in the same direction as the overall trend (prevents single-spike false positives).
+ * Also fetches the latest live snapshot value so callers can compare prediction
+ * against what's actually happening right now.
  */
-function computeMetricTrend(db: Database.Database, table: string, hostCol: string, hostId: string, metric: string, containerName: string | null): { current: number; dailyGrowth: number } | null {
+function computeMetricTrend(db: Database.Database, table: string, hostCol: string, hostId: string, metric: string, containerName: string | null): { current: number; liveValue: number | null; dailyGrowth: number } | null {
   let query: string;
   let params: string[];
   if (containerName) {
@@ -368,7 +384,7 @@ function computeMetricTrend(db: Database.Database, table: string, hostCol: strin
   }
 
   const dailyAvgs = (db.prepare(query).all(...params) as DailyAvgRow[]).filter(r => r.avg_val != null);
-  if (dailyAvgs.length < 3) return null;
+  if (dailyAvgs.length < 4) return null; // need at least 4 days for a meaningful trend
 
   const first = dailyAvgs[0].avg_val!;
   const last = dailyAvgs[dailyAvgs.length - 1].avg_val!;
@@ -382,7 +398,31 @@ function computeMetricTrend(db: Database.Database, table: string, hostCol: strin
   const minGrowth: Record<string, number> = { cpu_percent: 1, memory_mb: 5, memory_used_mb: 5, load_5: 0.5 };
   if (minGrowth[metric] != null && Math.abs(dailyGrowth) < minGrowth[metric]) return null;
 
-  return { current: last, dailyGrowth };
+  // Consistency check: at least half of day-over-day changes must agree with the trend direction
+  let increasing = 0;
+  let decreasing = 0;
+  for (let i = 1; i < dailyAvgs.length; i++) {
+    const diff = dailyAvgs[i].avg_val! - dailyAvgs[i - 1].avg_val!;
+    if (diff > 0) increasing++;
+    else if (diff < 0) decreasing++;
+  }
+  if (dailyGrowth > 0 && increasing < Math.ceil(days / 2)) return null; // not consistently growing
+  if (dailyGrowth < 0 && decreasing < Math.ceil(days / 2)) return null;
+
+  // Get the actual latest snapshot value (not the daily average)
+  let liveQuery: string;
+  let liveParams: string[];
+  if (containerName) {
+    liveQuery = `SELECT ${metric} as val FROM ${table} WHERE ${hostCol} = ? AND container_name = ? AND status = 'running' ORDER BY collected_at DESC LIMIT 1`;
+    liveParams = [hostId, containerName];
+  } else {
+    liveQuery = `SELECT ${metric} as val FROM ${table} WHERE ${hostCol} = ? ORDER BY collected_at DESC LIMIT 1`;
+    liveParams = [hostId];
+  }
+  const liveRow = db.prepare(liveQuery).get(...liveParams) as LatestSnapshotRow | undefined;
+  const liveValue = liveRow?.val ?? null;
+
+  return { current: last, liveValue, dailyGrowth };
 }
 
 /**
