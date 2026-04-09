@@ -8,6 +8,7 @@ import { RankingList } from '@/components/RankingList';
 import { HealthBadge } from '@/components/HealthBadge';
 import { useShowInternal } from '@/hooks/useShowInternal';
 import { StatsGridSkeleton, CardSkeleton } from '@/components/Skeleton';
+import { InsightsFeed } from '@/components/InsightsFeed';
 import { useAttentionItems } from '@/hooks/useAttentionItems';
 import { getAnalogy } from '@/lib/analogies';
 import { queryKeys } from '@/lib/queryKeys';
@@ -47,6 +48,8 @@ export function DashboardPage() {
       <StatusRow data={data} />
 
       <AttentionList attentionItems={attentionItems} />
+
+      {data.topInsights && <InsightsFeed insights={data.topInsights} />}
 
       {/* Services */}
       {data.groups && data.groups.length > 0 && (

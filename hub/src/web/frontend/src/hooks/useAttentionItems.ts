@@ -3,7 +3,7 @@ import type { DashboardData } from '@/types/api';
 import { fmtDurationMs } from '@/lib/formatters';
 
 export interface AttentionItem {
-  kind: 'alert' | 'downtime' | 'insight';
+  kind: 'alert' | 'downtime';
   severity: 'critical' | 'warning';
   title: string;
   detail: string;
@@ -43,21 +43,10 @@ export function useAttentionItems(data: DashboardData | undefined): AttentionIte
       });
     }
 
-    for (const insight of data.topInsights) {
-      if (insight.severity === 'info') continue;
-      items.push({
-        kind: 'insight',
-        severity: insight.severity as 'critical' | 'warning',
-        title: insight.title,
-        detail: insight.message,
-        meta: insight.entity_id,
-        time: null,
-        to: '/insights',
-      });
-    }
+    // Insights are displayed separately on the dashboard — not mixed into this list
 
     const sevOrder = { critical: 0, warning: 1 } as const;
-    const kindOrder = { alert: 0, downtime: 1, insight: 2 } as const;
+    const kindOrder = { alert: 0, downtime: 1 } as const;
     items.sort((a, b) => (sevOrder[a.severity] - sevOrder[b.severity]) || (kindOrder[a.kind] - kindOrder[b.kind]));
     return items;
   }, [data]);
