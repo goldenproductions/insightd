@@ -434,13 +434,21 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     groups = groupQueries.getGroups(db, showInternal);
   } catch { /* group queries not available */ }
 
-  // 24h availability per container
+  // 24h availability per container — only for containers still being reported.
+  // Containers that have stopped reporting (deleted, filtered, etc.) are
+  // excluded so they don't show as "0% uptime" in the dashboard.
   const availRows = db.prepare(`
     SELECT host_id, container_name, labels,
       COUNT(*) as total,
       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running
     FROM container_snapshots
     WHERE collected_at >= datetime('now', '-1 day')
+      AND EXISTS (
+        SELECT 1 FROM container_snapshots cs2
+        WHERE cs2.host_id = container_snapshots.host_id
+          AND cs2.container_name = container_snapshots.container_name
+          AND cs2.collected_at > datetime('now', '-15 minutes')
+      )
     GROUP BY host_id, container_name
   `).all() as AvailabilityRow[];
   const availFiltered = showInternal ? availRows : availRows.filter(c => {
