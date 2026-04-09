@@ -4,6 +4,10 @@ const config = Object.freeze({
   // Host identification (required). In k8s DaemonSet mode, falls back to NODE_NAME.
   hostId: process.env.INSIGHTD_HOST_ID || process.env.NODE_NAME || 'local',
 
+  // Optional logical group for organizing hosts (e.g. "production", "k3d-test", "basement").
+  // Surfaces in the UI as a collapsible section on the Hosts page. Empty string = ungrouped.
+  hostGroup: process.env.INSIGHTD_HOST_GROUP || '',
+
   // MQTT broker
   mqttUrl: process.env.INSIGHTD_MQTT_URL || '',
   mqttUser: process.env.INSIGHTD_MQTT_USER || '',

@@ -121,25 +121,29 @@ function ingestUpdates(db: Database.Database, hostId: string, updates: UpdateRes
 /**
  * Update or insert host record.
  */
-function upsertHost(db: Database.Database, hostId: string, agentVersion?: string, runtimeType?: string): void {
+function upsertHost(db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null): void {
   const rt = runtimeType || 'docker';
+  // Empty string → NULL so the UI treats it as ungrouped.
+  const group = hostGroup && hostGroup.length > 0 ? hostGroup : null;
   if (agentVersion) {
     db.prepare(`
-      INSERT INTO hosts (host_id, first_seen, last_seen, agent_version, runtime_type)
-      VALUES (?, datetime('now'), datetime('now'), ?, ?)
+      INSERT INTO hosts (host_id, first_seen, last_seen, agent_version, runtime_type, host_group)
+      VALUES (?, datetime('now'), datetime('now'), ?, ?, ?)
       ON CONFLICT(host_id) DO UPDATE SET
         last_seen = datetime('now'),
         agent_version = excluded.agent_version,
-        runtime_type = excluded.runtime_type
-    `).run(hostId, agentVersion, rt);
+        runtime_type = excluded.runtime_type,
+        host_group = excluded.host_group
+    `).run(hostId, agentVersion, rt, group);
   } else {
     db.prepare(`
-      INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type)
-      VALUES (?, datetime('now'), datetime('now'), ?)
+      INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type, host_group)
+      VALUES (?, datetime('now'), datetime('now'), ?, ?)
       ON CONFLICT(host_id) DO UPDATE SET
         last_seen = datetime('now'),
-        runtime_type = excluded.runtime_type
-    `).run(hostId, rt);
+        runtime_type = excluded.runtime_type,
+        host_group = excluded.host_group
+    `).run(hostId, rt, group);
   }
 }
 

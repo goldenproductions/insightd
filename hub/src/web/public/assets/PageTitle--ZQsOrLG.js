@@ -1,1 +1,0 @@
-import{j as e}from"./index-DFV4_NqS.js";function i({children:t,actions:s}){return e.jsxs("div",{className:"flex items-center justify-between",children:[e.jsx("h1",{className:"text-xl font-bold text-fg",children:t}),s]})}export{i as P};

@@ -66,6 +66,9 @@ export function HostDetailPage() {
           {data.runtime_type && data.runtime_type !== 'docker' && (
             <Badge text={data.runtime_type === 'kubernetes' ? 'k8s' : data.runtime_type} color="blue" />
           )}
+          {data.host_group && (
+            <Badge text={data.host_group} color="gray" />
+          )}
         </div>
         <RemoveHostButton hostId={hostId!} confirm={confirm} />
       </div>
