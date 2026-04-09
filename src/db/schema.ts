@@ -241,6 +241,23 @@ function bootstrap(db: Database.Database): void {
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token      TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      expires_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      name         TEXT NOT NULL,
+      key_prefix   TEXT NOT NULL,
+      key_hash     TEXT NOT NULL,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_used_at TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_snapshots_collected ON container_snapshots (collected_at);
   `);
 
   // Track schema version and run migrations
