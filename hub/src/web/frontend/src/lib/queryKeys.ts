@@ -22,6 +22,7 @@ export const queryKeys = {
   // Alerts & Insights
   alerts: () => ['alerts'] as const,
   insights: () => ['insights'] as const,
+  insightFeedback: () => ['insight-feedback'] as const,
 
   // Endpoints
   endpoints: () => ['endpoints'] as const,

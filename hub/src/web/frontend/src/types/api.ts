@@ -402,6 +402,15 @@ export interface InsightRow {
   computed_at: string;
 }
 
+export interface InsightFeedback {
+  entity_type: string;
+  entity_id: string;
+  category: string;
+  metric: string | null;
+  helpful: number;
+  created_at: string;
+}
+
 /** Percentile subset used by analogies and ratings (no metadata fields) */
 export type BaselinePercentiles = Pick<BaselineRow, 'p50' | 'p75' | 'p90' | 'p95' | 'p99'>;
 

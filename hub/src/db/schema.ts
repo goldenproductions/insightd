@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 14;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -215,6 +215,17 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_insights_entity
       ON insights (entity_type, entity_id);
 
+    CREATE TABLE IF NOT EXISTS insight_feedback (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type  TEXT NOT NULL,
+      entity_id    TEXT NOT NULL,
+      category     TEXT NOT NULL,
+      metric       TEXT,
+      helpful      INTEGER NOT NULL,
+      created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(entity_type, entity_id, category, metric)
+    );
+
     CREATE TABLE IF NOT EXISTS webhooks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL,
@@ -337,6 +348,20 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE alert_state ADD COLUMN message TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE alert_state ADD COLUMN trigger_value TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE alert_state ADD COLUMN threshold TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 14) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS insight_feedback (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_type  TEXT NOT NULL,
+        entity_id    TEXT NOT NULL,
+        category     TEXT NOT NULL,
+        metric       TEXT,
+        helpful      INTEGER NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(entity_type, entity_id, category, metric)
+      );
+    `);
   }
 }
 

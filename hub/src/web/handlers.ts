@@ -592,6 +592,24 @@ function handleGetHostInsights(req: HandlerReq, res: ServerResponse, db: Databas
   return insightQueries.getHostInsights(db, params.hostId);
 }
 
+async function handleInsightFeedback(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
+  const body = req.body as { entity_type?: string; entity_id?: string; category?: string; metric?: string | null; helpful?: boolean };
+  if (!body.entity_type || !body.entity_id || !body.category || body.helpful == null) {
+    res.statusCode = 400;
+    return { error: 'entity_type, entity_id, category, and helpful are required' };
+  }
+  db.prepare(`
+    INSERT INTO insight_feedback (entity_type, entity_id, category, metric, helpful)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(entity_type, entity_id, category, metric) DO UPDATE SET helpful = ?, created_at = datetime('now')
+  `).run(body.entity_type, body.entity_id, body.category, body.metric ?? null, body.helpful ? 1 : 0, body.helpful ? 1 : 0);
+  return { ok: true };
+}
+
+function handleGetInsightFeedback(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
+  return db.prepare('SELECT entity_type, entity_id, category, metric, helpful, created_at FROM insight_feedback ORDER BY created_at DESC').all();
+}
+
 function handleImageUpdates(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return queries.getAllImageUpdates(db);
 }
@@ -765,7 +783,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleDeleteHost, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleDeleteHost, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }

@@ -93,6 +93,8 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/health-scores/:entityType/:entityId', handlers.handleGetHealthScore);
   router.add('GET', '/api/insights', handlers.handleGetInsights);
   router.add('GET', '/api/hosts/:hostId/insights', handlers.handleGetHostInsights);
+  router.add('POST', '/api/insights/feedback', handlers.handleInsightFeedback);
+  router.add('GET', '/api/insights/feedback', handlers.handleGetInsightFeedback);
   router.add('GET', '/api/setup/status', handlers.handleSetupStatus);
   router.add('POST', '/api/setup/password', handlers.handleSetupPassword);
   router.add('POST', '/api/setup/complete', handlers.handleSetupComplete);

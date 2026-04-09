@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import type { InsightRow } from '@/types/api';
+import { useAuth } from '@/context/AuthContext';
+import type { InsightRow, InsightFeedback } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import { PageTitle } from '@/components/PageTitle';
@@ -63,6 +64,11 @@ export function InsightsPage() {
     queryFn: () => api<InsightRow[]>('/insights'),
     refetchInterval: 60_000,
   });
+  const { data: allFeedback } = useQuery({
+    queryKey: queryKeys.insightFeedback(),
+    queryFn: () => api<InsightFeedback[]>('/insights/feedback'),
+    staleTime: 60_000,
+  });
 
   if (!insights) return (
     <div className="space-y-6">
@@ -96,42 +102,64 @@ export function InsightsPage() {
       )}
 
       {critical.length > 0 && (
-        <InsightGroup label="Critical" insights={critical} expanded={expanded} onToggle={toggle} />
+        <InsightGroup label="Critical" insights={critical} expanded={expanded} onToggle={toggle} allFeedback={allFeedback} />
       )}
       {warning.length > 0 && (
-        <InsightGroup label="Warning" insights={warning} expanded={expanded} onToggle={toggle} />
+        <InsightGroup label="Warning" insights={warning} expanded={expanded} onToggle={toggle} allFeedback={allFeedback} />
       )}
       {info.length > 0 && (
-        <InsightGroup label="Info" insights={info} expanded={expanded} onToggle={toggle} />
+        <InsightGroup label="Info" insights={info} expanded={expanded} onToggle={toggle} allFeedback={allFeedback} />
       )}
     </div>
   );
 }
 
-function InsightGroup({ label, insights, expanded, onToggle }: {
+function InsightGroup({ label, insights, expanded, onToggle, allFeedback }: {
   label: string;
   insights: InsightRow[];
   expanded: Set<number>;
   onToggle: (id: number) => void;
+  allFeedback: InsightFeedback[] | undefined;
 }) {
   return (
     <Card title={`${label} (${insights.length})`}>
       <div className="space-y-2">
-        {insights.map(insight => (
-          <InsightCard key={insight.id} insight={insight} isExpanded={expanded.has(insight.id)} onToggle={() => onToggle(insight.id)} />
-        ))}
+        {insights.map(insight => {
+          const fb = allFeedback?.find(f =>
+            f.entity_type === insight.entity_type && f.entity_id === insight.entity_id &&
+            f.category === insight.category && f.metric === insight.metric
+          );
+          return (
+            <InsightCard key={insight.id} insight={insight} isExpanded={expanded.has(insight.id)} onToggle={() => onToggle(insight.id)} feedback={fb} />
+          );
+        })}
       </div>
     </Card>
   );
 }
 
-function InsightCard({ insight, isExpanded, onToggle }: {
+function InsightCard({ insight, isExpanded, onToggle, feedback }: {
   insight: InsightRow;
   isExpanded: boolean;
   onToggle: () => void;
+  feedback: InsightFeedback | undefined;
 }) {
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
   const icon = CATEGORY_ICONS[insight.category] || '\u2139\ufe0f';
   const severityColor = SEVERITY_COLORS[insight.severity] || 'blue';
+
+  const feedbackMutation = useMutation({
+    mutationFn: (helpful: boolean) =>
+      apiAuth('POST', '/insights/feedback', {
+        entity_type: insight.entity_type,
+        entity_id: insight.entity_id,
+        category: insight.category,
+        metric: insight.metric,
+        helpful,
+      }, token),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.insightFeedback() }),
+  });
 
   return (
     <div className="rounded-lg border border-border bg-bg-secondary">
@@ -191,11 +219,34 @@ function InsightCard({ insight, isExpanded, onToggle }: {
               </Link>
             </div>
           </div>
-          {insight.metric && (
-            <div className="mt-3 text-xs text-muted">
-              Metric: <span className="font-mono">{insight.metric}</span> &middot; Computed {timeAgo(insight.computed_at)}
+          <div className="mt-3 flex items-center justify-between">
+            {insight.metric && (
+              <div className="text-xs text-muted">
+                Metric: <span className="font-mono">{insight.metric}</span> &middot; Computed {timeAgo(insight.computed_at)}
+              </div>
+            )}
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-muted mr-1">Helpful?</span>
+              <button
+                onClick={e => { e.stopPropagation(); feedbackMutation.mutate(true); }}
+                className={`rounded px-2 py-1 text-sm transition-colors ${
+                  feedback?.helpful === 1 ? 'bg-success/20 text-success' : 'text-muted hover:text-success hover:bg-success/10'
+                }`}
+                aria-label="Mark insight as helpful"
+              >
+                👍
+              </button>
+              <button
+                onClick={e => { e.stopPropagation(); feedbackMutation.mutate(false); }}
+                className={`rounded px-2 py-1 text-sm transition-colors ${
+                  feedback?.helpful === 0 ? 'bg-danger/20 text-danger' : 'text-muted hover:text-danger hover:bg-danger/10'
+                }`}
+                aria-label="Mark insight as not helpful"
+              >
+                👎
+              </button>
             </div>
-          )}
+          </div>
         </div>
       )}
     </div>
