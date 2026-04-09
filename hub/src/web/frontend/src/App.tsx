@@ -1,4 +1,4 @@
-import { HashRouter, Routes, Route } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/context/AuthContext';
@@ -25,11 +25,21 @@ const LogSplitPage = lazy(() => import('@/pages/LogSplitPage').then(m => ({ defa
 const WebhooksPage = lazy(() => import('@/pages/WebhooksPage').then(m => ({ default: m.WebhooksPage })));
 const UpdatesPage = lazy(() => import('@/pages/updates/UpdatesPage').then(m => ({ default: m.UpdatesPage })));
 const WebhookFormPage = lazy(() => import('@/pages/WebhookFormPage').then(m => ({ default: m.WebhookFormPage })));
-const ServicesPage = lazy(() => import('@/pages/ServicesPage').then(m => ({ default: m.ServicesPage })));
-const ServiceDetailPage = lazy(() => import('@/pages/ServiceDetailPage').then(m => ({ default: m.ServiceDetailPage })));
-const ServiceFormPage = lazy(() => import('@/pages/ServiceFormPage').then(m => ({ default: m.ServiceFormPage })));
+const StacksPage = lazy(() => import('@/pages/StacksPage').then(m => ({ default: m.StacksPage })));
+const StackDetailPage = lazy(() => import('@/pages/StackDetailPage').then(m => ({ default: m.StackDetailPage })));
+const StackFormPage = lazy(() => import('@/pages/StackFormPage').then(m => ({ default: m.StackFormPage })));
 const ApiKeysPage = lazy(() => import('@/pages/ApiKeysPage').then(m => ({ default: m.ApiKeysPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then(m => ({ default: m.StatusPage })));
+
+function RedirectStackDetail() {
+  const { groupId } = useParams();
+  return <Navigate to={`/stacks/${groupId}`} replace />;
+}
+
+function RedirectStackEdit() {
+  const { groupId } = useParams();
+  return <Navigate to={`/stacks/${groupId}/edit`} replace />;
+}
 
 function PageLoading() {
   return (
@@ -85,10 +95,15 @@ export function App() {
                 <Route path="/endpoints/new" element={<EndpointFormPage />} />
                 <Route path="/endpoints/:endpointId" element={<EndpointDetailPage />} />
                 <Route path="/endpoints/:endpointId/edit" element={<EndpointFormPage />} />
-                <Route path="/services" element={<ServicesPage />} />
-                <Route path="/services/new" element={<ServiceFormPage />} />
-                <Route path="/services/:groupId" element={<ServiceDetailPage />} />
-                <Route path="/services/:groupId/edit" element={<ServiceFormPage />} />
+                <Route path="/stacks" element={<StacksPage />} />
+                <Route path="/stacks/new" element={<StackFormPage />} />
+                <Route path="/stacks/:groupId" element={<StackDetailPage />} />
+                <Route path="/stacks/:groupId/edit" element={<StackFormPage />} />
+                {/* Old /services* URLs redirect to /stacks* (one release of bookmark compat) */}
+                <Route path="/services" element={<Navigate to="/stacks" replace />} />
+                <Route path="/services/new" element={<Navigate to="/stacks/new" replace />} />
+                <Route path="/services/:groupId" element={<RedirectStackDetail />} />
+                <Route path="/services/:groupId/edit" element={<RedirectStackEdit />} />
                 <Route path="/webhooks" element={<WebhooksPage />} />
                 <Route path="/webhooks/new" element={<WebhookFormPage />} />
                 <Route path="/webhooks/:webhookId/edit" element={<WebhookFormPage />} />
