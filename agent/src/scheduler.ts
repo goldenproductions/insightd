@@ -34,6 +34,14 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
 
     const disk = await safeCollect('disk', () => Promise.resolve(collectDisk(config))) || [];
     const host = await safeCollect('host', () => Promise.resolve(collectHost(config)));
+
+    // For containerized runtimes (k8s), /proc/uptime gives the underlying
+    // machine's uptime, not the node's. Override with the runtime's value
+    // if it provides one.
+    if (host && runtime.getHostUptimeSeconds) {
+      const runtimeUptime = await safeCollect('runtime-uptime', () => runtime.getHostUptimeSeconds!());
+      if (runtimeUptime != null) host.uptimeSeconds = runtimeUptime;
+    }
     const gpu = await safeCollect('gpu', () => Promise.resolve(collectGpu()));
     const temperature = await safeCollect('temperature', () => Promise.resolve(collectTemperature(config)));
     const diskIO = await safeCollect('disk-io', () => Promise.resolve(collectDiskIO(config)));

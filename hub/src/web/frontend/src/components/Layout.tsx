@@ -1,11 +1,15 @@
 import { useState, useMemo } from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useShowInternal } from '@/hooks/useShowInternal';
+import { api } from '@/lib/api';
+import { queryKeys } from '@/lib/queryKeys';
+import type { ServiceGroupSummary } from '@/types/api';
 import { UpdateBanner } from './UpdateBanner';
 import {
-  DashboardIcon, HostsIcon, AlertsIcon, InsightsIcon, EndpointsIcon, ServicesIcon,
+  DashboardIcon, HostsIcon, AlertsIcon, InsightsIcon, EndpointsIcon, StacksIcon,
   WebhooksIcon, KeyIcon, UpdatesIcon, AgentIcon, SettingsIcon,
   EyeIcon, SunIcon, MoonIcon, MenuIcon,
 } from './Icons';
@@ -20,11 +24,21 @@ export function Layout() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
+  // Drive the conditional Stacks nav entry. Hidden when count === 0 so empty
+  // installs don't show a confusing nav item — the /stacks route stays mounted
+  // and reachable by direct URL for users who want to create the first stack.
+  const { data: stacks } = useQuery({
+    queryKey: queryKeys.groups(),
+    queryFn: () => api<ServiceGroupSummary[]>('/groups'),
+    refetchInterval: 60_000,
+  });
+  const hasStacks = (stacks?.length ?? 0) > 0;
+
   const navGroups = useMemo<NavGroup[]>(() => [
     { label: 'Monitor', items: [
       { to: '/', label: 'Dashboard', icon: DashboardIcon },
       { to: '/hosts', label: 'Hosts', icon: HostsIcon },
-      { to: '/services', label: 'Services', icon: ServicesIcon },
+      ...(hasStacks ? [{ to: '/stacks', label: 'Stacks', icon: StacksIcon }] : []),
       { to: '/endpoints', label: 'Endpoints', icon: EndpointsIcon },
     ]},
     { label: 'Respond', items: [
@@ -40,7 +54,7 @@ export function Layout() {
         { to: '/settings', label: 'Settings', icon: SettingsIcon },
       ] : []),
     ]},
-  ], [isHubMode, authEnabled]);
+  ], [isHubMode, authEnabled, hasStacks]);
 
   return (
     <div className="flex min-h-screen">
