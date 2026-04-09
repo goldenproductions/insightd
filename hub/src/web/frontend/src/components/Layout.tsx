@@ -5,7 +5,7 @@ import { useTheme } from '@/context/ThemeContext';
 import { useShowInternal } from '@/hooks/useShowInternal';
 import { UpdateBanner } from './UpdateBanner';
 import {
-  DashboardIcon, HostsIcon, AlertsIcon, EndpointsIcon, ServicesIcon,
+  DashboardIcon, HostsIcon, AlertsIcon, InsightsIcon, EndpointsIcon, ServicesIcon,
   WebhooksIcon, KeyIcon, UpdatesIcon, AgentIcon, SettingsIcon,
   EyeIcon, SunIcon, MoonIcon, MenuIcon,
 } from './Icons';
@@ -29,6 +29,7 @@ export function Layout() {
     ]},
     { label: 'Respond', items: [
       { to: '/alerts', label: 'Alerts', icon: AlertsIcon },
+      { to: '/insights', label: 'Insights', icon: InsightsIcon },
       { to: '/webhooks', label: 'Webhooks', icon: WebhooksIcon },
     ]},
     { label: 'System', items: [

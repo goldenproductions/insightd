@@ -19,8 +19,10 @@ export const queryKeys = {
   hostBaselines: (hostId?: string) => ['baselines', 'host', hostId] as const,
   containerBaselines: (hostId?: string, containerName?: string) => ['baselines', 'container', hostId, containerName] as const,
 
-  // Alerts
+  // Alerts & Insights
   alerts: () => ['alerts'] as const,
+  insights: () => ['insights'] as const,
+  insightFeedback: () => ['insight-feedback'] as const,
 
   // Endpoints
   endpoints: () => ['endpoints'] as const,

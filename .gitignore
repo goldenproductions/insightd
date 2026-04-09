@@ -145,3 +145,4 @@ data/
 *.db-wal
 *.db-shm
 mosquitto-passwd
+insightd.dev/

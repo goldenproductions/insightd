@@ -20,6 +20,7 @@ interface HostIdRow {
 interface HostSnapshotRow {
   cpu_percent: number | null;
   memory_used_mb: number | null;
+  memory_total_mb: number | null;
   load_5: number | null;
   [key: string]: any;
 }
@@ -115,29 +116,43 @@ function computeHealthScores(db: Database.Database, baselineCache?: BaselineCach
     let totalScore = 0;
     let totalWeight = 0;
 
-    // CPU vs baseline (weight 20)
+    // CPU — only degrade when actually saturated. A server at 20% CPU is healthy.
     if (latest?.cpu_percent != null) {
-      const bl = baselines.cpu_percent;
-      const score = scoreMetricVsBaseline(latest.cpu_percent, bl);
-      factors.cpu = { score, weight: 20, value: latest.cpu_percent, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.cpu_percent, bl) };
+      let score: number;
+      let rating: string;
+      if (latest.cpu_percent < 70)      { score = 100; rating = 'normal'; }
+      else if (latest.cpu_percent < 85) { score = 70;  rating = 'elevated'; }
+      else if (latest.cpu_percent < 95) { score = 40;  rating = 'high'; }
+      else                              { score = 10;  rating = 'critical'; }
+      factors.cpu = { score, weight: 20, value: round(latest.cpu_percent), rating };
       totalScore += score * 20;
       totalWeight += 20;
     }
 
-    // Memory vs baseline (weight 20)
-    if (latest?.memory_used_mb != null) {
-      const bl = baselines.memory_used_mb;
-      const score = scoreMetricVsBaseline(latest.memory_used_mb, bl);
-      factors.memory = { score, weight: 20, value: latest.memory_used_mb, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.memory_used_mb, bl) };
+    // Memory — only degrade when actually constrained (approaching capacity).
+    // Memory usage by itself isn't bad; it only matters when you're running out.
+    if (latest?.memory_used_mb != null && latest.memory_total_mb) {
+      const memPct = (latest.memory_used_mb / latest.memory_total_mb) * 100;
+      let score: number;
+      let rating: string;
+      if (memPct < 80)      { score = 100; rating = 'normal'; }
+      else if (memPct < 90) { score = 70;  rating = 'elevated'; }
+      else if (memPct < 95) { score = 40;  rating = 'high'; }
+      else                  { score = 10;  rating = 'critical'; }
+      factors.memory = { score, weight: 20, value: round(memPct), rating };
       totalScore += score * 20;
       totalWeight += 20;
     }
 
-    // Load vs baseline (weight 15)
+    // Load — capacity-based. Load under 4 is fine for typical homelab servers.
     if (latest?.load_5 != null) {
-      const bl = baselines.load_5;
-      const score = scoreMetricVsBaseline(latest.load_5, bl);
-      factors.load = { score, weight: 15, value: latest.load_5, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.load_5, bl) };
+      let score: number;
+      let rating: string;
+      if (latest.load_5 < 4)       { score = 100; rating = 'normal'; }
+      else if (latest.load_5 < 8)  { score = 70;  rating = 'elevated'; }
+      else if (latest.load_5 < 16) { score = 40;  rating = 'high'; }
+      else                         { score = 10;  rating = 'critical'; }
+      factors.load = { score, weight: 15, value: round(latest.load_5), rating };
       totalScore += score * 15;
       totalWeight += 15;
     }
@@ -194,22 +209,30 @@ function computeHealthScores(db: Database.Database, baselineCache?: BaselineCach
     let totalScore = 0;
     let totalWeight = 0;
 
-    // CPU (weight 20)
+    // CPU (weight 15) — baseline comparison but require meaningful absolute value.
+    // Container CPU <50% should never degrade the score regardless of baseline.
     if (latest?.cpu_percent != null) {
       const bl = baselines.cpu_percent;
-      const score = scoreMetricVsBaseline(latest.cpu_percent, bl);
-      factors.cpu = { score, weight: 20, value: latest.cpu_percent, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.cpu_percent, bl) };
-      totalScore += score * 20;
-      totalWeight += 20;
+      let score = scoreMetricVsBaseline(latest.cpu_percent, bl);
+      let rating = rateValue(latest.cpu_percent, bl);
+      if (latest.cpu_percent < 50) { score = 100; rating = 'normal'; }
+      else if (latest.cpu_percent < 80) { score = Math.max(score, 70); if (rating === 'critical' || rating === 'high') rating = 'elevated'; }
+      factors.cpu = { score, weight: 15, value: round(latest.cpu_percent), baseline_p75: bl?.p75 ?? null, rating };
+      totalScore += score * 15;
+      totalWeight += 15;
     }
 
-    // Memory (weight 20)
+    // Memory (weight 10) — lower weight since we can't know the container's memory limit.
+    // Only degrade when the deviation from baseline is substantial (>50 MB above P75).
     if (latest?.memory_mb != null) {
       const bl = baselines.memory_mb;
-      const score = scoreMetricVsBaseline(latest.memory_mb, bl);
-      factors.memory = { score, weight: 20, value: latest.memory_mb, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.memory_mb, bl) };
-      totalScore += score * 20;
-      totalWeight += 20;
+      let score = scoreMetricVsBaseline(latest.memory_mb, bl);
+      let rating = rateValue(latest.memory_mb, bl);
+      const deviation = bl?.p75 != null ? latest.memory_mb - bl.p75 : 0;
+      if (deviation < 50) { score = 100; rating = 'normal'; }
+      factors.memory = { score, weight: 10, value: round(latest.memory_mb), baseline_p75: bl?.p75 ?? null, rating };
+      totalScore += score * 10;
+      totalWeight += 10;
     }
 
     // Uptime (weight 25)
@@ -263,6 +286,10 @@ function getEntityBaselines(db: Database.Database, entityType: string, entityId:
     if (r.sample_count >= MIN_PERIOD_SAMPLES) map[r.metric] = r;
   }
   return map;
+}
+
+function round(v: number): number {
+  return Math.round(v * 10) / 10;
 }
 
 module.exports = { computeHealthScores, scoreMetricVsBaseline, rateValue };

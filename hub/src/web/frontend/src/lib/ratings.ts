@@ -6,9 +6,23 @@ export interface MetricRating {
   label: string;
 }
 
-export function rateMetric(value: number | null | undefined, baseline: BaselineRow | undefined): MetricRating | null {
+/**
+ * Rate a metric value against its baseline, but only if the absolute value
+ * is high enough to matter. Low utilization is always "normal" regardless
+ * of where it sits relative to the baseline — usage isn't a problem,
+ * saturation is.
+ */
+export function rateMetric(value: number | null | undefined, baseline: BaselineRow | undefined, metric?: string): MetricRating | null {
   if (value == null || !baseline || baseline.sample_count < 288) return null;
   if (baseline.p75 == null || baseline.p95 == null || baseline.p99 == null) return null;
+
+  // Capacity floor: if the absolute value is low, it's always normal.
+  // CPU <50%, memory <500 MB, load <4 — these are not concerning regardless of percentile.
+  if (metric) {
+    if ((metric === 'cpu_percent' || metric === 'gpu_utilization_percent') && value < 50) return null;
+    if ((metric === 'memory_mb' || metric === 'memory_used_mb') && value < 500) return null;
+    if ((metric === 'load_1' || metric === 'load_5') && value < 4) return null;
+  }
 
   let pct: number;
   if (value <= (baseline.p50 ?? 0)) pct = baseline.p50 ? Math.round(50 * (value / baseline.p50)) : 0;

@@ -387,6 +387,30 @@ export interface BaselineRow {
   sample_count: number;
 }
 
+// Insights
+export interface InsightRow {
+  id: number;
+  entity_type: string;
+  entity_id: string;
+  category: string;
+  severity: 'critical' | 'warning' | 'info';
+  title: string;
+  message: string;
+  metric: string | null;
+  current_value: number | null;
+  baseline_value: number | null;
+  computed_at: string;
+}
+
+export interface InsightFeedback {
+  entity_type: string;
+  entity_id: string;
+  category: string;
+  metric: string | null;
+  helpful: number;
+  created_at: string;
+}
+
 /** Percentile subset used by analogies and ratings (no metadata fields) */
 export type BaselinePercentiles = Pick<BaselineRow, 'p50' | 'p75' | 'p90' | 'p95' | 'p99'>;
 
