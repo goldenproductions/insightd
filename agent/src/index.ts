@@ -1,9 +1,11 @@
 import logger = require('../../shared/utils/logger');
-import type Dockerode from 'dockerode';
+import { getRuntime, DockerRuntime } from './runtime';
+import type { ContainerRuntime } from './runtime/types';
 
 const { config, validate } = require('./config') as {
   config: {
     hostId: string;
+    runtime: 'auto' | 'docker' | 'containerd' | 'kubernetes';
     dockerSocket: string;
     mqttUrl: string;
     mqttUser: string;
@@ -20,8 +22,8 @@ const { config, validate } = require('./config') as {
   };
   validate: () => string[];
 };
-const { connect, disconnect } = require('./mqtt') as { connect: (config: any, docker: Dockerode) => Promise<any>; disconnect: () => void };
-const { startAgentScheduler } = require('./scheduler') as { startAgentScheduler: (docker: Dockerode, config: any) => void };
+const { connect, disconnect } = require('./mqtt') as { connect: (config: any, runtime: ContainerRuntime) => Promise<any>; disconnect: () => void };
+const { startAgentScheduler } = require('./scheduler') as { startAgentScheduler: (runtime: ContainerRuntime, config: any) => void };
 
 async function main(): Promise<void> {
   logger.info('agent', `Starting insightd agent (host: ${config.hostId})...`);
@@ -30,32 +32,35 @@ async function main(): Promise<void> {
   const warnings = validate();
   warnings.forEach((w: string) => logger.warn('config', w));
 
-  // Connect to Docker
-  const Docker = require('dockerode') as new (options: { socketPath: string }) => Dockerode;
-  const docker = new Docker({ socketPath: config.dockerSocket });
-
+  // Initialize container runtime
+  let runtime: ContainerRuntime;
   try {
-    const info = await docker.info();
-    logger.info('docker', `Connected — ${info.Containers} containers, ${info.Images} images`);
+    runtime = await getRuntime({
+      runtime: config.runtime,
+      dockerSocket: config.dockerSocket,
+      allowActions: config.allowActions,
+    });
   } catch (err) {
-    logger.error('docker', 'Cannot connect to Docker socket. Is it mounted?', err);
+    logger.error('runtime', 'Cannot initialize container runtime', err);
     process.exit(1);
   }
 
   // Connect to MQTT
   try {
-    await connect(config, docker);
+    await connect(config, runtime);
   } catch (err) {
     logger.error('mqtt', 'Cannot connect to MQTT broker', err);
     process.exit(1);
   }
 
-  // Clean up old containers from previous updates
-  const { cleanupOldContainers } = require('./updater') as { cleanupOldContainers: (docker: Dockerode) => Promise<void> };
-  await cleanupOldContainers(docker);
+  // Clean up old containers from previous updates (Docker-only self-update flow)
+  if (runtime instanceof DockerRuntime) {
+    const { cleanupOldContainers } = require('./updater') as { cleanupOldContainers: (docker: any) => Promise<void> };
+    await cleanupOldContainers(runtime.getClient());
+  }
 
   // Start collection scheduler
-  startAgentScheduler(docker, config);
+  startAgentScheduler(runtime, config);
 
   logger.info('agent', 'insightd agent is running');
 

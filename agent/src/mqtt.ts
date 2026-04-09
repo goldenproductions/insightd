@@ -1,9 +1,8 @@
 import mqtt = require('mqtt');
 import logger = require('../../shared/utils/logger');
-import type Dockerode from 'dockerode';
 import type { MqttClient, IClientOptions } from 'mqtt';
-
-const { fetchContainerLogs } = require('../../shared/utils/docker-logs') as { fetchContainerLogs: (docker: Dockerode, containerId: string, options?: { lines?: number; stream?: string }) => Promise<Array<{ stream: string; timestamp: string | null; message: string }>> };
+import type { ContainerRuntime } from './runtime/types';
+import { DockerRuntime } from './runtime/docker';
 
 interface AgentConfig {
   hostId: string;
@@ -49,6 +48,7 @@ interface CollectionData {
   } | null;
   diskIO?: { readBytesPerSec?: number; writeBytesPerSec?: number } | null;
   networkIO?: { rxBytesPerSec?: number; txBytesPerSec?: number } | null;
+  runtimeName?: string;
 }
 
 interface UpdateData {
@@ -60,14 +60,14 @@ interface UpdateData {
 }
 
 let client: MqttClient | null = null;
-let dockerInstance: Dockerode | null = null;
+let runtimeInstance: ContainerRuntime | null = null;
 
-function connect(config: AgentConfig, docker: Dockerode): Promise<MqttClient> {
-  dockerInstance = docker;
+function connect(config: AgentConfig, runtime: ContainerRuntime): Promise<MqttClient> {
+  runtimeInstance = runtime;
   return new Promise((resolve, reject) => {
     const opts: IClientOptions = {
       clientId: `insightd-agent-${config.hostId}`,
-      clean: false, // persistent session for QoS 1
+      clean: false,
       reconnectPeriod: 5000,
     };
     if (config.mqttUser) {
@@ -81,7 +81,6 @@ function connect(config: AgentConfig, docker: Dockerode): Promise<MqttClient> {
     client.on('connect', () => {
       logger.info('mqtt', `${connected ? 'Reconnected' : 'Connected'} to ${config.mqttUrl}`);
 
-      // Subscribe to log requests and update commands (re-subscribes on reconnect)
       const logRequestTopic = `insightd/${config.hostId}/logs/request`;
       const updateRequestTopic = `insightd/${config.hostId}/update/request`;
       client!.subscribe(logRequestTopic, { qos: 1 }, (err) => {
@@ -105,12 +104,12 @@ function connect(config: AgentConfig, docker: Dockerode): Promise<MqttClient> {
     });
 
     client.on('message', async (topic: string, message: Buffer) => {
-      // Handle update requests
+      // Handle update requests (Docker-only: self/hub update flow)
       if (topic.endsWith('/update/request')) {
+        const responseTopic = `insightd/${config.hostId}/update/response`;
         try {
           const req = JSON.parse(message.toString());
 
-          // Ignore stale update messages (older than 60 seconds)
           if (req.timestamp) {
             const age = Date.now() - new Date(req.timestamp).getTime();
             if (age > 60000) {
@@ -121,16 +120,23 @@ function connect(config: AgentConfig, docker: Dockerode): Promise<MqttClient> {
 
           logger.info('mqtt', `Update request: target=${req.target}, image=${req.image}`);
 
-          const { performUpdate } = require('./updater') as { performUpdate: (docker: Dockerode, target: string, image: string) => Promise<{ status: string; message: string }> };
-          const result = await performUpdate(dockerInstance!, req.target, req.image);
+          if (!(runtimeInstance instanceof DockerRuntime)) {
+            client!.publish(responseTopic, JSON.stringify({
+              requestId: req.requestId,
+              status: 'failed',
+              error: `Updates are only supported for Docker runtime (current: ${runtimeInstance?.name})`,
+            }), { qos: 1 });
+            return;
+          }
 
-          const responseTopic = `insightd/${config.hostId}/update/response`;
+          const { performUpdate } = require('./updater') as { performUpdate: (docker: any, target: string, image: string) => Promise<{ status: string; message: string }> };
+          const result = await performUpdate(runtimeInstance.getClient(), req.target, req.image);
+
           client!.publish(responseTopic, JSON.stringify({ requestId: req.requestId, ...result }), { qos: 1 });
         } catch (err) {
           logger.error('mqtt', `Update failed: ${(err as Error).message}`);
           try {
             const req = JSON.parse(message.toString());
-            const responseTopic = `insightd/${config.hostId}/update/response`;
             client!.publish(responseTopic, JSON.stringify({ requestId: req.requestId, status: 'failed', error: (err as Error).message }), { qos: 1 });
           } catch { /* can't even parse the request */ }
         }
@@ -153,9 +159,12 @@ function connect(config: AgentConfig, docker: Dockerode): Promise<MqttClient> {
 
           logger.info('mqtt', `Action request: ${req.action} on ${req.containerName}`);
 
-          const { performContainerAction } = require('./container-actions') as { performContainerAction: (docker: Dockerode, containerName: string, action: string) => Promise<{ status: string; message: string }> };
-          const result = await performContainerAction(dockerInstance!, req.containerName, req.action);
+          if (!runtimeInstance) throw new Error('Runtime not initialized');
+          if (!runtimeInstance.supportsActions) {
+            throw new Error(`Container actions not supported for ${runtimeInstance.name} runtime`);
+          }
 
+          const result = await runtimeInstance.performAction(req.containerName, req.action);
           client!.publish(responseTopic, JSON.stringify({ requestId: req.requestId, ...result }), { qos: 1 });
         } catch (err) {
           logger.error('mqtt', `Action failed: ${(err as Error).message}`);
@@ -174,7 +183,8 @@ function connect(config: AgentConfig, docker: Dockerode): Promise<MqttClient> {
         const lines = Math.min(req.lines || config.logLines || 100, maxLines);
         logger.info('mqtt', `Log request for ${req.containerId} (${lines} lines)`);
 
-        const logs = await fetchContainerLogs(dockerInstance!, req.containerId, {
+        if (!runtimeInstance) throw new Error('Runtime not initialized');
+        const logs = await runtimeInstance.fetchLogs(req.containerId, {
           lines,
           stream: req.stream || 'both',
         });
@@ -220,6 +230,7 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
     version: 3,
     host_id: hostId,
     agent_version: VERSION,
+    runtime_type: data.runtimeName ?? 'docker',
     collected_at: new Date().toISOString(),
     containers: data.containers.map(c => ({
       name: c.name,

@@ -9,6 +9,9 @@ const config = Object.freeze({
   mqttUser: process.env.INSIGHTD_MQTT_USER || '',
   mqttPass: process.env.INSIGHTD_MQTT_PASS || '',
 
+  // Container runtime — 'auto' detects Docker/containerd/k8s; can be forced to one
+  runtime: (process.env.INSIGHTD_RUNTIME || 'auto') as 'auto' | 'docker' | 'containerd' | 'kubernetes',
+
   // Docker
   dockerSocket: process.env.DOCKER_HOST || '/var/run/docker.sock',
 
