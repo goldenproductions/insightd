@@ -1,0 +1,1 @@
+import{j as e}from"./index-C6sO5BcX.js";function a({title:r,children:s,className:d=""}){return e.jsxs("div",{className:`rounded-xl border border-border bg-surface p-4 lg:p-5 ${d}`,children:[r&&e.jsx("h2",{className:"mb-3 text-sm font-semibold uppercase tracking-wide text-secondary",children:r}),s]})}export{a as C};

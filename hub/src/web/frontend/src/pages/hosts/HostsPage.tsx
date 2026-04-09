@@ -71,7 +71,7 @@ export function HostsPage() {
 
   return (
     <div className="space-y-6">
-      <PageTitle>Hosts</PageTitle>
+      <PageTitle subtitle="Your machines, grouped by location or cluster.">Hosts</PageTitle>
       {hosts.length === 0 ? (
         <EmptyState message="No hosts connected yet" />
       ) : onlyUngrouped ? (
