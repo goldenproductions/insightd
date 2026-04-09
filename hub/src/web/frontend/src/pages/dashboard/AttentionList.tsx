@@ -3,43 +3,69 @@ import { Card } from '@/components/Card';
 import { timeAgo } from '@/lib/formatters';
 import type { AttentionItem } from '@/hooks/useAttentionItems';
 
+const KIND_CONFIG: Record<string, { icon: string; label: string }> = {
+  alert: { icon: '\ud83d\udd14', label: 'Alert' },
+  downtime: { icon: '\u23f8\ufe0f', label: 'Downtime' },
+};
+
 export function AttentionList({ attentionItems }: { attentionItems: AttentionItem[] }) {
   if (attentionItems.length === 0) {
     return (
-      <div className="flex items-center justify-center gap-2 rounded-xl px-4 py-3 bg-surface border border-border">
-        <span className="h-2 w-2 rounded-full bg-success" />
-        <span className="text-sm font-medium text-success">All systems operational</span>
-      </div>
+      <Card>
+        <div className="flex items-center justify-center gap-2 py-3">
+          <span className="text-base">&#x2705;</span>
+          <span className="text-sm font-medium text-success">All systems operational</span>
+        </div>
+      </Card>
     );
   }
 
   return (
-    <Card title="Needs Attention">
-      <div className="space-y-1">
-        {attentionItems.map((item, i) => (
-          <Link key={i} to={item.to}
-            className="flex items-center gap-3 rounded-lg px-3 py-2 -mx-1 hover-surface"
-          >
-            <span className={`h-2 w-2 shrink-0 rounded-full ${item.severity === 'critical' ? 'bg-danger' : 'bg-warning'}`} />
-            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${item.severity === 'critical' ? 'bg-danger/10 text-danger' : 'bg-warning/10 text-warning'}`}>
-              {item.kind}
-            </span>
-            <span className="flex-1 truncate text-sm font-medium text-fg">
-              {item.title}
-            </span>
-            <span className="hidden truncate text-xs text-secondary sm:block" style={{ maxWidth: '12rem' }}>
-              {item.detail}
-            </span>
-            <span className="shrink-0 text-xs text-muted">
-              {item.meta}
-            </span>
-            {item.time && (
-              <span className="shrink-0 text-xs text-muted">
-                {timeAgo(item.time)}
-              </span>
-            )}
-          </Link>
-        ))}
+    <Card>
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold uppercase tracking-wide text-secondary">Needs Attention</h3>
+        <span className="text-xs text-muted">{attentionItems.length} item{attentionItems.length !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="space-y-2">
+        {attentionItems.map((item, i) => {
+          const config = KIND_CONFIG[item.kind] ?? KIND_CONFIG.alert!;
+          const borderColor = item.severity === 'critical' ? 'border-l-danger' : 'border-l-warning';
+          const titleColor = item.severity === 'critical' ? 'text-danger' : 'text-warning';
+
+          return (
+            <Link key={i} to={item.to}
+              className={`block rounded-lg border-l-[3px] ${borderColor} bg-bg-secondary p-3 transition-colors hover:bg-surface-hover`}
+            >
+              <div className="flex items-start gap-2.5">
+                <span className="mt-0.5 text-base leading-none">{config.icon}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className={`text-sm font-medium ${titleColor}`}>{item.title}</span>
+                    <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-xs font-medium uppercase ${
+                      item.severity === 'critical' ? 'bg-danger/10 text-danger' : 'bg-warning/10 text-warning'
+                    }`}>
+                      {config.label}
+                    </span>
+                  </div>
+                  {item.detail && (
+                    <p className="mt-1 text-sm leading-relaxed text-secondary">{item.detail}</p>
+                  )}
+                  <div className="mt-1.5 flex items-center gap-2 text-xs text-muted">
+                    <span>{item.meta}</span>
+                    <span>&middot;</span>
+                    <span className="capitalize">{item.kind}</span>
+                    {item.time && (
+                      <>
+                        <span>&middot;</span>
+                        <span>{timeAgo(item.time)}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </Card>
   );
