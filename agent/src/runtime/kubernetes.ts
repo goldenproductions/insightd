@@ -10,7 +10,9 @@ import type {
 // so we use dynamic import() inside init()
 type K8sModule = typeof import('@kubernetes/client-node');
 type CoreV1Api = import('@kubernetes/client-node').CoreV1Api;
+type AppsV1Api = import('@kubernetes/client-node').AppsV1Api;
 type KubeConfig = import('@kubernetes/client-node').KubeConfig;
+type V1Pod = import('@kubernetes/client-node').V1Pod;
 
 const { safeCollect } = require('../../../shared/utils/errors') as {
   safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null>;
@@ -43,6 +45,7 @@ export class KubernetesRuntime implements ContainerRuntime {
 
   private kc: KubeConfig | null = null;
   private coreApi: CoreV1Api | null = null;
+  private appsApi: AppsV1Api | null = null;
   private nodeName: string;
   private kubeletUrl: string;
   private kubeletToken: string | null = null;
@@ -86,6 +89,7 @@ export class KubernetesRuntime implements ContainerRuntime {
     }
 
     this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api) as CoreV1Api;
+    this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api) as AppsV1Api;
 
     // Verify we can reach the API and find our node
     try {
@@ -98,7 +102,7 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   async listContainers(): Promise<ContainerInfo[]> {
-    if (!this.coreApi) throw new Error('KubernetesRuntime not initialized');
+    if (!this.coreApi || !this.appsApi) throw new Error('KubernetesRuntime not initialized');
 
     // List all pods on this node
     const res = await this.coreApi.listPodForAllNamespaces({
@@ -106,19 +110,30 @@ export class KubernetesRuntime implements ContainerRuntime {
     });
 
     const containers: ContainerInfo[] = [];
+    // Cache ReplicaSet → Deployment lookups for this collection cycle
+    const rsCache = new Map<string, string>();
 
     for (const pod of res.items) {
-      const podName = pod.metadata?.name || 'unknown';
+      // Skip completed pods (Succeeded phase) — typically Helm install Jobs and similar
+      // one-shot work that has nothing left to monitor.
+      if (pod.status?.phase === 'Succeeded') continue;
+
       const namespace = pod.metadata?.namespace || 'default';
       const podUid = pod.metadata?.uid || '';
       const podLabels = pod.metadata?.labels || {};
+
+      // Resolve a stable name from owner references so pod recreations don't
+      // create new entries. Falls back to pod name for standalone pods.
+      const stableName = await this.resolveStableName(pod, rsCache);
 
       // Each container in the pod becomes an insightd container
       const containerStatuses = pod.status?.containerStatuses || [];
 
       for (const cs of containerStatuses) {
-        const name = `${namespace}/${podName}/${cs.name}`;
-        const id = `${podUid}/${cs.name}`;
+        const name = `${namespace}/${stableName}/${cs.name}`;
+        // Composite id: podUid + stableName + container so fetchLogs can fall
+        // back to a name lookup if the UID is stale.
+        const id = `${podUid}/${stableName}/${cs.name}`;
 
         // Status mapping: K8s container state → insightd status string
         let status = 'unknown';
@@ -152,6 +167,50 @@ export class KubernetesRuntime implements ContainerRuntime {
     return containers;
   }
 
+  /**
+   * Resolve a stable identity for a pod by walking ownerReferences.
+   *
+   * - StatefulSet: pod name is already stable (web-0, web-1) → use pod name
+   * - DaemonSet/Job: use the controller's name
+   * - ReplicaSet: walk one more level to find the Deployment (cached per cycle)
+   * - No owner: use pod name (standalone pod)
+   *
+   * This makes consecutive pods of the same logical app share the same insightd entry.
+   */
+  private async resolveStableName(pod: V1Pod, rsCache: Map<string, string>): Promise<string> {
+    const ns = pod.metadata?.namespace ?? 'default';
+    const podName = pod.metadata?.name ?? 'unknown';
+    const owner = pod.metadata?.ownerReferences?.[0];
+    if (!owner) return podName;
+
+    switch (owner.kind) {
+      case 'StatefulSet':
+        // StatefulSet pods have deterministic names — keep the pod name
+        return podName;
+      case 'DaemonSet':
+      case 'Job':
+        return owner.name;
+      case 'ReplicaSet': {
+        // Walk up to the Deployment if there is one
+        const cacheKey = `${ns}/${owner.name}`;
+        const cached = rsCache.get(cacheKey);
+        if (cached !== undefined) return cached;
+        try {
+          const rs = await this.appsApi!.readNamespacedReplicaSet({ name: owner.name, namespace: ns });
+          const rsOwner = rs.metadata?.ownerReferences?.[0];
+          const stable = rsOwner?.kind === 'Deployment' ? rsOwner.name : owner.name;
+          rsCache.set(cacheKey, stable);
+          return stable;
+        } catch {
+          rsCache.set(cacheKey, owner.name);
+          return owner.name;
+        }
+      }
+      default:
+        return owner.name;
+    }
+  }
+
   async collectResources(containers: ContainerInfo[]): Promise<ContainerWithResources[]> {
     const result = containers as ContainerWithResources[];
 
@@ -167,8 +226,10 @@ export class KubernetesRuntime implements ContainerRuntime {
     for (const c of result) {
       if (c.status !== 'running') continue;
 
-      // Parse pod UID and container name from our ID format
-      const [podUid, containerName] = c.id.split('/');
+      // Parse the composite id: `${podUid}/${stableName}/${containerName}`
+      const parts = c.id.split('/');
+      const podUid = parts[0];
+      const containerName = parts[parts.length - 1];
       if (!podUid || !containerName) continue;
 
       const key = `${podUid}:${containerName}`;
@@ -210,19 +271,46 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   async fetchLogs(containerId: string, options: LogOptions): Promise<LogEntry[]> {
-    if (!this.coreApi) throw new Error('KubernetesRuntime not initialized');
+    if (!this.coreApi || !this.appsApi) throw new Error('KubernetesRuntime not initialized');
 
-    // Recover namespace/pod/container from the containerId.
-    // containerId format: `{podUid}/{containerName}` — we need to look up the pod
-    const [podUid, containerName] = containerId.split('/');
-    if (!podUid || !containerName) throw new Error(`Invalid container ID: ${containerId}`);
+    // Parse the composite id: `${podUid}/${stableName}/${containerName}`
+    // Older snapshots may use the legacy 2-segment form `${podUid}/${containerName}`
+    // — we still handle that for backwards compatibility.
+    const parts = containerId.split('/');
+    if (parts.length < 2) throw new Error(`Invalid container ID: ${containerId}`);
+    const podUid = parts[0];
+    const containerName = parts[parts.length - 1];
+    const stableName = parts.length >= 3 ? parts.slice(1, -1).join('/') : null;
 
-    // Find the pod by UID on this node
+    // Fetch all pods on this node once
     const pods = await this.coreApi.listPodForAllNamespaces({
       fieldSelector: `spec.nodeName=${this.nodeName}`,
     });
-    const pod = pods.items.find(p => p.metadata?.uid === podUid);
-    if (!pod) throw new Error(`Pod with UID ${podUid} not found on this node`);
+
+    // Try the recorded UID first — if the pod still exists, use it
+    let pod = pods.items.find(p => p.metadata?.uid === podUid);
+
+    // Fallback: pod was recreated since the snapshot. Find a current pod whose
+    // stable owner identity matches what we recorded.
+    if (!pod && stableName) {
+      const rsCache = new Map<string, string>();
+      for (const candidate of pods.items) {
+        if (candidate.status?.phase === 'Succeeded') continue;
+        const stable = await this.resolveStableName(candidate, rsCache);
+        if (stable === stableName) {
+          // Prefer running pods over others
+          if (candidate.status?.phase === 'Running') {
+            pod = candidate;
+            break;
+          }
+          if (!pod) pod = candidate;
+        }
+      }
+    }
+
+    if (!pod) {
+      throw new Error(`Pod for container "${containerId}" not found on this node`);
+    }
 
     const namespace = pod.metadata?.namespace || 'default';
     const podName = pod.metadata?.name || '';
