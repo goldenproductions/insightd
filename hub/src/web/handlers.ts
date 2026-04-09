@@ -688,9 +688,13 @@ async function handleUpdateHub(req: HandlerReq, res: ServerResponse, db: Databas
 function handleContainerAvailability(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get('days') || '7', 10) || 7));
-  const latest = queries.getLatestContainers(db, params.hostId)
-    .find((c: any) => c.container_name === params.containerName);
-  if (!latest) {
+  // Existence check uses raw DB lookup (not getLatestContainers, which filters
+  // out stale containers — historical availability should still work even
+  // for containers that have since been removed).
+  const exists = db.prepare(
+    'SELECT 1 FROM container_snapshots WHERE host_id = ? AND container_name = ? LIMIT 1'
+  ).get(params.hostId, params.containerName);
+  if (!exists) {
     res.statusCode = 404;
     return { error: 'Container not found' };
   }
