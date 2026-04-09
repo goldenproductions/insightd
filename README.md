@@ -17,17 +17,19 @@ No critical issues. Good week.
 ## Features
 
 - **Multi-host monitoring** — deploy agents on each server, all reporting to a central hub via MQTT
+- **Multi-runtime support** — Docker (default) and Kubernetes/k3s (DaemonSet mode), one agent per node
 - **Container monitoring** — status, CPU, RAM, restarts, network/block I/O, health checks
 - **Host system metrics** — CPU, memory, load, uptime, GPU, temperature, disk I/O, network I/O
 - **Disk monitoring** — usage warnings with "X days until full" forecasts
 - **HTTP endpoint monitoring** — uptime, response time, configurable intervals
-- **Insights engine** — time-of-day baselines, anomaly detection, predictive alerts, correlation detection, health scores (0-100)
+- **Smart insights engine** — capacity-based health scoring (only flags actual saturation, not baseline deviation), time-of-day baselines, predictive alerts, correlation detection
+- **Insights page** — dedicated `/insights` view with expandable cards, thumbs up/down feedback, and per-session dismiss
 - **Real-time alerts** — 10 alert types with cooldowns, auto-resolution, and webhook delivery
 - **Webhook notifications** — Slack, Discord, Telegram, ntfy, or any generic webhook
 - **Weekly digest emails** — HTML + plaintext summary of the week
-- **Container actions** — start/stop/restart/remove containers from the UI (opt-in)
+- **Container actions** — start/stop/restart/remove containers from the UI (opt-in, Docker mode only)
 - **Remove containers** — delete exited containers + clean all insightd data (alerts, history, baselines)
-- **Remote agent updates** — update agents from the hub UI via MQTT (opt-in)
+- **Remote agent updates** — update agents from the hub UI via MQTT (opt-in, Docker mode only)
 - **Image update detection** — compares local images against Docker Hub
 - **Explainable alerts** — every alert stores why it fired (value, threshold, message) so you can understand what happened
 - **Metric personalities** — baseline-aware human-friendly moods on every metric (e.g. "😌 Normal", "🔥 Way above normal")
@@ -89,6 +91,17 @@ docker run -d \
 
 Or use the setup command shown in the hub's **Add Agent** page.
 
+### Kubernetes / k3s
+
+Run the agent as a DaemonSet — one pod per node, each reports its node as a host. See [`docs/kubernetes-setup.md`](docs/kubernetes-setup.md) for the full guide.
+
+```bash
+kubectl apply -f agent/k8s/rbac.yaml
+kubectl apply -f agent/k8s/daemonset.yaml
+```
+
+Edit `agent/k8s/daemonset.yaml` first to set your `INSIGHTD_MQTT_URL`. Each pod's containers appear in insightd as `{namespace}/{pod-name}/{container-name}`. K8s mode is read-only — actions and image update checks aren't supported (those are managed by the cluster).
+
 ## Web UI
 
 The hub serves a dashboard at `http://localhost:3000`:
@@ -100,6 +113,7 @@ The hub serves a dashboard at `http://localhost:3000`:
 - **Endpoints** — HTTP endpoint monitoring with uptime timelines
 - **Services** — container groups with aggregate status
 - **Alerts** — full alert history with reason, trigger value, and threshold
+- **Insights** — analytical signals (predictions, trends, performance) with thumbs up/down feedback
 - **Updates** — available image updates, remote agent updates
 - **Status page** — public uptime view (enable with `INSIGHTD_STATUS_PAGE=true`)
 - **Settings** — email, alerts, thresholds, API keys
@@ -128,6 +142,7 @@ All configuration can be done via the **Setup Wizard** and **Settings page** in 
 |----------|---------|-------------|
 | `INSIGHTD_MQTT_URL` | — | MQTT broker URL (enables hub mode) |
 | `INSIGHTD_HOST_ID` | `local` | Identifies this host in multi-host setups |
+| `INSIGHTD_RUNTIME` | `auto` | Container runtime: `auto`, `docker`, or `kubernetes` |
 | `INSIGHTD_ADMIN_PASSWORD` | — | Admin password for the web UI |
 | `INSIGHTD_ALLOW_ACTIONS` | `false` | Enable container start/stop/restart from UI |
 | `INSIGHTD_ALLOW_UPDATES` | `false` | Enable remote agent updates from hub |
