@@ -8,7 +8,7 @@ const { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost } = 
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
-  upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null) => void;
+  upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string) => void;
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
 };
 
@@ -73,6 +73,7 @@ interface CollectionPayload {
     net_tx_bytes_per_sec?: number | null;
   };
   agent_version?: string;
+  runtime_type?: string;
 }
 
 interface UpdatesPayload {
@@ -219,7 +220,7 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     usedPercent: d.used_percent,
   }));
 
-  upsertHost(db, hostId, payload.agent_version || null);
+  upsertHost(db, hostId, payload.agent_version || null, payload.runtime_type || 'docker');
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
     const { autoAssignGroups } = require('./web/group-queries');

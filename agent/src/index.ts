@@ -6,6 +6,8 @@ const { config, validate } = require('./config') as {
   config: {
     hostId: string;
     runtime: 'auto' | 'docker' | 'containerd' | 'kubernetes';
+    nodeName: string;
+    nodeIp: string;
     dockerSocket: string;
     mqttUrl: string;
     mqttUser: string;
@@ -39,6 +41,8 @@ async function main(): Promise<void> {
       runtime: config.runtime,
       dockerSocket: config.dockerSocket,
       allowActions: config.allowActions,
+      nodeName: config.nodeName,
+      nodeIp: config.nodeIp,
     });
   } catch (err) {
     logger.error('runtime', 'Cannot initialize container runtime', err);

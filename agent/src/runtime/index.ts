@@ -1,6 +1,7 @@
 import logger = require('../../../shared/utils/logger');
 import type { ContainerRuntime, RuntimeName } from './types';
 import { DockerRuntime } from './docker';
+import { KubernetesRuntime } from './kubernetes';
 import { detectRuntime } from './detect';
 
 export interface RuntimeOptions {
@@ -10,6 +11,10 @@ export interface RuntimeOptions {
   dockerSocket: string;
   /** Whether to allow start/stop/restart/remove actions. */
   allowActions: boolean;
+  /** K8s node name (required when runtime === 'kubernetes'). From NODE_NAME env. */
+  nodeName?: string;
+  /** K8s node IP (optional, used to construct kubelet URL). From NODE_IP env. */
+  nodeIp?: string;
 }
 
 /**
@@ -29,9 +34,16 @@ export async function getRuntime(options: RuntimeOptions): Promise<ContainerRunt
       });
       break;
     case 'containerd':
-      throw new Error('containerd runtime not yet implemented (planned for Phase 2)');
+      throw new Error('containerd runtime is not supported. Use docker or kubernetes.');
     case 'kubernetes':
-      throw new Error('kubernetes runtime not yet implemented (planned for Phase 3)');
+      if (!options.nodeName) {
+        throw new Error('Kubernetes runtime requires NODE_NAME env var (set via downward API in DaemonSet)');
+      }
+      runtime = new KubernetesRuntime({
+        nodeName: options.nodeName,
+        nodeIp: options.nodeIp,
+      });
+      break;
     default:
       throw new Error(`Unknown runtime: ${resolved}`);
   }
@@ -42,3 +54,4 @@ export async function getRuntime(options: RuntimeOptions): Promise<ContainerRunt
 
 export type { ContainerRuntime, RuntimeName } from './types';
 export { DockerRuntime } from './docker';
+export { KubernetesRuntime } from './kubernetes';

@@ -1,8 +1,8 @@
 const VERSION = process.env.INSIGHTD_VERSION || '0.3.0';
 
 const config = Object.freeze({
-  // Host identification (required)
-  hostId: process.env.INSIGHTD_HOST_ID || 'local',
+  // Host identification (required). In k8s DaemonSet mode, falls back to NODE_NAME.
+  hostId: process.env.INSIGHTD_HOST_ID || process.env.NODE_NAME || 'local',
 
   // MQTT broker
   mqttUrl: process.env.INSIGHTD_MQTT_URL || '',
@@ -11,6 +11,10 @@ const config = Object.freeze({
 
   // Container runtime — 'auto' detects Docker/containerd/k8s; can be forced to one
   runtime: (process.env.INSIGHTD_RUNTIME || 'auto') as 'auto' | 'docker' | 'containerd' | 'kubernetes',
+
+  // Kubernetes (DaemonSet mode) — set via downward API in the pod spec
+  nodeName: process.env.NODE_NAME || '',
+  nodeIp: process.env.NODE_IP || '',
 
   // Docker
   dockerSocket: process.env.DOCKER_HOST || '/var/run/docker.sock',
