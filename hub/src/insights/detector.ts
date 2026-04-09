@@ -15,6 +15,7 @@ interface ContainerIdRow {
 interface HostSnapshotRow {
   cpu_percent: number | null;
   memory_used_mb: number | null;
+  memory_total_mb: number | null;
   load_5: number | null;
   [key: string]: number | null | string | undefined;
 }
@@ -131,7 +132,11 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
       }
 
       // Memory: only flag sustained >85% of total
-      const memPcts = recent.map(r => r.memory_used_mb != null && r.memory_total_mb ? (r.memory_used_mb / r.memory_total_mb) * 100 : null).filter((v): v is number => v != null);
+      const memPcts = recent.map(r => {
+        const used = r.memory_used_mb;
+        const total = r.memory_total_mb;
+        return used != null && total ? (used / total) * 100 : null;
+      }).filter((v): v is number => v != null);
       if (memPcts.length >= 6 && memPcts.every(v => v > 85)) {
         insert.run('host', host_id, 'performance', memPcts[0] > 95 ? 'critical' : 'warning',
           `Memory pressure on ${host_id}`,
@@ -175,7 +180,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         count++;
       }
       // Memory trend: only flag if we know total and usage is above 50% of capacity AND grew 1.5x
-      const memTotal = recent.length > 0 ? (recent[0] as any).memory_total_mb as number | null : null;
+      const memTotal = recent.length > 0 ? recent[0].memory_total_mb : null;
       const memPct = memTotal ? ((thisWeekAvg.mem ?? 0) / memTotal) * 100 : null;
       if (lastWeekAvg.mem != null && lastWeekAvg.mem > 0 && thisWeekAvg.mem != null
           && thisWeekAvg.mem > lastWeekAvg.mem * 1.5
