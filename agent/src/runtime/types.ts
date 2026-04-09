@@ -54,6 +54,27 @@ export interface ActionResult {
 }
 
 /**
+ * Runtime-specific override for host-level metrics. Used by containerized
+ * runtimes (e.g. Kubernetes) where /proc/* and /sys/* reflect the underlying
+ * machine's kernel — not the container or node the agent reports on.
+ *
+ * Each field is optional. The scheduler only overrides values where the
+ * runtime returns a non-undefined replacement. Values explicitly set to
+ * `null` mean "this runtime can't observe this metric meaningfully — emit
+ * NULL rather than the bogus /proc value".
+ */
+export interface HostMetricsOverride {
+  cpuPercent?: number | null;
+  memoryUsedMb?: number | null;
+  memoryAvailableMb?: number | null;
+  memoryTotalMb?: number | null;
+  load1?: number | null;
+  load5?: number | null;
+  load15?: number | null;
+  uptimeSeconds?: number | null;
+}
+
+/**
  * Common interface for all container runtime implementations.
  * A runtime abstracts away the differences between Docker, containerd,
  * and Kubernetes, providing a consistent API for insightd's collectors
@@ -104,11 +125,12 @@ export interface ContainerRuntime {
   checkImageUpdates(): Promise<ImageUpdate[]>;
 
   /**
-   * Optional: returns a runtime-specific host uptime in seconds.
-   * Used by containerized runtimes (e.g. Kubernetes) where /proc/uptime
-   * reflects the underlying machine's kernel — not the container or node
-   * the agent is reporting on. Returns null if unavailable; the scheduler
-   * falls back to the value from /proc/uptime.
+   * Optional: returns a runtime-specific override for host metrics.
+   * Used by containerized runtimes where /proc/* and /sys/* reflect the
+   * underlying kernel rather than the node the agent reports on. The
+   * scheduler merges the returned fields into the host snapshot, falling
+   * back to the /proc value for any field the runtime doesn't override.
+   * Returns null on failure (scheduler keeps the /proc values).
    */
-  getHostUptimeSeconds?(): Promise<number | null>;
+  getHostMetrics?(): Promise<HostMetricsOverride | null>;
 }

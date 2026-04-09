@@ -1,8 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { parseCadvisorMetrics } = require('../../agent/src/runtime/kubernetes') as {
+const { parseCadvisorMetrics, parseQuantity, KubernetesRuntime } = require('../../agent/src/runtime/kubernetes') as {
   parseCadvisorMetrics: (raw: string) => Map<string, any>;
+  parseQuantity: (q: string | undefined | null) => number | null;
+  KubernetesRuntime: any;
 };
 
 describe('parseCadvisorMetrics', () => {
@@ -131,5 +133,153 @@ describe('parseCadvisorMetrics', () => {
     const result = parseCadvisorMetrics(raw);
     // The first line is skipped, the second adds 5
     assert.equal(result.get('uid-8:c').cpuUsageSeconds, 5);
+  });
+});
+
+describe('parseQuantity', () => {
+  it('parses bytes with no suffix', () => {
+    assert.equal(parseQuantity('1234567'), 1234567);
+  });
+
+  it('parses decimal SI suffixes', () => {
+    assert.equal(parseQuantity('1k'), 1000);
+    assert.equal(parseQuantity('1M'), 1_000_000);
+    assert.equal(parseQuantity('1G'), 1_000_000_000);
+    assert.equal(parseQuantity('1T'), 1e12);
+  });
+
+  it('parses binary IEC suffixes', () => {
+    assert.equal(parseQuantity('1Ki'), 1024);
+    assert.equal(parseQuantity('1Mi'), 1024 ** 2);
+    assert.equal(parseQuantity('1Gi'), 1024 ** 3);
+    assert.equal(parseQuantity('16Gi'), 16 * 1024 ** 3);
+    assert.equal(parseQuantity('16384Mi'), 16384 * 1024 ** 2);
+  });
+
+  it('parses decimal-valued quantities', () => {
+    assert.equal(parseQuantity('1.5Gi'), 1.5 * 1024 ** 3);
+  });
+
+  it('returns null for null/undefined/empty', () => {
+    assert.equal(parseQuantity(null), null);
+    assert.equal(parseQuantity(undefined), null);
+    assert.equal(parseQuantity(''), null);
+  });
+
+  it('returns null for unrecognized suffix', () => {
+    assert.equal(parseQuantity('100zi'), null);
+  });
+
+  it('returns null for non-numeric input', () => {
+    assert.equal(parseQuantity('abc'), null);
+    assert.equal(parseQuantity('NaN'), null);
+  });
+});
+
+describe('KubernetesRuntime.getHostMetrics', () => {
+  // We can't run init() without a real cluster, so we instantiate the runtime
+  // and inject minimal stubs for the private fields the method touches.
+  function makeRuntime(stubs: { kubeletStats: any; node: any | null }): any {
+    const runtime = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    runtime.coreApi = {
+      readNode: async (_args: { name: string }) => {
+        if (stubs.node === null) throw new Error('node not found');
+        return stubs.node;
+      },
+    };
+    runtime.fetchKubeletStats = async () => stubs.kubeletStats;
+    return runtime;
+  }
+
+  it('combines kubelet stats and Node API capacity into a metrics override', async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const runtime = makeRuntime({
+      kubeletStats: {
+        node: {
+          // 0.5 cores out of 4 → 12.5%
+          cpu: { usageNanoCores: 500_000_000 },
+          // 2 GiB used, 2 GiB free
+          memory: { workingSetBytes: 2 * 1024 ** 3, availableBytes: 2 * 1024 ** 3 },
+        },
+      },
+      node: {
+        metadata: { creationTimestamp: oneHourAgo },
+        status: {
+          capacity: { cpu: '4', memory: '4Gi' },
+          allocatable: { cpu: '4', memory: '4Gi' },
+        },
+      },
+    });
+
+    const m = await runtime.getHostMetrics();
+    assert.ok(m);
+    assert.equal(m.cpuPercent, 12.5);
+    assert.equal(m.memoryUsedMb, 2048);
+    assert.equal(m.memoryAvailableMb, 2048);
+    assert.equal(m.memoryTotalMb, 4096);
+    // Uptime comes from Node.metadata.creationTimestamp (~3600s)
+    assert.ok(m.uptimeSeconds! >= 3590 && m.uptimeSeconds! <= 3610, `~3600s, got ${m.uptimeSeconds}`);
+    // Load and (implicitly) temperature are explicitly null in k8s
+    assert.equal(m.load1, null);
+    assert.equal(m.load5, null);
+    assert.equal(m.load15, null);
+  });
+
+  it('ignores kubelet startTime even when present (it returns the host kernel boot time inside k3d)', async () => {
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const longAgo = '2025-01-01T00:00:00Z'; // would be many days; must be ignored
+    const runtime = makeRuntime({
+      kubeletStats: { node: { startTime: longAgo, cpu: {}, memory: {} } },
+      node: {
+        metadata: { creationTimestamp: oneDayAgo },
+        status: { capacity: { cpu: '2', memory: '2Gi' }, allocatable: { cpu: '2', memory: '2Gi' } },
+      },
+    });
+    const m = await runtime.getHostMetrics();
+    assert.ok(m);
+    // Should be ~24h (from creationTimestamp), NOT ~100+ days (from kubelet startTime)
+    assert.ok(m.uptimeSeconds! >= 86_390 && m.uptimeSeconds! <= 86_410, `expected ~86400s, got ${m.uptimeSeconds}`);
+  });
+
+  it('returns null fields when kubelet provides no usage data', async () => {
+    const runtime = makeRuntime({
+      kubeletStats: { node: { cpu: {}, memory: {} } },
+      node: {
+        metadata: { creationTimestamp: new Date().toISOString() },
+        status: { capacity: { cpu: '2', memory: '2Gi' }, allocatable: { cpu: '2', memory: '2Gi' } },
+      },
+    });
+    const m = await runtime.getHostMetrics();
+    assert.ok(m);
+    assert.equal(m.cpuPercent, undefined);
+    assert.equal(m.memoryUsedMb, undefined);
+    assert.equal(m.memoryAvailableMb, undefined);
+    // memoryTotalMb still comes from Node capacity
+    assert.equal(m.memoryTotalMb, 2048);
+  });
+
+  it('returns null when both kubelet and Node API fail', async () => {
+    const runtime = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    runtime.coreApi = {
+      readNode: async () => { throw new Error('api down'); },
+    };
+    runtime.fetchKubeletStats = async () => { throw new Error('kubelet down'); };
+    const m = await runtime.getHostMetrics();
+    assert.equal(m, null);
+  });
+
+  it('prefers allocatable over capacity for total memory', async () => {
+    const runtime = makeRuntime({
+      kubeletStats: { node: { cpu: {}, memory: {} } },
+      node: {
+        metadata: { creationTimestamp: new Date().toISOString() },
+        status: {
+          capacity:    { cpu: '4', memory: '8Gi' },
+          allocatable: { cpu: '4', memory: '7800Mi' },  // ~200 Mi reserved for system
+        },
+      },
+    });
+    const m = await runtime.getHostMetrics();
+    assert.equal(m!.memoryTotalMb, 7800);
   });
 });

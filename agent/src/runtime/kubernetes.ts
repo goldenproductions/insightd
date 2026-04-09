@@ -4,6 +4,7 @@ import logger = require('../../../shared/utils/logger');
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
+  HostMetricsOverride,
 } from './types';
 
 // Import types for @kubernetes/client-node — the module itself is ESM-only
@@ -342,32 +343,125 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   /**
-   * Use the Node object's creationTimestamp as the uptime source.
+   * Override host metrics with the kubelet's view of the node.
    *
-   * /proc/uptime is a kernel-namespace value, so inside a containerized
-   * agent (e.g. k3d, where each "node" is a Docker container running k3s)
-   * it reports the underlying machine's uptime, not the node's. K8s nodes
-   * register with the API on startup, so creationTimestamp is the closest
-   * authoritative signal for "when did this node come online".
+   * /proc/* and /sys/* inside a containerized agent (e.g. k3d, where each
+   * "node" is a Docker container running k3s) reflect the underlying
+   * machine's kernel — they have no idea they're in a container. CPU%,
+   * memory totals, load average, temperature, and uptime are all the
+   * underlying VM's, not the node's.
    *
-   * Limitation: if a node container is restarted while the Node object
-   * persists in etcd (e.g. kubelet rejoins under the same name), this
-   * still reports from the original cluster registration. Acceptable
-   * trade-off — for the common k3d/fresh-cluster case it's correct.
+   * Kubelet exposes per-node stats at `/stats/summary` (used here) and the
+   * Node API has the static capacity info. We combine both to override the
+   * /proc values where we have a meaningful replacement, and explicitly
+   * NULL out fields we genuinely cannot observe in k8s mode (load average,
+   * which is a kernel concept that doesn't map to a single node anyway).
+   *
+   * Returns null on any failure — the scheduler then keeps the /proc values.
    */
-  async getHostUptimeSeconds(): Promise<number | null> {
+  async getHostMetrics(): Promise<HostMetricsOverride | null> {
     if (!this.coreApi) return null;
     try {
-      const node = await this.coreApi.readNode({ name: this.nodeName });
-      const ct = node.metadata?.creationTimestamp;
-      if (!ct) return null;
-      const ms = new Date(ct).getTime();
-      if (!Number.isFinite(ms)) return null;
-      const sec = Math.floor((Date.now() - ms) / 1000);
-      return sec >= 0 ? sec : null;
+      const [stats, node] = await Promise.all([
+        this.fetchKubeletStats().catch(() => null),
+        this.coreApi.readNode({ name: this.nodeName }).catch(() => null),
+      ]);
+      if (!stats && !node) return null;
+
+      const ns = (stats?.node || {}) as Record<string, any>;
+      const cpu = (ns.cpu || {}) as { usageNanoCores?: number };
+      const mem = (ns.memory || {}) as { workingSetBytes?: number; availableBytes?: number };
+
+      // CPU% — kubelet exposes a snapshot rate in nanoCores. Divide by core
+      // count to get the per-core percentage (0–100 across the whole node).
+      let cpuPercent: number | null | undefined = undefined;
+      const cpuCount = parseInt(node?.status?.capacity?.cpu || '0', 10);
+      if (cpu.usageNanoCores != null && cpuCount > 0) {
+        cpuPercent = Math.round((cpu.usageNanoCores / 1e9 / cpuCount) * 100 * 100) / 100;
+      }
+
+      const memoryUsedMb = mem.workingSetBytes != null
+        ? Math.round((mem.workingSetBytes / 1024 / 1024) * 100) / 100
+        : undefined;
+      const memoryAvailableMb = mem.availableBytes != null
+        ? Math.round((mem.availableBytes / 1024 / 1024) * 100) / 100
+        : undefined;
+
+      // Total memory: prefer Node.status.allocatable (what workloads can use),
+      // fall back to capacity (physical/configured limit). Both are k8s
+      // quantity strings like "16384Mi" that need parsing.
+      const allocBytes = parseQuantity(node?.status?.allocatable?.memory);
+      const capBytes = parseQuantity(node?.status?.capacity?.memory);
+      const totalBytes = allocBytes ?? capBytes;
+      const memoryTotalMb = totalBytes != null
+        ? Math.round((totalBytes / 1024 / 1024) * 100) / 100
+        : undefined;
+
+      // Uptime: use Node.metadata.creationTimestamp (when the node
+      // registered with the cluster). Kubelet's `stats.node.startTime`
+      // looks promising but actually returns the *kernel boot time* of
+      // the underlying machine — same trap as /proc/uptime, since the
+      // kubelet running inside a k3d container reads the host kernel.
+      let uptimeSeconds: number | null | undefined = undefined;
+      const startSource = node?.metadata?.creationTimestamp;
+      if (startSource) {
+        const ms = new Date(startSource).getTime();
+        if (Number.isFinite(ms)) {
+          const sec = Math.floor((Date.now() - ms) / 1000);
+          if (sec >= 0) uptimeSeconds = sec;
+        }
+      }
+
+      return {
+        cpuPercent,
+        memoryUsedMb,
+        memoryAvailableMb,
+        memoryTotalMb,
+        // K8s nodes have no meaningful per-node load average (it's a kernel
+        // concept that's shared across all containers on the host). Suppress
+        // the bogus /proc value rather than report something misleading.
+        load1: null,
+        load5: null,
+        load15: null,
+        uptimeSeconds,
+      };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Fetch the kubelet's `/stats/summary` JSON. This is the per-node view
+   * the kubelet maintains for its own scheduling decisions — much more
+   * accurate than scraping cAdvisor for node-level totals.
+   */
+  private fetchKubeletStats(): Promise<any> {
+    return new Promise((resolve, reject) => {
+      const url = new URL('/stats/summary', this.kubeletUrl);
+      const req = https.request({
+        hostname: url.hostname,
+        port: url.port || 10250,
+        path: url.pathname,
+        method: 'GET',
+        headers: this.kubeletToken ? { Authorization: `Bearer ${this.kubeletToken}` } : {},
+        ca: this.caCert ?? undefined,
+        rejectUnauthorized: false,
+      }, (res) => {
+        let body = '';
+        res.on('data', chunk => body += chunk);
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`Kubelet /stats/summary returned ${res.statusCode}`));
+            return;
+          }
+          try { resolve(JSON.parse(body)); }
+          catch (err) { reject(err as Error); }
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error('Kubelet timeout')); });
+      req.end();
+    });
   }
 
   /**
@@ -514,6 +608,39 @@ function parseLabels(labelsStr: string): Record<string, string> {
     out[m[1]] = m[2];
   }
   return out;
+}
+
+/**
+ * Parse a Kubernetes resource quantity string into bytes (for memory) or
+ * a plain number (for cpu/count). Supports decimal SI suffixes (k, M, G, T, P)
+ * and binary IEC suffixes (Ki, Mi, Gi, Ti, Pi). Returns null on parse failure.
+ *
+ * Examples: "16384Mi" → 17179869184, "16Gi" → 17179869184, "100m" is NOT
+ * supported here (it's milli-units, only meaningful for CPU which we read
+ * from `capacity.cpu` as an integer count).
+ */
+export function parseQuantity(q: string | undefined | null): number | null {
+  if (!q) return null;
+  const match = String(q).match(/^(\d+(?:\.\d+)?)\s*([a-zA-Z]*)$/);
+  if (!match) return null;
+  const num = parseFloat(match[1]);
+  if (!Number.isFinite(num)) return null;
+  const suffix = match[2];
+  const multipliers: Record<string, number> = {
+    '':   1,
+    'k':  1e3,
+    'M':  1e6,
+    'G':  1e9,
+    'T':  1e12,
+    'P':  1e15,
+    'Ki': 1024,
+    'Mi': 1024 ** 2,
+    'Gi': 1024 ** 3,
+    'Ti': 1024 ** 4,
+    'Pi': 1024 ** 5,
+  };
+  const mult = multipliers[suffix];
+  return mult != null ? num * mult : null;
 }
 
 function splitKubeTimestamp(line: string): { timestamp: string | null; message: string } {

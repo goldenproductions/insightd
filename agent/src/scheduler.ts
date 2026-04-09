@@ -35,17 +35,42 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     const disk = await safeCollect('disk', () => Promise.resolve(collectDisk(config))) || [];
     const host = await safeCollect('host', () => Promise.resolve(collectHost(config)));
 
-    // For containerized runtimes (k8s), /proc/uptime gives the underlying
-    // machine's uptime, not the node's. Override with the runtime's value
-    // if it provides one.
-    if (host && runtime.getHostUptimeSeconds) {
-      const runtimeUptime = await safeCollect('runtime-uptime', () => runtime.getHostUptimeSeconds!());
-      if (runtimeUptime != null) host.uptimeSeconds = runtimeUptime;
+    // For containerized runtimes (k8s), /proc/* and /sys/* reflect the
+    // underlying machine's kernel — not the node we're reporting on. Ask
+    // the runtime for an authoritative override and merge it into `host`,
+    // skipping fields the runtime doesn't observe.
+    if (host && runtime.getHostMetrics) {
+      const override = await safeCollect('runtime-host-metrics', () => runtime.getHostMetrics!());
+      if (override) {
+        if (override.cpuPercent !== undefined) host.cpuPercent = override.cpuPercent;
+        if (override.uptimeSeconds !== undefined) host.uptimeSeconds = override.uptimeSeconds;
+        if (override.memoryUsedMb !== undefined || override.memoryAvailableMb !== undefined || override.memoryTotalMb !== undefined) {
+          host.memory = host.memory || { totalMb: 0, usedMb: 0, availableMb: 0, swapTotalMb: 0, swapUsedMb: 0 };
+          if (override.memoryUsedMb !== undefined) host.memory.usedMb = override.memoryUsedMb;
+          if (override.memoryAvailableMb !== undefined) host.memory.availableMb = override.memoryAvailableMb;
+          if (override.memoryTotalMb !== undefined) host.memory.totalMb = override.memoryTotalMb;
+          // Swap is meaningless inside a k8s container — suppress
+          host.memory.swapTotalMb = 0;
+          host.memory.swapUsedMb = 0;
+        }
+        if (override.load1 !== undefined || override.load5 !== undefined || override.load15 !== undefined) {
+          host.load = host.load || { load1: 0, load5: 0, load15: 0 };
+          if (override.load1 !== undefined) host.load.load1 = override.load1;
+          if (override.load5 !== undefined) host.load.load5 = override.load5;
+          if (override.load15 !== undefined) host.load.load15 = override.load15;
+        }
+      }
     }
-    const gpu = await safeCollect('gpu', () => Promise.resolve(collectGpu()));
-    const temperature = await safeCollect('temperature', () => Promise.resolve(collectTemperature(config)));
-    const diskIO = await safeCollect('disk-io', () => Promise.resolve(collectDiskIO(config)));
-    const networkIO = await safeCollect('network-io', () => Promise.resolve(collectNetworkIO(config)));
+
+    // The remaining /proc and /sys collectors are also kernel-namespace.
+    // In k8s mode they read the underlying machine's view, which is wrong
+    // for the node we're reporting on. Skip them entirely — better to
+    // emit NULL than a misleading value.
+    const isK8s = runtime.name === 'kubernetes';
+    const gpu = isK8s ? null : await safeCollect('gpu', () => Promise.resolve(collectGpu()));
+    const temperature = isK8s ? null : await safeCollect('temperature', () => Promise.resolve(collectTemperature(config)));
+    const diskIO = isK8s ? null : await safeCollect('disk-io', () => Promise.resolve(collectDiskIO(config)));
+    const networkIO = isK8s ? null : await safeCollect('network-io', () => Promise.resolve(collectNetworkIO(config)));
 
     logger.info('scheduler', 'Collection cycle complete');
 
