@@ -7,17 +7,17 @@ interface HostConfig {
 }
 
 interface MemoryInfo {
-  totalMb: number;
-  usedMb: number;
-  availableMb: number;
-  swapTotalMb: number;
-  swapUsedMb: number;
+  totalMb: number | null;
+  usedMb: number | null;
+  availableMb: number | null;
+  swapTotalMb: number | null;
+  swapUsedMb: number | null;
 }
 
 interface LoadAvg {
-  load1: number;
-  load5: number;
-  load15: number;
+  load1: number | null;
+  load5: number | null;
+  load15: number | null;
 }
 
 interface HostData {
@@ -42,7 +42,7 @@ function collectHost(config: HostConfig): HostData {
   const load = readLoadAvg(procPath);
   const uptimeSeconds = readUptime(procPath);
 
-  logger.info('host', `CPU=${cpuPercent ?? 'pending'}% MEM=${memory ? Math.round(memory.usedMb) : '?'}/${memory ? Math.round(memory.totalMb) : '?'}MB Load=${load ? load.load1 : '?'}`);
+  logger.info('host', `CPU=${cpuPercent ?? 'pending'}% MEM=${memory?.usedMb != null ? Math.round(memory.usedMb) : '?'}/${memory?.totalMb != null ? Math.round(memory.totalMb) : '?'}MB Load=${load?.load1 ?? '?'}`);
 
   return { cpuPercent, memory, load, uptimeSeconds };
 }
