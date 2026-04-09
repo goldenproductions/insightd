@@ -102,4 +102,13 @@ export interface ContainerRuntime {
    * Only called if supportsUpdateChecks is true.
    */
   checkImageUpdates(): Promise<ImageUpdate[]>;
+
+  /**
+   * Optional: returns a runtime-specific host uptime in seconds.
+   * Used by containerized runtimes (e.g. Kubernetes) where /proc/uptime
+   * reflects the underlying machine's kernel — not the container or node
+   * the agent is reporting on. Returns null if unavailable; the scheduler
+   * falls back to the value from /proc/uptime.
+   */
+  getHostUptimeSeconds?(): Promise<number | null>;
 }
