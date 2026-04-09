@@ -51,12 +51,12 @@ export function DashboardPage() {
 
       {data.topInsights && <InsightsFeed insights={data.topInsights} />}
 
-      {/* Services */}
+      {/* Stacks */}
       {data.groups && data.groups.length > 0 && (
-        <Card title="Services">
+        <Card title="Stacks">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {data.groups.map(g => (
-              <Link key={g.id} to={`/services/${g.id}`} className="block rounded-lg p-3 hover-surface card-interactive border border-border" style={{ borderLeft: `3px solid ${g.color || 'var(--color-info)'}` }}
+              <Link key={g.id} to={`/stacks/${g.id}`} className="block rounded-lg p-3 hover-surface card-interactive border border-border" style={{ borderLeft: `3px solid ${g.color || 'var(--color-info)'}` }}
               >
                 <div className="font-medium text-sm text-fg">{g.icon && <span className="mr-1">{g.icon}</span>}{g.name}</div>
                 <div className="text-xs mt-1 text-muted">

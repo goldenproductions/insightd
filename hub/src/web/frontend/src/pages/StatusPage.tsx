@@ -50,10 +50,10 @@ export function StatusPage() {
           </div>
         </div>
 
-        {/* Services */}
+        {/* Stacks */}
         {data.groups.length > 0 && (
           <div>
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-secondary">Services</h2>
+            <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-secondary">Stacks</h2>
             <div className="space-y-3">
               {data.groups.map(g => (
                 <div key={g.id} className="rounded-xl p-4 bg-surface border border-border">
