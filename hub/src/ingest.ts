@@ -121,19 +121,25 @@ function ingestUpdates(db: Database.Database, hostId: string, updates: UpdateRes
 /**
  * Update or insert host record.
  */
-function upsertHost(db: Database.Database, hostId: string, agentVersion?: string): void {
+function upsertHost(db: Database.Database, hostId: string, agentVersion?: string, runtimeType?: string): void {
+  const rt = runtimeType || 'docker';
   if (agentVersion) {
     db.prepare(`
-      INSERT INTO hosts (host_id, first_seen, last_seen, agent_version)
-      VALUES (?, datetime('now'), datetime('now'), ?)
-      ON CONFLICT(host_id) DO UPDATE SET last_seen = datetime('now'), agent_version = excluded.agent_version
-    `).run(hostId, agentVersion);
+      INSERT INTO hosts (host_id, first_seen, last_seen, agent_version, runtime_type)
+      VALUES (?, datetime('now'), datetime('now'), ?, ?)
+      ON CONFLICT(host_id) DO UPDATE SET
+        last_seen = datetime('now'),
+        agent_version = excluded.agent_version,
+        runtime_type = excluded.runtime_type
+    `).run(hostId, agentVersion, rt);
   } else {
     db.prepare(`
-      INSERT INTO hosts (host_id, first_seen, last_seen)
-      VALUES (?, datetime('now'), datetime('now'))
-      ON CONFLICT(host_id) DO UPDATE SET last_seen = datetime('now')
-    `).run(hostId);
+      INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type)
+      VALUES (?, datetime('now'), datetime('now'), ?)
+      ON CONFLICT(host_id) DO UPDATE SET
+        last_seen = datetime('now'),
+        runtime_type = excluded.runtime_type
+    `).run(hostId, rt);
   }
 }
 

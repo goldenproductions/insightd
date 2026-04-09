@@ -7,9 +7,10 @@
     "start": "tsx src/index.ts"
   },
   "dependencies": {
-    "tsx": "^4.19.0",
+    "@kubernetes/client-node": "^1.4.0",
     "dockerode": "^4.0.10",
     "mqtt": "^5.10.0",
-    "node-cron": "^4.2.1"
+    "node-cron": "^4.2.1",
+    "tsx": "^4.19.0"
   }
 }

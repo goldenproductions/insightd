@@ -1,0 +1,100 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: insightd
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: insightd-agent
+  namespace: insightd
+  labels:
+    app: insightd-agent
+spec:
+  selector:
+    matchLabels:
+      app: insightd-agent
+  template:
+    metadata:
+      labels:
+        app: insightd-agent
+    spec:
+      serviceAccountName: insightd-agent
+      hostPID: false
+      hostNetwork: false
+      tolerations:
+        # Run on all nodes including control plane
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+      containers:
+        - name: agent
+          image: andreas404/insightd-agent:latest
+          imagePullPolicy: Always
+          env:
+            - name: INSIGHTD_RUNTIME
+              value: kubernetes
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: INSIGHTD_HOST_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: INSIGHTD_MQTT_URL
+              # Replace with your mosquitto broker URL
+              value: mqtt://your-mqtt-broker:1883
+            - name: INSIGHTD_MQTT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: insightd-mqtt
+                  key: username
+                  optional: true
+            - name: INSIGHTD_MQTT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: insightd-mqtt
+                  key: password
+                  optional: true
+            - name: INSIGHTD_HOST_ROOT
+              value: /host
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 10m
+            limits:
+              memory: 256Mi
+              cpu: 200m
+          volumeMounts:
+            # Read host /proc and /sys for host metrics collector
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: rootfs
+              mountPath: /host
+              readOnly: true
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: rootfs
+          hostPath:
+            path: /

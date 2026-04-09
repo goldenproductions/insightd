@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -14,7 +14,8 @@ function bootstrap(db: Database.Database): void {
       host_id       TEXT PRIMARY KEY,
       first_seen    TEXT NOT NULL DEFAULT (datetime('now')),
       last_seen     TEXT NOT NULL DEFAULT (datetime('now')),
-      agent_version TEXT
+      agent_version TEXT,
+      runtime_type  TEXT NOT NULL DEFAULT 'docker'
     );
 
     CREATE TABLE IF NOT EXISTS container_snapshots (
@@ -362,6 +363,9 @@ function migrate(db: Database.Database, fromVersion: number): void {
         UNIQUE(entity_type, entity_id, category, metric)
       );
     `);
+  }
+  if (fromVersion < 15) {
+    try { db.exec("ALTER TABLE hosts ADD COLUMN runtime_type TEXT NOT NULL DEFAULT 'docker'"); } catch { /* already exists */ }
   }
 }
 
