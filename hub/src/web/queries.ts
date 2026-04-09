@@ -286,6 +286,11 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
 }
 
 function getLatestContainers(db: Database.Database, hostId: string, showInternal: boolean = false): ContainerRow[] {
+  // Only return containers seen in the last 15 minutes — drops "ghost" entries
+  // for containers that were once reported but have since been deleted or
+  // filtered out (e.g. completed K8s Job pods, removed Docker containers).
+  // Historical snapshots stay in the DB for the timeline view; this only
+  // affects the current host detail view.
   const rows = db.prepare(`
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
@@ -299,6 +304,7 @@ function getLatestContainers(db: Database.Database, hostId: string, showInternal
     ) latest ON cs.host_id = latest.host_id
       AND cs.container_name = latest.container_name
       AND cs.collected_at = latest.max_at
+    WHERE cs.collected_at > datetime('now', '-15 minutes')
     ORDER BY cs.container_name
   `).all(hostId) as ContainerRow[];
   if (showInternal) return rows;
@@ -375,6 +381,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     ) latest ON cs.host_id = latest.h
       AND cs.container_name = latest.cn
       AND cs.collected_at = latest.max_at
+    WHERE cs.collected_at > datetime('now', '-15 minutes')
   `).all() as ContainerStatusRow[];
   const filtered = showInternal ? allContainers : allContainers.filter(c => {
     if (!c.labels) return true;
