@@ -1,21 +1,23 @@
 # Insightd
 
-Self-hosted server awareness tool for homelabbers. Monitors containers, hosts, and HTTP endpoints across multiple servers.
+Self-hosted server awareness tool for homelabbers. Monitors containers, hosts, and HTTP endpoints across multiple servers and container runtimes.
 
 ## Architecture
 
 ```
-[Agents per host] → MQTT (Mosquitto) → [Hub] → SQLite → React UI + Email + Webhooks
+[Agents per host/node] → MQTT (Mosquitto) → [Hub] → SQLite → React UI + Email + Webhooks
 ```
 
-- **Agent**: collects Docker/host/GPU/temp/disk-IO/network-IO metrics, publishes to MQTT, handles log requests + remote updates + container actions
-- **Hub**: subscribes to MQTT, stores in SQLite, serves React UI on port 3000, runs insights engine v2, sends digests + alerts + webhooks
-- **Standalone mode**: hub with no MQTT runs collectors locally
+- **Agent**: collects container/host metrics, publishes to MQTT, handles log requests + actions
+  - Supports multiple container runtimes via `agent/src/runtime/` abstraction (Docker today; Kubernetes via DaemonSet)
+  - Auto-detects runtime by socket probing, or set `INSIGHTD_RUNTIME=docker|kubernetes`
+- **Hub**: subscribes to MQTT, stores in SQLite, serves React UI on port 3000, runs insights engine, sends digests + alerts + webhooks
+- **Standalone mode**: hub with no MQTT runs collectors locally (Docker only)
 - **Mosquitto**: message broker, separate container (stays up during hub updates)
 
 ## Tech Stack
 
-- Backend: Node.js 20, TypeScript (strict), SQLite (better-sqlite3), dockerode, MQTT, Nodemailer, node-cron, tsx
+- Backend: Node.js 20, TypeScript (strict), SQLite (better-sqlite3), dockerode, @kubernetes/client-node, MQTT, Nodemailer, node-cron, tsx
 - Frontend: React 19, TypeScript (strict), Tailwind CSS v4, Vite 6, React Router v6, TanStack Query v5
 - Docker multi-arch (amd64 + arm64)
 - Tests: ~300 tests using `node:test` + tsx (zero external test dependencies)
@@ -26,23 +28,33 @@ Self-hosted server awareness tool for homelabbers. Monitors containers, hosts, a
 insightd/
   shared/utils/              # Logger, error handling, docker-logs parser
   shared/webhooks/           # Webhook queries + sender (Slack/Discord/Telegram/ntfy/generic)
-  agent/src/                 # Collectors + MQTT publisher + updater + log handler + container actions
-  agent/src/collectors/      # containers, resources, disk, host, gpu, temperature, disk-io, network-io
+  agent/src/                 # MQTT publisher + scheduler + updater
+  agent/src/runtime/         # Container runtime abstraction (Docker, Kubernetes)
+    types.ts                 #   ContainerRuntime interface and shared types
+    docker.ts                #   DockerRuntime — listContainers, collectResources, fetchLogs, performAction, checkImageUpdates
+    kubernetes.ts            #   KubernetesRuntime — pod listing, kubelet cAdvisor metrics, K8s API logs (read-only)
+    detect.ts                #   Socket-based runtime auto-detection
+    index.ts                 #   getRuntime() factory
+  agent/src/collectors/      # Host-level collectors (disk, host, gpu, temperature, disk-io, network-io)
+  agent/k8s/                 # Kubernetes manifests (DaemonSet, RBAC) for k8s/k3s deployment
   hub/src/                   # DB, digest, alerts, MQTT subscriber, insights engine
-  hub/src/insights/          # Baselines (time-of-day), health scores, anomaly detector, predictions, correlations
+  hub/src/insights/          # Baselines (time-of-day), health scores, capacity-based detector, predictions, correlations
   hub/src/web/               # HTTP server, API handlers, auth (SQLite sessions + API keys), rate limiting
   hub/src/web/frontend/      # React + TypeScript SPA (Vite build → public/)
-  hub/src/web/frontend/src/components/  # Shared UI components (Card, PageTitle, LoadingState, etc.)
-  hub/src/web/frontend/src/hooks/       # Custom hooks (useContainerAction, useAttentionItems, useTab, etc.)
+  hub/src/web/frontend/src/components/  # Shared UI components (Card, Button, Skeleton, InsightsFeed, etc.)
+  hub/src/web/frontend/src/hooks/       # Custom hooks (useContainerAction, useAttentionItems, useFormMessage)
+  hub/src/web/frontend/src/lib/         # queryKeys factory, analogies, ratings, formatters, api client
   hub/src/web/frontend/src/pages/       # Page components, decomposed into subdirectories:
     dashboard/               # DashboardPage, AttentionList, StatusRow
     containers/              # ContainerDetailPage, ContainerHistoryTab, HistorySummary, MetricGauge
     hosts/                   # HostDetailPage, HostOverviewTab, HostResourcesTab, HostAlertsTab, HostsPage
-    updates/                 # UpdatesPage, HubUpdateCard, ImageUpdatesCard
+    updates/                 # UpdatesPage, HubUpdateCard, AgentUpdatesCard, ImageUpdatesCard
+    InsightsPage.tsx         # Dedicated insights page with feedback (thumbs up/down)
   hub/src/web/public/        # Built frontend assets (served by Node HTTP server)
-  hub/src/db/                # Connection, schema, settings
-  src/                       # Standalone mode code (mirrors hub for single-host)
+  hub/src/db/                # Connection, schema (currently v15), settings
+  src/                       # Standalone mode code (Docker only, mirrors hub for single-host)
   tests/                     # Tests using node:test
+  docs/                      # Setup guides (kubernetes-setup.md)
   .github/workflows/         # CI + Docker Hub publish (tags only)
 ```
 
@@ -67,27 +79,45 @@ docker compose up -d        # Run full stack (mosquitto + hub + agent)
 ## Docker Hub
 
 - Images: `andreas404/insightd-hub`, `andreas404/insightd-agent`
-- Current: v0.4.0
+- Latest: hub-v0.6.0 (multi-runtime support coming in v0.7.0)
 - Multi-arch: linux/amd64 + linux/arm64
 
 ## Key Environment Variables
 
-- `INSIGHTD_ALLOW_UPDATES` — enable remote agent updates (default false)
-- `INSIGHTD_ALLOW_ACTIONS` — enable container start/stop/restart (default false)
+- `INSIGHTD_RUNTIME` — container runtime: `auto` (default), `docker`, or `kubernetes`
+- `INSIGHTD_ALLOW_UPDATES` — enable remote agent updates (default false, Docker only)
+- `INSIGHTD_ALLOW_ACTIONS` — enable container start/stop/restart (default false, Docker only)
 - `INSIGHTD_STATUS_PAGE` — enable public status page (default false)
+- `NODE_NAME` / `NODE_IP` — required in Kubernetes DaemonSet mode (set via downward API)
 - See hub/src/config.ts and agent/src/config.ts for full list (40+ vars)
 
 ## Database
 
-SQLite with WAL mode. Schema v12. Key tables: container_snapshots, host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights, alert_state, sessions, api_keys, webhooks, service_groups.
+SQLite with WAL mode. **Schema v15.** Key tables: container_snapshots, host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights, insight_feedback, alert_state, sessions, api_keys, webhooks, service_groups, hosts (with `runtime_type` column).
 
 ## UI Design Principles
 
+See `.impeccable.md` for the full design context. Key principles:
+
 - Visual hierarchy: big important things first (hero section), compact secondary info below, details on demand
 - Context over raw numbers: progress bars with avg/peak markers, not just percentages
-- Unified feeds: merge alerts + downtime + insights into "Needs Attention"
+- Separate operational vs analytical: "Needs Attention" (alerts/downtime) and "Insights" (predictions/trends) are distinct sections on the dashboard
 - Everything clickable: every status item, row, and metric should navigate somewhere
 - Collapsible raw data: summaries by default, expand for details
+- Consistent visual language: cards use colored left borders, category icons, and full-text messages (no truncation)
+
+## Insights Philosophy
+
+**Usage is healthy, saturation is the problem.** Health scores and detector insights use capacity-based thresholds, not baseline deviation:
+
+- Host CPU: only flagged when >70% (normal/elevated/high/critical thresholds)
+- Host memory: only flagged when >80% of total capacity
+- Host load: only flagged when >4
+- Container CPU: <50% always rated normal, regardless of percentile position
+- Trends: only flag if current value is already concerning (e.g. CPU >40% AND doubled)
+- Predictions: validate against latest snapshot, require live value above P75
+
+This prevents false positives like "memory critical at 1.4% usage" from low-baseline noise.
 
 ## React Best Practices
 
