@@ -317,4 +317,334 @@ describe('Web API integration', () => {
     assert.equal(res.json()[0].host_group, 'from-agent');
     assert.equal(res.json()[0].host_group_override, null);
   });
+
+  // ----- Setup + agent setup -----
+  it('GET /api/setup/status returns mode and auth flags', async () => {
+    const res = await fetch(port, '/api/setup/status');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.ok('setupComplete' in data);
+    assert.ok('mode' in data);
+    assert.ok('authEnabled' in data);
+  });
+
+  it('GET /api/agent-setup returns MQTT details and image', async () => {
+    const res = await fetch(port, '/api/agent-setup');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.ok(data.mqttUrl.startsWith('mqtt://'));
+    assert.equal(typeof data.image, 'string');
+  });
+
+  // ----- Settings -----
+  it('GET /api/settings returns categories', async () => {
+    const res = await fetch(port, '/api/settings');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.ok(data.categories);
+    assert.equal(typeof data.categories, 'object');
+  });
+
+  // ----- Webhooks -----
+  it('webhooks: create → list → get → update → delete', async () => {
+    // Create
+    let res = await fetchMethod(port, 'POST', '/api/webhooks', {
+      name: 'Test Slack', type: 'slack', url: 'https://hooks.slack.com/services/foo',
+      on_alert: true, on_digest: false, enabled: true,
+    });
+    assert.equal(res.status, 201);
+    const id = res.json().id;
+    assert.ok(id);
+
+    // List
+    res = await fetch(port, '/api/webhooks');
+    assert.equal(res.status, 200);
+    const list = res.json();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].name, 'Test Slack');
+
+    // Get
+    res = await fetch(port, `/api/webhooks/${id}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.json().type, 'slack');
+
+    // Update
+    res = await fetchMethod(port, 'PUT', `/api/webhooks/${id}`, { enabled: false });
+    assert.equal(res.status, 200);
+    res = await fetch(port, `/api/webhooks/${id}`);
+    assert.equal(res.json().enabled, 0);
+
+    // Delete
+    res = await fetchMethod(port, 'DELETE', `/api/webhooks/${id}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.json().deleted, true);
+
+    // Confirm gone
+    res = await fetch(port, `/api/webhooks/${id}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('POST /api/webhooks rejects invalid type', async () => {
+    const res = await fetchMethod(port, 'POST', '/api/webhooks', {
+      name: 'Bad', type: 'pigeon', url: 'https://example.com',
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json().error, /type must be one of/);
+  });
+
+  it('POST /api/webhooks rejects missing URL', async () => {
+    const res = await fetchMethod(port, 'POST', '/api/webhooks', {
+      name: 'NoUrl', type: 'slack',
+    });
+    assert.equal(res.status, 400);
+  });
+
+  it('PUT /api/webhooks/:id returns 404 for unknown id', async () => {
+    const res = await fetchMethod(port, 'PUT', '/api/webhooks/9999', { enabled: false });
+    assert.equal(res.status, 404);
+  });
+
+  // ----- HTTP Endpoints -----
+  it('endpoints: create → list → get → update → delete', async () => {
+    let res = await fetchMethod(port, 'POST', '/api/endpoints', {
+      name: 'My Site', url: 'https://example.com', expectedStatus: 200,
+      intervalSeconds: 60, timeoutMs: 5000,
+    });
+    assert.equal(res.status, 201);
+    const id = res.json().id;
+    assert.ok(id);
+
+    res = await fetch(port, '/api/endpoints');
+    assert.equal(res.status, 200);
+    assert.equal(res.json().length, 1);
+
+    res = await fetch(port, `/api/endpoints/${id}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.json().name, 'My Site');
+
+    res = await fetchMethod(port, 'PUT', `/api/endpoints/${id}`, { name: 'Renamed' });
+    assert.equal(res.status, 200);
+    res = await fetch(port, `/api/endpoints/${id}`);
+    assert.equal(res.json().name, 'Renamed');
+
+    res = await fetchMethod(port, 'DELETE', `/api/endpoints/${id}`);
+    assert.equal(res.status, 200);
+    res = await fetch(port, `/api/endpoints/${id}`);
+    assert.equal(res.status, 404);
+  });
+
+  it('POST /api/endpoints rejects malformed URL', async () => {
+    const res = await fetchMethod(port, 'POST', '/api/endpoints', {
+      name: 'Bad', url: 'ftp://nope',
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json().error, /url is required/);
+  });
+
+  it('POST /api/endpoints rejects out-of-range interval', async () => {
+    const res = await fetchMethod(port, 'POST', '/api/endpoints', {
+      name: 'Bad', url: 'https://example.com', intervalSeconds: 5,
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.json().error, /intervalSeconds/);
+  });
+
+  it('GET /api/endpoints/:id/checks returns checks list', async () => {
+    let res = await fetchMethod(port, 'POST', '/api/endpoints', {
+      name: 'Site', url: 'https://example.com',
+    });
+    const id = res.json().id;
+    res = await fetch(port, `/api/endpoints/${id}/checks`);
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json()));
+  });
+
+  // ----- Service Groups -----
+  it('groups: create → list → get → update → add member → remove member → delete', async () => {
+    seedHost(db, 'h1', recent);
+    seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
+
+    let res = await fetchMethod(port, 'POST', '/api/groups', {
+      name: 'Web', description: 'Web stack', icon: '🌐', color: '#3b82f6',
+    });
+    assert.equal(res.status, 201);
+    const id = res.json().id;
+    assert.ok(id);
+
+    res = await fetch(port, '/api/groups');
+    assert.equal(res.status, 200);
+    assert.ok(res.json().some((g: any) => g.id === id));
+
+    res = await fetch(port, `/api/groups/${id}`);
+    assert.equal(res.status, 200);
+    assert.equal(res.json().name, 'Web');
+
+    res = await fetchMethod(port, 'PUT', `/api/groups/${id}`, { description: 'Updated description' });
+    assert.equal(res.status, 200);
+
+    res = await fetchMethod(port, 'POST', `/api/groups/${id}/members`, {
+      hostId: 'h1', containerName: 'nginx',
+    });
+    assert.equal(res.status, 200);
+
+    res = await fetch(port, `/api/groups/${id}`);
+    assert.ok(res.json().members.some((m: any) => m.container_name === 'nginx'));
+
+    res = await fetchMethod(port, 'DELETE', `/api/groups/${id}/members`, {
+      hostId: 'h1', containerName: 'nginx',
+    });
+    assert.equal(res.status, 200);
+
+    res = await fetchMethod(port, 'DELETE', `/api/groups/${id}`);
+    assert.equal(res.status, 200);
+  });
+
+  it('POST /api/groups rejects empty name', async () => {
+    const res = await fetchMethod(port, 'POST', '/api/groups', { name: '' });
+    assert.equal(res.status, 400);
+  });
+
+  it('POST /api/groups returns 409 on duplicate name', async () => {
+    await fetchMethod(port, 'POST', '/api/groups', { name: 'Dup' });
+    const res = await fetchMethod(port, 'POST', '/api/groups', { name: 'Dup' });
+    assert.equal(res.status, 409);
+  });
+
+  it('POST /api/groups/:id/members rejects missing fields', async () => {
+    const create = await fetchMethod(port, 'POST', '/api/groups', { name: 'X' });
+    const id = create.json().id;
+    const res = await fetchMethod(port, 'POST', `/api/groups/${id}/members`, { hostId: 'h1' });
+    assert.equal(res.status, 400);
+  });
+
+  it('GET /api/groups/:id returns 404 for unknown id', async () => {
+    const res = await fetch(port, '/api/groups/9999');
+    assert.equal(res.status, 404);
+  });
+
+  // ----- Insights feedback -----
+  it('POST /api/insights/feedback persists feedback and accepts updates', async () => {
+    let res = await fetchMethod(port, 'POST', '/api/insights/feedback', {
+      entity_type: 'host', entity_id: 'h1', category: 'cpu', metric: null, helpful: true,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.json().ok, true);
+
+    let row = db.prepare("SELECT helpful FROM insight_feedback WHERE entity_id = 'h1' AND category = 'cpu'").get();
+    assert.equal(row.helpful, 1);
+
+    // Same key, flipped vote — UPSERT should overwrite
+    res = await fetchMethod(port, 'POST', '/api/insights/feedback', {
+      entity_type: 'host', entity_id: 'h1', category: 'cpu', metric: null, helpful: false,
+    });
+    assert.equal(res.status, 200);
+    row = db.prepare("SELECT helpful FROM insight_feedback WHERE entity_id = 'h1' AND category = 'cpu'").get();
+    assert.equal(row.helpful, 0);
+  });
+
+  it('POST /api/insights/feedback rejects missing fields', async () => {
+    const res = await fetchMethod(port, 'POST', '/api/insights/feedback', { entity_type: 'host' });
+    assert.equal(res.status, 400);
+  });
+
+  it('GET /api/insights/feedback returns the feedback list', async () => {
+    await fetchMethod(port, 'POST', '/api/insights/feedback', {
+      entity_type: 'container', entity_id: 'h1/nginx', category: 'memory', metric: 'memory_mb', helpful: true,
+    });
+    const res = await fetch(port, '/api/insights/feedback');
+    assert.equal(res.status, 200);
+    const list = res.json();
+    assert.equal(list.length, 1);
+    assert.equal(list[0].entity_id, 'h1/nginx');
+  });
+
+  // ----- Smoke tests for read-only endpoints -----
+  it('GET /api/rankings returns top CPU/memory containers', async () => {
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'a', cpu: 50, mem: 200, at: recent },
+      { hostId: 'h1', name: 'b', cpu: 20, mem: 500, at: recent },
+    ]);
+    const res = await fetch(port, '/api/rankings?limit=5');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.ok(Array.isArray(data.byCpu));
+    assert.ok(Array.isArray(data.byMemory));
+  });
+
+  it('GET /api/hosts/:hostId/timeline returns slot data', async () => {
+    seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
+    const res = await fetch(port, '/api/hosts/h1/timeline?days=7');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json()));
+  });
+
+  it('GET /api/hosts/:hostId/events returns events array', async () => {
+    seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
+    const res = await fetch(port, '/api/hosts/h1/events?days=7');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json()));
+  });
+
+  it('GET /api/hosts/:hostId/trends returns trends shape', async () => {
+    seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', cpu: 5, mem: 50, at: recent }]);
+    const res = await fetch(port, '/api/hosts/h1/trends');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.ok('containers' in data);
+  });
+
+  it('GET /api/baselines/:type/:id returns baselines for entity', async () => {
+    seedBaselines(db, [
+      { entityType: 'container', entityId: 'h1/nginx', metric: 'cpu_percent', sampleCount: 500 },
+    ]);
+    const res = await fetch(port, '/api/baselines/container/h1%2Fnginx');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json()));
+  });
+
+  it('GET /api/health-scores returns all scores', async () => {
+    seedHealthScores(db, [{ entityType: 'host', entityId: 'h1', score: 95 }]);
+    const res = await fetch(port, '/api/health-scores');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json()));
+  });
+
+  it('GET /api/health-scores/:type/:id returns parsed score', async () => {
+    seedHealthScores(db, [{ entityType: 'host', entityId: 'h1', score: 88 }]);
+    const res = await fetch(port, '/api/health-scores/host/h1');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.equal(data.score, 88);
+    assert.equal(typeof data.factors, 'object');
+  });
+
+  it('GET /api/health-scores/:type/:id returns 404 when missing', async () => {
+    const res = await fetch(port, '/api/health-scores/host/unknown');
+    assert.equal(res.status, 404);
+  });
+
+  it('GET /api/insights returns insights list', async () => {
+    const res = await fetch(port, '/api/insights');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json()));
+  });
+
+  it('GET /api/version-check returns version info', async () => {
+    const res = await fetch(port, '/api/version-check');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.ok('currentVersion' in data);
+  });
+
+  it('GET /api/image-updates returns array', async () => {
+    const res = await fetch(port, '/api/image-updates');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.json()));
+  });
+
+  it('POST /api/auth without an admin password returns 401', async () => {
+    // Auth is disabled in tests (no admin password seeded), so authenticate() returns null
+    const res = await fetchMethod(port, 'POST', '/api/auth', { password: 'whatever' });
+    assert.equal(res.status, 401);
+  });
 });

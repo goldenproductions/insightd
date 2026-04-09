@@ -615,16 +615,30 @@ function handleGetHostInsights(req: HandlerReq, res: ServerResponse, db: Databas
 }
 
 async function handleInsightFeedback(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  const body = req.body as { entity_type?: string; entity_id?: string; category?: string; metric?: string | null; helpful?: boolean };
+  const body = await readBody(req) as { entity_type?: string; entity_id?: string; category?: string; metric?: string | null; helpful?: boolean };
   if (!body.entity_type || !body.entity_id || !body.category || body.helpful == null) {
     res.statusCode = 400;
     return { error: 'entity_type, entity_id, category, and helpful are required' };
   }
-  db.prepare(`
-    INSERT INTO insight_feedback (entity_type, entity_id, category, metric, helpful)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(entity_type, entity_id, category, metric) DO UPDATE SET helpful = ?, created_at = datetime('now')
-  `).run(body.entity_type, body.entity_id, body.category, body.metric ?? null, body.helpful ? 1 : 0, body.helpful ? 1 : 0);
+  // Manual UPSERT — SQLite's ON CONFLICT(...metric) does not match NULLs to NULLs,
+  // so a plain INSERT...ON CONFLICT inserts duplicate rows for insights without a
+  // specific metric (e.g. health_check failures). Handle NULL explicitly.
+  const metric = body.metric ?? null;
+  const helpful = body.helpful ? 1 : 0;
+  const existing = db.prepare(`
+    SELECT id FROM insight_feedback
+    WHERE entity_type = ? AND entity_id = ? AND category = ?
+      AND ((metric IS NULL AND ? IS NULL) OR metric = ?)
+  `).get(body.entity_type, body.entity_id, body.category, metric, metric) as { id: number } | undefined;
+
+  if (existing) {
+    db.prepare("UPDATE insight_feedback SET helpful = ?, created_at = datetime('now') WHERE id = ?").run(helpful, existing.id);
+  } else {
+    db.prepare(`
+      INSERT INTO insight_feedback (entity_type, entity_id, category, metric, helpful)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(body.entity_type, body.entity_id, body.category, metric, helpful);
+  }
   return { ok: true };
 }
 
