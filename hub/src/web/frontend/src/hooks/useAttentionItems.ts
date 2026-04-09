@@ -45,7 +45,6 @@ export function useAttentionItems(data: DashboardData | undefined): AttentionIte
 
     for (const insight of data.topInsights) {
       if (insight.severity === 'info') continue;
-      const parts = insight.entity_id.split('/');
       items.push({
         kind: 'insight',
         severity: insight.severity as 'critical' | 'warning',
@@ -53,9 +52,7 @@ export function useAttentionItems(data: DashboardData | undefined): AttentionIte
         detail: insight.message,
         meta: insight.entity_id,
         time: null,
-        to: insight.entity_type === 'container' && parts.length === 2
-          ? `/hosts/${encodeURIComponent(parts[0]!)}/containers/${encodeURIComponent(parts[1]!)}`
-          : `/hosts/${encodeURIComponent(insight.entity_id)}`,
+        to: '/insights',
       });
     }
 

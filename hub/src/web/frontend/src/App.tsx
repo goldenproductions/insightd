@@ -14,6 +14,7 @@ const HostsPage = lazy(() => import('@/pages/hosts/HostsPage').then(m => ({ defa
 const HostDetailPage = lazy(() => import('@/pages/hosts/HostDetailPage').then(m => ({ default: m.HostDetailPage })));
 const ContainerDetailPage = lazy(() => import('@/pages/containers/ContainerDetailPage').then(m => ({ default: m.ContainerDetailPage })));
 const AlertsPage = lazy(() => import('@/pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
+const InsightsPage = lazy(() => import('@/pages/InsightsPage').then(m => ({ default: m.InsightsPage })));
 const EndpointsPage = lazy(() => import('@/pages/EndpointsPage').then(m => ({ default: m.EndpointsPage })));
 const EndpointDetailPage = lazy(() => import('@/pages/EndpointDetailPage').then(m => ({ default: m.EndpointDetailPage })));
 const EndpointFormPage = lazy(() => import('@/pages/EndpointFormPage').then(m => ({ default: m.EndpointFormPage })));
@@ -79,6 +80,7 @@ export function App() {
                 <Route path="/hosts/:hostId/logs" element={<LogSplitPage />} />
                 <Route path="/hosts/:hostId/containers/:containerName" element={<ContainerDetailPage />} />
                 <Route path="/alerts" element={<AlertsPage />} />
+                <Route path="/insights" element={<InsightsPage />} />
                 <Route path="/endpoints" element={<EndpointsPage />} />
                 <Route path="/endpoints/new" element={<EndpointFormPage />} />
                 <Route path="/endpoints/:endpointId" element={<EndpointDetailPage />} />

@@ -125,10 +125,12 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         const spread = ((bl.p95 ?? 0) - (bl.p50 || 0));
         if (spread < (bl.p50 || 1) * 0.1) continue;
         const values = recent.map(r => r[metric]).filter((v): v is number => v != null);
-        if (values.length >= 6 && values.every(v => v > (bl.p95 ?? 0))) {
+        const p95 = bl.p95 ?? 0;
+        const minDev = MIN_ABSOLUTE_DEVIATION[metric] ?? 0;
+        if (values.length >= 6 && values.every(v => v > p95) && (values[0] - p95) >= minDev) {
           insert.run('host', host_id, 'performance', 'warning',
             `${label} elevated on ${host_id}`,
-            `${label} has been above P95 (${round(bl.p95 ?? 0)}${unit}) for 30+ minutes. Current: ${round(values[0])}${unit}`,
+            `${label} has been above P95 (${round(p95)}${unit}) for 30+ minutes. Current: ${round(values[0])}${unit}`,
             metric, values[0], bl.p95);
           count++;
         }
@@ -146,7 +148,9 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
     `).get(host_id) as WeekAvgRow | undefined;
 
     if (thisWeekAvg && lastWeekAvg) {
-      if (lastWeekAvg.cpu != null && lastWeekAvg.cpu > 0 && thisWeekAvg.cpu != null && thisWeekAvg.cpu > lastWeekAvg.cpu * 2) {
+      if (lastWeekAvg.cpu != null && lastWeekAvg.cpu > 0 && thisWeekAvg.cpu != null
+          && thisWeekAvg.cpu > lastWeekAvg.cpu * 2
+          && thisWeekAvg.cpu >= (MIN_TREND_VALUE.cpu_percent ?? 0)) {
         const ratio = round(thisWeekAvg.cpu / lastWeekAvg.cpu);
         insert.run('host', host_id, 'trend', 'warning',
           `CPU usage growing on ${host_id}`,
@@ -154,7 +158,9 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
           'cpu_percent', thisWeekAvg.cpu, lastWeekAvg.cpu);
         count++;
       }
-      if (lastWeekAvg.mem != null && lastWeekAvg.mem > 0 && thisWeekAvg.mem != null && thisWeekAvg.mem > lastWeekAvg.mem * 1.5) {
+      if (lastWeekAvg.mem != null && lastWeekAvg.mem > 0 && thisWeekAvg.mem != null
+          && thisWeekAvg.mem > lastWeekAvg.mem * 1.5
+          && thisWeekAvg.mem >= (MIN_TREND_VALUE.memory_used_mb ?? 0)) {
         const ratio = round(thisWeekAvg.mem / lastWeekAvg.mem);
         insert.run('host', host_id, 'trend', 'info',
           `Memory usage growing on ${host_id}`,
@@ -172,6 +178,9 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   `).all() as ContainerIdRow[];
 
   for (const { host_id, container_name } of containers) {
+    // Skip insightd's own containers — not actionable
+    if (isInsightdContainer(container_name)) continue;
+
     const entityId = `${host_id}/${container_name}`;
     const baselines = baselineCache?.get(`container:${entityId}`) as Record<string, BaselineRow> ?? getBaselines(db, 'container', entityId);
 
@@ -188,11 +197,13 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         if (!bl || bl.sample_count < 288) continue;
         const spread = ((bl.p95 ?? 0) - (bl.p50 || 0));
         if (spread < (bl.p50 || 1) * 0.1) continue;
+        const p95 = bl.p95 ?? 0;
+        const minDev = MIN_ABSOLUTE_DEVIATION[metric] ?? 0;
         const values = recent.map(r => r[metric]).filter((v): v is number => v != null);
-        if (values.length >= 6 && values.every(v => v > (bl.p95 ?? 0))) {
+        if (values.length >= 6 && values.every(v => v > p95) && (values[0] - p95) >= minDev) {
           insert.run('container', entityId, 'performance', 'warning',
             `${container_name} ${label.toLowerCase()} elevated`,
-            `${container_name} ${label.toLowerCase()} has been above P95 (${round(bl.p95 ?? 0)}${unit}) for 30+ minutes. Current: ${round(values[0])}${unit}`,
+            `${container_name} ${label.toLowerCase()} has been above P95 (${round(p95)}${unit}) for 30+ minutes. Current: ${round(values[0])}${unit}`,
             metric, values[0], bl.p95);
           count++;
         }
@@ -242,7 +253,9 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         AND collected_at >= datetime('now', '-14 days') AND collected_at < datetime('now', '-7 days')
     `).get(host_id, container_name) as ContainerWeekRow | undefined;
 
-    if (thisWeek?.mem && lastWeek?.mem && lastWeek.mem > 0 && thisWeek.mem > lastWeek.mem * 2) {
+    if (thisWeek?.mem && lastWeek?.mem && lastWeek.mem > 0
+        && thisWeek.mem > lastWeek.mem * 2
+        && thisWeek.mem >= (MIN_TREND_VALUE.memory_mb ?? 0)) {
       const ratio = round(thisWeek.mem / lastWeek.mem);
       insert.run('container', entityId, 'trend', 'warning',
         `${container_name} memory growing`,
@@ -306,7 +319,7 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
   `).all() as ContainerIdRow[];
   for (const { host_id, container_name } of containers) {
     // Skip insightd internal containers — their minor memory growth is expected and not actionable
-    if (container_name.startsWith('insightd-')) continue;
+    if (isInsightdContainer(container_name)) continue;
     const entityId = `${host_id}/${container_name}`;
     for (const [metric, label, unit] of [['cpu_percent', 'CPU', '%'], ['memory_mb', 'Memory', ' MB']] as const) {
       const pred = computeMetricTrend(db, 'container_snapshots', 'host_id', host_id, metric, container_name);
@@ -492,5 +505,31 @@ function getBaselines(db: Database.Database, entityType: string, entityId: strin
 function round(v: number): number {
   return Math.round(v * 10) / 10;
 }
+
+/** Skip insightd's own containers — their resource usage isn't actionable by the user */
+function isInsightdContainer(name: string): boolean {
+  return name.startsWith('insightd-');
+}
+
+/**
+ * Minimum absolute deviation above P95 before a "sustained elevation" insight fires.
+ * Prevents noise from tiny deviations (e.g. 111 MB vs 106 MB P95).
+ */
+const MIN_ABSOLUTE_DEVIATION: Record<string, number> = {
+  cpu_percent: 10,      // need to be 10%+ above P95
+  memory_used_mb: 100,  // need to be 100MB+ above P95 for hosts
+  memory_mb: 50,        // need to be 50MB+ above P95 for containers
+  load_5: 1.0,          // need load to be 1.0+ above P95
+};
+
+/**
+ * Minimum current absolute values for trend insights.
+ * Prevents "7x growth" on 4→33 MB containers.
+ */
+const MIN_TREND_VALUE: Record<string, number> = {
+  cpu_percent: 10,      // ignore CPU trend below 10%
+  memory_used_mb: 200,  // ignore host mem trend below 200 MB
+  memory_mb: 100,       // ignore container mem trend below 100 MB
+};
 
 module.exports = { generateInsights, getBaselines };
