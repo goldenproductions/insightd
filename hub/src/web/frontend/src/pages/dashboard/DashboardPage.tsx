@@ -86,6 +86,13 @@ export function DashboardPage() {
 const RATING_COLORS: Record<string, string> = { normal: 'text-success', elevated: 'text-warning', high: 'text-orange-500', critical: 'text-danger' };
 const RATING_EMOJI: Record<string, string> = { normal: '✅', elevated: '⚠️', high: '🔶', critical: '🔴' };
 const FACTOR_LABELS: Record<string, string> = { cpu: 'CPU', memory: 'Memory', load: 'Load', online: 'Online', alerts: 'Alerts' };
+const FACTOR_UNITS: Record<string, string> = { cpu: '%', memory: '%', load: '' };
+
+function formatFactorValue(key: string, value: number | string): string {
+  if (typeof value !== 'number') return String(value);
+  const unit = FACTOR_UNITS[key] ?? '';
+  return `${Math.round(value * 10) / 10}${unit}`;
+}
 
 function HealthHero({ systemHealthScore, availability }: { systemHealthScore: DashboardData['systemHealthScore']; availability: DashboardData['availability'] }) {
   const [expanded, setExpanded] = useState(false);
@@ -136,7 +143,7 @@ function HealthHero({ systemHealthScore, availability }: { systemHealthScore: Da
                         <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                           {visibleFactors.map(([key, f]) => (
                             <span key={key} className={`text-xs ${RATING_COLORS[f.rating] || 'text-muted'}`}>
-                              {RATING_EMOJI[f.rating] || ''} {FACTOR_LABELS[key] || key}: {typeof f.value === 'number' ? Math.round(f.value * 10) / 10 : f.value} ({f.rating})
+                              {RATING_EMOJI[f.rating] || ''} {FACTOR_LABELS[key] || key}: {formatFactorValue(key, f.value)} ({f.rating})
                             </span>
                           ))}
                           {hiddenCount > 0 && <span className="text-xs text-muted">+{hiddenCount} more</span>}

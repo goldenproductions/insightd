@@ -20,6 +20,7 @@ interface HostIdRow {
 interface HostSnapshotRow {
   cpu_percent: number | null;
   memory_used_mb: number | null;
+  memory_total_mb: number | null;
   load_5: number | null;
   [key: string]: any;
 }
@@ -124,11 +125,17 @@ function computeHealthScores(db: Database.Database, baselineCache?: BaselineCach
       totalWeight += 20;
     }
 
-    // Memory vs baseline (weight 20)
-    if (latest?.memory_used_mb != null) {
-      const bl = baselines.memory_used_mb;
-      const score = scoreMetricVsBaseline(latest.memory_used_mb, bl);
-      factors.memory = { score, weight: 20, value: latest.memory_used_mb, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.memory_used_mb, bl) };
+    // Memory — only degrade when actually constrained (approaching capacity).
+    // Memory usage by itself isn't bad; it only matters when you're running out.
+    if (latest?.memory_used_mb != null && latest.memory_total_mb) {
+      const memPct = (latest.memory_used_mb / latest.memory_total_mb) * 100;
+      let score: number;
+      let rating: string;
+      if (memPct < 80)      { score = 100; rating = 'normal'; }
+      else if (memPct < 90) { score = 70;  rating = 'elevated'; }
+      else if (memPct < 95) { score = 40;  rating = 'high'; }
+      else                  { score = 10;  rating = 'critical'; }
+      factors.memory = { score, weight: 20, value: round(memPct), rating };
       totalScore += score * 20;
       totalWeight += 20;
     }
@@ -203,13 +210,17 @@ function computeHealthScores(db: Database.Database, baselineCache?: BaselineCach
       totalWeight += 20;
     }
 
-    // Memory (weight 20)
+    // Memory (weight 10) — lower weight since we can't know the container's memory limit.
+    // Only degrade when the deviation from baseline is substantial (>50 MB above P75).
     if (latest?.memory_mb != null) {
       const bl = baselines.memory_mb;
-      const score = scoreMetricVsBaseline(latest.memory_mb, bl);
-      factors.memory = { score, weight: 20, value: latest.memory_mb, baseline_p75: bl?.p75 ?? null, rating: rateValue(latest.memory_mb, bl) };
-      totalScore += score * 20;
-      totalWeight += 20;
+      let score = scoreMetricVsBaseline(latest.memory_mb, bl);
+      let rating = rateValue(latest.memory_mb, bl);
+      const deviation = bl?.p75 != null ? latest.memory_mb - bl.p75 : 0;
+      if (deviation < 50) { score = 100; rating = 'normal'; }
+      factors.memory = { score, weight: 10, value: round(latest.memory_mb), baseline_p75: bl?.p75 ?? null, rating };
+      totalScore += score * 10;
+      totalWeight += 10;
     }
 
     // Uptime (weight 25)
@@ -263,6 +274,10 @@ function getEntityBaselines(db: Database.Database, entityType: string, entityId:
     if (r.sample_count >= MIN_PERIOD_SAMPLES) map[r.metric] = r;
   }
   return map;
+}
+
+function round(v: number): number {
+  return Math.round(v * 10) / 10;
 }
 
 module.exports = { computeHealthScores, scoreMetricVsBaseline, rateValue };
