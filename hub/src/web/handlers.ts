@@ -210,8 +210,7 @@ function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Databas
 function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
-  const latest = queries.getLatestContainers(db, params.hostId)
-    .find((c: any) => c.container_name === params.containerName);
+  const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
   if (!latest) {
     res.statusCode = 404;
     return { error: 'Container not found' };
