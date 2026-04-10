@@ -97,6 +97,11 @@ function connect(config: AgentConfig, runtime: ContainerRuntime): Promise<MqttCl
         if (err) logger.error('mqtt', 'Failed to subscribe to action request topic');
         else logger.info('mqtt', `Subscribed to ${actionRequestTopic}`);
       });
+      const checkUpdatesTopic = `insightd/${config.hostId}/check-updates/request`;
+      client!.subscribe(checkUpdatesTopic, { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to check-updates topic');
+        else logger.info('mqtt', `Subscribed to ${checkUpdatesTopic}`);
+      });
 
       if (!connected) {
         connected = true;
@@ -105,6 +110,33 @@ function connect(config: AgentConfig, runtime: ContainerRuntime): Promise<MqttCl
     });
 
     client.on('message', async (topic: string, message: Buffer) => {
+      // Handle manual "check for image updates" requests
+      if (topic.endsWith('/check-updates/request')) {
+        if (!runtimeInstance || !runtimeInstance.supportsUpdateChecks) {
+          logger.info('mqtt', 'Ignoring check-updates request — not supported for this runtime');
+          return;
+        }
+        try {
+          const req = JSON.parse(message.toString());
+          if (req.timestamp) {
+            const age = Date.now() - new Date(req.timestamp).getTime();
+            if (age > 60000) {
+              logger.info('mqtt', `Ignoring stale check-updates request (${Math.round(age / 1000)}s old)`);
+              return;
+            }
+          }
+          logger.info('mqtt', 'Manual image update check requested');
+          const updates = await runtimeInstance.checkImageUpdates();
+          if (updates && updates.length > 0) {
+            await publishUpdates(config.hostId, updates);
+          }
+          logger.info('mqtt', `Manual check complete — ${updates.length} images checked`);
+        } catch (err) {
+          logger.error('mqtt', `Check-updates failed: ${(err as Error).message}`);
+        }
+        return;
+      }
+
       // Handle update requests (Docker-only: self/hub update flow)
       if (topic.endsWith('/update/request')) {
         const responseTopic = `insightd/${config.hostId}/update/response`;

@@ -1,6 +1,12 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
+import { Button } from '@/components/FormField';
+import { apiAuth } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import { queryKeys } from '@/lib/queryKeys';
 import type { ImageUpdate } from '@/types/api';
 
 interface ImageUpdatesCardProps {
@@ -8,6 +14,29 @@ interface ImageUpdatesCardProps {
 }
 
 export function ImageUpdatesCard({ imageUpdates }: ImageUpdatesCardProps) {
+  const { isAuthenticated, token } = useAuth();
+  const queryClient = useQueryClient();
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  async function handleCheck() {
+    setChecking(true);
+    setResult(null);
+    try {
+      const res = await apiAuth<{ ok: boolean; hostsNotified: number }>('POST', '/image-updates/check', undefined, token);
+      setResult(`Checking ${res.hostsNotified} host${res.hostsNotified !== 1 ? 's' : ''}...`);
+      // Refetch after a delay to pick up results
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.imageUpdates() });
+        setResult(null);
+        setChecking(false);
+      }, 15000);
+    } catch {
+      setResult('Failed to trigger check');
+      setChecking(false);
+    }
+  }
+
   return (
     <Card title="Container Image Updates">
       {(!imageUpdates || imageUpdates.length === 0) ? (
@@ -37,6 +66,14 @@ export function ImageUpdatesCard({ imageUpdates }: ImageUpdatesCardProps) {
           <p className="text-xs text-muted">
             Checked {imageUpdates[0]?.checked_at ? new Date(imageUpdates[0].checked_at + 'Z').toLocaleString() : 'recently'}
           </p>
+        </div>
+      )}
+      {isAuthenticated && (
+        <div className="mt-4 flex items-center gap-3">
+          <Button size="sm" onClick={handleCheck} disabled={checking}>
+            {checking ? 'Checking...' : 'Check for updates'}
+          </Button>
+          {result && <span className="text-xs text-muted">{result}</span>}
         </div>
       )}
     </Card>

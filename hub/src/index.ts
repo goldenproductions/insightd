@@ -36,6 +36,7 @@ async function main(): Promise<void> {
       requestContainerLogs: Function;
       requestAgentUpdate: Function;
       requestContainerAction: Function;
+      requestUpdateCheck: Function;
     };
     const { startSubscriber, disconnect } = mqttModule;
     const { startHubScheduler, stopScheduler } = require('./scheduler') as {
@@ -55,7 +56,7 @@ async function main(): Promise<void> {
     let webServer: Server | undefined;
     if (config.web.enabled) {
       const { startWebServer } = require('./web/server') as { startWebServer: (db: Database.Database, config: any, ctx: any) => Server };
-      webServer = startWebServer(db, config, { requestLogs: mqttModule.requestContainerLogs, requestUpdate: mqttModule.requestAgentUpdate, requestAction: mqttModule.requestContainerAction });
+      webServer = startWebServer(db, config, { requestLogs: mqttModule.requestContainerLogs, requestUpdate: mqttModule.requestAgentUpdate, requestAction: mqttModule.requestContainerAction, requestUpdateCheck: mqttModule.requestUpdateCheck });
     }
 
     logger.info('main', 'insightd hub is running (MQTT mode)');

@@ -27,6 +27,7 @@ interface WebServerContext {
   requestLogs?: Function;
   requestUpdate?: Function;
   requestAction?: Function;
+  requestUpdateCheck?: Function;
 }
 
 interface WebConfig {
@@ -101,6 +102,7 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('POST', '/api/setup/password', handlers.handleSetupPassword);
   router.add('POST', '/api/setup/complete', handlers.handleSetupComplete);
   router.add('GET', '/api/image-updates', handlers.handleImageUpdates);
+  router.add('POST', '/api/image-updates/check', handlers.handleRequestUpdateCheck);
   router.add('GET', '/api/version-check', handlers.handleVersionCheck);
   router.add('POST', '/api/update/agent/:hostId', handlers.handleUpdateAgent);
   router.add('POST', '/api/update/agents', handlers.handleUpdateAllAgents);
