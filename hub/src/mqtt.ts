@@ -403,6 +403,27 @@ function requestContainerAction(hostId: string, containerName: string, action: s
   });
 }
 
+// --- Manual image update check ---
+
+function requestUpdateCheck(db: Database.Database, onlineThresholdMinutes: number): { hostsNotified: number } {
+  if (!client || !client.connected) {
+    throw new Error('MQTT client not connected');
+  }
+  const hosts = db.prepare(`
+    SELECT DISTINCT host_id FROM hosts
+    WHERE runtime_type = 'docker'
+      AND last_seen > datetime('now', '-' || ? || ' minutes')
+  `).all(onlineThresholdMinutes) as Array<{ host_id: string }>;
+
+  const timestamp = new Date().toISOString();
+  for (const h of hosts) {
+    const topic = `insightd/${h.host_id}/check-updates/request`;
+    client.publish(topic, JSON.stringify({ timestamp }), { qos: 1 });
+  }
+  logger.info('mqtt', `Sent check-updates request to ${hosts.length} host(s)`);
+  return { hostsNotified: hosts.length };
+}
+
 function disconnect(): void {
   // Reject all pending log requests
   for (const [id, pending] of pendingLogRequests) {
@@ -423,4 +444,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck };
