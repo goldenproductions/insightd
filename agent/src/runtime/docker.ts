@@ -28,8 +28,8 @@ export class DockerRuntime implements ContainerRuntime {
 
   // In-memory state — restart tracking across collection cycles
   private restartState = new Map<string, { restartCount: number; lastStartedAt: string | null }>();
-  // In-memory state — previous CPU stats for delta calculation
-  private prevStats = new Map<string, Record<string, any>>();
+  // In-memory state — only the two CPU fields needed for delta calculation
+  private prevStats = new Map<string, { totalUsage: number; systemUsage: number }>();
 
   constructor(options: { socketPath: string; allowActions: boolean }) {
     this.socketPath = options.socketPath;
@@ -53,18 +53,33 @@ export class DockerRuntime implements ContainerRuntime {
     const docker = this.getClient();
     const raw = await docker.listContainers({ all: true });
 
-    const parsed: ContainerInfo[] = raw.map(c => ({
-      name: (c.Names[0] || '').replace(/^\//, ''),
-      id: c.Id.slice(0, 12),
-      status: c.State,
-      restartCount: 0,
-      healthStatus: null,
-      labels: c.Labels || {},
-      image: c.Image,
-    }));
+    const parsed: ContainerInfo[] = raw.map(c => {
+      // Parse health status from list response Status string (e.g. "Up 2 hours (healthy)")
+      const statusStr = c.Status || '';
+      let healthStatus: string | null = null;
+      if (statusStr.includes('(healthy)')) healthStatus = 'healthy';
+      else if (statusStr.includes('(unhealthy)')) healthStatus = 'unhealthy';
+      else if (statusStr.includes('(health: starting)')) healthStatus = 'starting';
 
-    // Enrich with restart counts via inspect
+      return {
+        name: (c.Names[0] || '').replace(/^\//, ''),
+        id: c.Id.slice(0, 12),
+        status: c.State,
+        restartCount: 0,
+        healthStatus,
+        labels: c.Labels || {},
+        image: c.Image,
+      };
+    });
+
+    // Enrich with restart counts via inspect — only for running containers
+    // (stopped containers reuse cached restartState)
     for (const p of parsed) {
+      if (p.status !== 'running') {
+        const prev = this.restartState.get(p.name);
+        if (prev) p.restartCount = prev.restartCount;
+        continue;
+      }
       try {
         const info = await docker.getContainer(p.id).inspect();
         const dockerRestarts = info.RestartCount || 0;
@@ -75,7 +90,7 @@ export class DockerRuntime implements ContainerRuntime {
           p.restartCount = dockerRestarts;
         } else if (dockerRestarts > prev.restartCount) {
           p.restartCount = dockerRestarts;
-        } else if (startedAt && info.State?.Running && prev.lastStartedAt) {
+        } else if (startedAt && prev.lastStartedAt) {
           if (startedAt !== prev.lastStartedAt) {
             p.restartCount = prev.restartCount + 1;
           } else {
@@ -84,8 +99,6 @@ export class DockerRuntime implements ContainerRuntime {
         } else {
           p.restartCount = prev.restartCount;
         }
-
-        p.healthStatus = info.State?.Health?.Status || null;
 
         this.restartState.set(p.name, {
           restartCount: p.restartCount,
@@ -129,8 +142,8 @@ export class DockerRuntime implements ContainerRuntime {
         let cpuPercent: number | null = null;
         const prev = this.prevStats.get(c.id);
         if (prev) {
-          const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - prev.cpu_stats.cpu_usage.total_usage;
-          const systemDelta = stats.cpu_stats.system_cpu_usage - prev.cpu_stats.system_cpu_usage;
+          const cpuDelta = stats.cpu_stats.cpu_usage.total_usage - prev.totalUsage;
+          const systemDelta = stats.cpu_stats.system_cpu_usage - prev.systemUsage;
           const cpuCount = stats.cpu_stats.online_cpus || 1;
           if (systemDelta > 0 && cpuDelta >= 0) {
             cpuPercent = Math.round((cpuDelta / systemDelta) * cpuCount * 100 * 100) / 100;
@@ -138,7 +151,10 @@ export class DockerRuntime implements ContainerRuntime {
             cpuPercent = null;
           }
         }
-        this.prevStats.set(c.id, stats);
+        this.prevStats.set(c.id, {
+          totalUsage: stats.cpu_stats.cpu_usage.total_usage,
+          systemUsage: stats.cpu_stats.system_cpu_usage,
+        });
 
         // Memory
         const memoryMb = Math.round((stats.memory_stats.usage || 0) / 1024 / 1024 * 100) / 100;

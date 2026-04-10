@@ -36,7 +36,7 @@ export function ContainerDetailPage() {
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
 
-  const { data } = useQuery({
+  const { data, error, isLoading } = useQuery({
     queryKey: queryKeys.container(hostId, containerName),
     queryFn: () => api<ContainerDetail>(`/hosts/${hid}/containers/${cname}`),
     refetchInterval: 30_000,
@@ -52,7 +52,19 @@ export function ContainerDetailPage() {
     refetchInterval: false,
   });
 
-  if (!data) return (
+  if (error) return (
+    <div className="space-y-4">
+      <BackLink to={`/hosts/${hid}`} label={`Back to ${hostId}`} />
+      <Card title="Container not found">
+        <p className="text-sm text-muted">
+          No data found for <span className="font-semibold text-fg">{containerName}</span> on {hostId}.
+          The container may have been removed or hasn't reported any metrics yet.
+        </p>
+      </Card>
+    </div>
+  );
+
+  if (isLoading || !data) return (
     <div className="space-y-6">
       <div className="h-4 w-32 animate-pulse rounded bg-border" />
       <div className="h-7 w-48 animate-pulse rounded bg-border" />

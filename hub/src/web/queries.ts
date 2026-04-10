@@ -577,6 +577,18 @@ function getContainerAlerts(db: Database.Database, hostId: string, containerName
   `).all(hostId, containerName) as ContainerAlertRow[];
 }
 
+function getLatestContainer(db: Database.Database, hostId: string, containerName: string): ContainerRow | null {
+  return (db.prepare(`
+    SELECT cs.container_name, cs.container_id, cs.status,
+           cs.cpu_percent, cs.memory_mb, cs.restart_count,
+           cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
+           cs.health_status, cs.labels, cs.collected_at
+    FROM container_snapshots cs
+    WHERE cs.host_id = ? AND cs.container_name = ?
+    ORDER BY cs.collected_at DESC LIMIT 1
+  `).get(hostId, containerName) as ContainerRow | undefined) ?? null;
+}
+
 function getContainerId(db: Database.Database, hostId: string, containerName: string): string | null {
   const row = db.prepare(`
     SELECT container_id FROM container_snapshots
@@ -893,4 +905,4 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };
