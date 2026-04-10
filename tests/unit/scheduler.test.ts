@@ -34,8 +34,14 @@ describe('startScheduler', () => {
   });
 
   function createDeps(overrides: any = {}) {
+    // Minimal mock db — pruneOldData calls computeRollups which uses db.prepare
+    const mockStmt = { run: () => ({ changes: 0 }), get: () => undefined, all: () => [] };
+    const mockDb = {
+      prepare: () => mockStmt,
+      exec: () => {},
+    };
     return {
-      db: {},
+      db: mockDb,
       docker: {},
       config: {
         hostId: 'test-host',
@@ -58,10 +64,10 @@ describe('startScheduler', () => {
     };
   }
 
-  it('schedules 3 cron jobs', () => {
+  it('schedules 4 cron jobs', () => {
     const deps = createDeps();
     startScheduler(deps);
-    assert.equal(scheduledJobs.length, 3);
+    assert.equal(scheduledJobs.length, 4);
   });
 
   it('collection cron matches config interval', () => {
@@ -76,10 +82,16 @@ describe('startScheduler', () => {
     assert.equal(scheduledJobs[1].expr, '0 9 * * 5');
   });
 
+  it('prune cron runs daily at 03:30', () => {
+    const deps = createDeps();
+    startScheduler(deps);
+    assert.equal(scheduledJobs[2].expr, '30 3 * * *');
+  });
+
   it('update check cron matches config', () => {
     const deps = createDeps({ updateCheckCron: '0 4 * * *' });
     startScheduler(deps);
-    assert.equal(scheduledJobs[2].expr, '0 4 * * *');
+    assert.equal(scheduledJobs[3].expr, '0 4 * * *');
   });
 
   it('passes timezone to all cron jobs', () => {

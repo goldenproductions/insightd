@@ -48,6 +48,9 @@ export const queryKeys = {
   versionCheck: () => ['version-check'] as const,
   imageUpdates: () => ['image-updates'] as const,
 
+  // Storage
+  storage: () => ['storage'] as const,
+
   // Status
   publicStatus: () => ['public-status'] as const,
 } as const;

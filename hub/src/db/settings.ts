@@ -103,6 +103,10 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'collectIntervalMinutes', env: 'INSIGHTD_COLLECT_INTERVAL', type: 'int', category: 'Collection', label: 'Collection Interval (minutes)', hotReload: false, default: '5' },
   { key: 'diskWarnPercent', env: 'INSIGHTD_DISK_WARN_THRESHOLD', type: 'int', category: 'Collection', label: 'Disk Warning Threshold (%)', hotReload: true, default: '85' },
 
+  // Storage
+  { key: 'retention.rawDays', env: 'INSIGHTD_RETENTION_RAW_DAYS', type: 'int', category: 'Storage', label: 'Raw data retention (days)', hotReload: true, default: '30', description: 'How long to keep full-resolution snapshots (min 7)' },
+  { key: 'retention.rollupDays', env: 'INSIGHTD_RETENTION_ROLLUP_DAYS', type: 'int', category: 'Storage', label: 'Rollup data retention (days)', hotReload: true, default: '365', description: 'How long to keep hourly summaries (min 30)' },
+
   // General
   { key: 'timezone', env: 'TZ', type: 'string', category: 'General', label: 'Timezone', hotReload: false, default: 'UTC' },
 
@@ -193,6 +197,10 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
 
   return {
     ...baseConfig,
+    retention: {
+      rawDays: Math.max(7, get('retention.rawDays') || 30),
+      rollupDays: Math.max(30, get('retention.rollupDays') || 365),
+    },
     digestTo: get('digestTo') || baseConfig.digestTo,
     diskWarnPercent: get('diskWarnPercent') || baseConfig.diskWarnPercent,
     smtp: {

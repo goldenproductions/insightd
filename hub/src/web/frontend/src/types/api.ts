@@ -444,3 +444,23 @@ export interface ImageUpdate {
 }
 
 export type UpdateResult = { status: string; message?: string; error?: string };
+
+// Storage
+export interface StorageTableInfo {
+  rows: number;
+  oldestAt: string | null;
+}
+
+export interface StorageInfo {
+  dbSizeBytes: number;
+  tables: Record<string, StorageTableInfo>;
+  retention: { rawDays: number; rollupDays: number };
+  lastPruneAt: string | null;
+  lastVacuumAt: string | null;
+}
+
+export interface VacuumResult {
+  before: number;
+  after: number;
+  reclaimed: number;
+}
