@@ -23,7 +23,7 @@
     "better-sqlite3": "^12.8.0",
     "dockerode": "^4.0.10",
     "node-cron": "^4.2.1",
-    "nodemailer": "^8.0.4",
+    "nodemailer": "^8.0.5",
     "tsx": "^4.19.0"
   },
   "devDependencies": {
