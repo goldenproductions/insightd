@@ -182,7 +182,7 @@ describe('KubernetesRuntime.getHostMetrics', () => {
   function makeRuntime(stubs: { kubeletStats: any; node: any | null }): any {
     const runtime = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
     runtime.coreApi = {
-      readNode: async (_args: { name: string }) => {
+      readNode: async (_name: string) => {
         if (stubs.node === null) throw new Error('node not found');
         return stubs.node;
       },

@@ -7,17 +7,155 @@ import type {
   HostMetricsOverride,
 } from './types';
 
-// Import types for @kubernetes/client-node — the module itself is ESM-only
-// so we use dynamic import() inside init()
-type K8sModule = typeof import('@kubernetes/client-node');
-type CoreV1Api = import('@kubernetes/client-node').CoreV1Api;
-type AppsV1Api = import('@kubernetes/client-node').AppsV1Api;
-type KubeConfig = import('@kubernetes/client-node').KubeConfig;
-type V1Pod = import('@kubernetes/client-node').V1Pod;
-
 const { safeCollect } = require('../../../shared/utils/errors') as {
   safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null>;
 };
+
+// ---- Minimal K8s API type definitions (only the fields we use) ----
+
+interface K8sMeta {
+  name?: string;
+  namespace?: string;
+  uid?: string;
+  labels?: Record<string, string>;
+  creationTimestamp?: string;
+  ownerReferences?: Array<{ kind: string; name: string }>;
+}
+
+interface K8sContainerState {
+  running?: { startedAt?: string };
+  waiting?: { reason?: string };
+  terminated?: { reason?: string };
+}
+
+interface K8sContainerStatus {
+  name: string;
+  ready: boolean;
+  restartCount: number;
+  state?: K8sContainerState;
+  image: string;
+}
+
+interface K8sPod {
+  metadata?: K8sMeta;
+  spec?: { nodeName?: string };
+  status?: {
+    phase?: string;
+    containerStatuses?: K8sContainerStatus[];
+  };
+}
+
+interface K8sNode {
+  metadata?: K8sMeta;
+  status?: {
+    capacity?: Record<string, string>;
+    allocatable?: Record<string, string>;
+    conditions?: Array<{ type: string; status: string }>;
+  };
+}
+
+interface K8sReplicaSet {
+  metadata?: K8sMeta;
+}
+
+interface K8sList<T> { items: T[] }
+
+// ---- Lightweight K8s API client using raw HTTPS ----
+
+class K8sClient {
+  private apiServer: string;
+  private token: string;
+  private caCert: Buffer | null;
+
+  constructor(apiServer: string, token: string, caCert: Buffer | null) {
+    this.apiServer = apiServer;
+    this.token = token;
+    this.caCert = caCert;
+  }
+
+  /** GET a JSON resource from the K8s API server. */
+  async get<T>(path: string): Promise<T> {
+    const url = new URL(path, this.apiServer);
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
+        ca: this.caCert ?? undefined,
+        rejectUnauthorized: !!this.caCert,
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk: string) => body += chunk);
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`K8s API ${path} returned ${res.statusCode}: ${body.slice(0, 200)}`));
+            return;
+          }
+          try { resolve(JSON.parse(body) as T); }
+          catch (err) { reject(err as Error); }
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error('K8s API timeout')); });
+      req.end();
+    });
+  }
+
+  /** GET a text resource (used for pod logs). */
+  async getText(path: string): Promise<string> {
+    const url = new URL(path, this.apiServer);
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}` },
+        ca: this.caCert ?? undefined,
+        rejectUnauthorized: !!this.caCert,
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk: string) => body += chunk);
+        res.on('end', () => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`K8s API ${path} returned ${res.statusCode}`));
+            return;
+          }
+          resolve(body);
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error('K8s API timeout')); });
+      req.end();
+    });
+  }
+
+  // ---- Typed convenience methods matching the old SDK surface ----
+
+  async readNode(name: string): Promise<K8sNode> {
+    return this.get<K8sNode>(`/api/v1/nodes/${encodeURIComponent(name)}`);
+  }
+
+  async listPods(fieldSelector?: string): Promise<K8sList<K8sPod>> {
+    const qs = fieldSelector ? `?fieldSelector=${encodeURIComponent(fieldSelector)}` : '';
+    return this.get<K8sList<K8sPod>>(`/api/v1/pods${qs}`);
+  }
+
+  async readReplicaSet(namespace: string, name: string): Promise<K8sReplicaSet> {
+    return this.get<K8sReplicaSet>(
+      `/apis/apps/v1/namespaces/${encodeURIComponent(namespace)}/replicasets/${encodeURIComponent(name)}`,
+    );
+  }
+
+  async readPodLog(namespace: string, podName: string, container: string, tailLines: number): Promise<string> {
+    const qs = `?container=${encodeURIComponent(container)}&tailLines=${tailLines}&timestamps=true`;
+    return this.getText(
+      `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}/log${qs}`,
+    );
+  }
+}
 
 interface KubernetesRuntimeOptions {
   /** The node this agent runs on. Required — agent only reports containers on this node. */
@@ -30,6 +168,9 @@ interface KubernetesRuntimeOptions {
 
 /**
  * Kubernetes implementation of ContainerRuntime.
+ *
+ * Uses direct HTTPS calls to the K8s API server (no @kubernetes/client-node
+ * dependency — saves ~90 MB of runtime memory from gRPC/protobufjs/etc).
  *
  * - Lists pods scoped to the node the agent runs on (via fieldSelector).
  * - Treats each container inside each pod as an insightd "container".
@@ -44,9 +185,9 @@ export class KubernetesRuntime implements ContainerRuntime {
   readonly supportsActions = false;
   readonly supportsUpdateChecks = false;
 
-  private kc: KubeConfig | null = null;
-  private coreApi: CoreV1Api | null = null;
-  private appsApi: AppsV1Api | null = null;
+  // Public for test stubbing (tests inject these directly)
+  coreApi: K8sClient | null = null;
+  private appsApi: K8sClient | null = null;  // Same client, separate field for clarity
   private nodeName: string;
   private kubeletUrl: string;
   private kubeletToken: string | null = null;
@@ -67,34 +208,37 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   async init(): Promise<void> {
-    // Dynamically import the ESM-only @kubernetes/client-node module
-    const k8s = (await import('@kubernetes/client-node')) as K8sModule;
-    this.kc = new k8s.KubeConfig();
-
-    // Detect in-cluster vs external
-    if (process.env.KUBERNETES_SERVICE_HOST) {
-      this.kc.loadFromCluster();
-      logger.info('k8s', 'Loaded in-cluster config');
-      // Read CA cert and service account token for direct kubelet calls
-      try {
-        this.caCert = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
-      } catch { /* CA not available — kubelet calls will use insecure TLS */ }
-      try {
-        this.kubeletToken = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();
-      } catch {
-        throw new Error('Cannot read service account token at /var/run/secrets/kubernetes.io/serviceaccount/token');
-      }
-    } else {
-      this.kc.loadFromDefault();
-      logger.info('k8s', 'Loaded kubeconfig from default location');
+    // Read service account credentials for API server auth
+    let token: string;
+    try {
+      this.caCert = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
+    } catch { /* CA not available — will use insecure TLS */ }
+    try {
+      token = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();
+      this.kubeletToken = token;
+    } catch {
+      throw new Error('Cannot read service account token at /var/run/secrets/kubernetes.io/serviceaccount/token');
     }
 
-    this.coreApi = this.kc.makeApiClient(k8s.CoreV1Api) as CoreV1Api;
-    this.appsApi = this.kc.makeApiClient(k8s.AppsV1Api) as AppsV1Api;
+    // Discover API server from cluster env vars
+    const host = process.env.KUBERNETES_SERVICE_HOST;
+    const port = process.env.KUBERNETES_SERVICE_PORT || '443';
+    if (!host) {
+      throw new Error('KUBERNETES_SERVICE_HOST not set — KubernetesRuntime requires in-cluster config');
+    }
+    // IPv6 addresses need brackets in URLs
+    const hostPart = host.includes(':') ? `[${host}]` : host;
+    const apiServer = `https://${hostPart}:${port}`;
+
+    const client = new K8sClient(apiServer, token, this.caCert);
+    this.coreApi = client;
+    this.appsApi = client;
+
+    logger.info('k8s', `Using API server ${apiServer} (in-cluster)`);
 
     // Verify we can reach the API and find our node
     try {
-      const node = await this.coreApi.readNode({ name: this.nodeName });
+      const node = await client.readNode(this.nodeName);
       const conditions = node.status?.conditions?.filter(c => c.type === 'Ready') || [];
       logger.info('k8s', `Connected to cluster — node ${this.nodeName} is ${conditions[0]?.status === 'True' ? 'Ready' : 'NotReady'}`);
     } catch (err) {
@@ -103,12 +247,10 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   async listContainers(): Promise<ContainerInfo[]> {
-    if (!this.coreApi || !this.appsApi) throw new Error('KubernetesRuntime not initialized');
+    if (!this.coreApi) throw new Error('KubernetesRuntime not initialized');
 
     // List all pods on this node
-    const res = await this.coreApi.listPodForAllNamespaces({
-      fieldSelector: `spec.nodeName=${this.nodeName}`,
-    });
+    const res = await this.coreApi.listPods(`spec.nodeName=${this.nodeName}`);
 
     const containers: ContainerInfo[] = [];
     // Cache ReplicaSet → Deployment lookups for this collection cycle
@@ -178,7 +320,7 @@ export class KubernetesRuntime implements ContainerRuntime {
    *
    * This makes consecutive pods of the same logical app share the same insightd entry.
    */
-  private async resolveStableName(pod: V1Pod, rsCache: Map<string, string>): Promise<string> {
+  private async resolveStableName(pod: K8sPod, rsCache: Map<string, string>): Promise<string> {
     const ns = pod.metadata?.namespace ?? 'default';
     const podName = pod.metadata?.name ?? 'unknown';
     const owner = pod.metadata?.ownerReferences?.[0];
@@ -197,7 +339,7 @@ export class KubernetesRuntime implements ContainerRuntime {
         const cached = rsCache.get(cacheKey);
         if (cached !== undefined) return cached;
         try {
-          const rs = await this.appsApi!.readNamespacedReplicaSet({ name: owner.name, namespace: ns });
+          const rs = await this.appsApi!.readReplicaSet(ns, owner.name);
           const rsOwner = rs.metadata?.ownerReferences?.[0];
           const stable = rsOwner?.kind === 'Deployment' ? rsOwner.name : owner.name;
           rsCache.set(cacheKey, stable);
@@ -272,7 +414,7 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   async fetchLogs(containerId: string, options: LogOptions): Promise<LogEntry[]> {
-    if (!this.coreApi || !this.appsApi) throw new Error('KubernetesRuntime not initialized');
+    if (!this.coreApi) throw new Error('KubernetesRuntime not initialized');
 
     // Parse the composite id: `${podUid}/${stableName}/${containerName}`
     // Older snapshots may use the legacy 2-segment form `${podUid}/${containerName}`
@@ -284,9 +426,7 @@ export class KubernetesRuntime implements ContainerRuntime {
     const stableName = parts.length >= 3 ? parts.slice(1, -1).join('/') : null;
 
     // Fetch all pods on this node once
-    const pods = await this.coreApi.listPodForAllNamespaces({
-      fieldSelector: `spec.nodeName=${this.nodeName}`,
-    });
+    const pods = await this.coreApi.listPods(`spec.nodeName=${this.nodeName}`);
 
     // Try the recorded UID first — if the pod still exists, use it
     let pod = pods.items.find(p => p.metadata?.uid === podUid);
@@ -317,16 +457,9 @@ export class KubernetesRuntime implements ContainerRuntime {
     const podName = pod.metadata?.name || '';
 
     const tailLines = Math.min(Math.max(options.lines || 100, 1), 1000);
-    const res = await this.coreApi.readNamespacedPodLog({
-      name: podName,
-      namespace,
-      container: containerName,
-      tailLines,
-      timestamps: true,
-    });
+    const text = await this.coreApi.readPodLog(namespace, podName, containerName, tailLines);
 
     // K8s returns plain text — parse into LogEntry[]
-    const text = typeof res === 'string' ? res : String(res);
     return text.split('\n').filter(l => l.length > 0).map(line => {
       const { timestamp, message } = splitKubeTimestamp(line);
       return { stream: 'stdout' as const, timestamp, message };
@@ -364,7 +497,7 @@ export class KubernetesRuntime implements ContainerRuntime {
     try {
       const [stats, node] = await Promise.all([
         this.fetchKubeletStats().catch(() => null),
-        this.coreApi.readNode({ name: this.nodeName }).catch(() => null),
+        this.coreApi.readNode(this.nodeName).catch(() => null),
       ]);
       if (!stats && !node) return null;
 
@@ -435,7 +568,7 @@ export class KubernetesRuntime implements ContainerRuntime {
    * the kubelet maintains for its own scheduling decisions — much more
    * accurate than scraping cAdvisor for node-level totals.
    */
-  private fetchKubeletStats(): Promise<any> {
+  fetchKubeletStats(): Promise<any> {
     return new Promise((resolve, reject) => {
       const url = new URL('/stats/summary', this.kubeletUrl);
       const req = https.request({
