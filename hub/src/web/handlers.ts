@@ -831,7 +831,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
@@ -850,4 +850,51 @@ function handleDeleteApiKey(req: HandlerReq, res: ServerResponse, db: Database.D
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   revokeApiKey(db, parseInt(params.keyId, 10));
   return { deleted: true };
+}
+
+function handleGetStorage(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+
+  const pageCount = (db.pragma('page_count') as any)[0].page_count;
+  const pageSize = (db.pragma('page_size') as any)[0].page_size;
+  const dbSizeBytes = pageCount * pageSize;
+
+  const tableInfo = (name: string, timeCol: string) => {
+    const row = db.prepare(`SELECT COUNT(*) as rows, MIN(${timeCol}) as oldest FROM ${name}`).get() as any;
+    return { rows: row.rows, oldestAt: row.oldest || null };
+  };
+
+  const getMeta = (key: string): string | null => {
+    const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as any;
+    return row ? row.value : null;
+  };
+
+  const { getEffectiveConfig } = require('../db/settings') as { getEffectiveConfig: (db: Database.Database, config: any) => any };
+  const retention = (getEffectiveConfig(db, {}) as any).retention || { rawDays: 30, rollupDays: 365 };
+
+  return {
+    dbSizeBytes,
+    tables: {
+      container_snapshots: tableInfo('container_snapshots', 'collected_at'),
+      host_snapshots: tableInfo('host_snapshots', 'collected_at'),
+      disk_snapshots: tableInfo('disk_snapshots', 'collected_at'),
+      http_checks: tableInfo('http_checks', 'checked_at'),
+      container_rollups: tableInfo('container_rollups', 'bucket'),
+      host_rollups: tableInfo('host_rollups', 'bucket'),
+      disk_rollups: tableInfo('disk_rollups', 'bucket'),
+      http_rollups: tableInfo('http_rollups', 'bucket'),
+    },
+    retention,
+    lastPruneAt: getMeta('last_prune_at'),
+    lastVacuumAt: getMeta('last_vacuum_at'),
+  };
+}
+
+function handleVacuum(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const before = (db.pragma('page_count') as any)[0].page_count * (db.pragma('page_size') as any)[0].page_size;
+  db.exec('VACUUM');
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_vacuum_at', datetime('now'))").run();
+  const after = (db.pragma('page_count') as any)[0].page_count * (db.pragma('page_size') as any)[0].page_size;
+  return { before, after, reclaimed: before - after };
 }

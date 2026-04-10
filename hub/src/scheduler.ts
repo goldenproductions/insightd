@@ -4,7 +4,7 @@ import type Database from 'better-sqlite3';
 import type Dockerode from 'dockerode';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: (label: string, fn: () => any) => Promise<any> };
-const { pruneOldData } = require('./db/schema') as { pruneOldData: (db: Database.Database) => void };
+const { pruneOldData } = require('./db/schema') as { pruneOldData: (db: Database.Database, rawDays?: number, rollupDays?: number) => void };
 const { getEffectiveConfig } = require('./db/settings') as { getEffectiveConfig: (db: Database.Database, config: any) => any };
 
 interface ScheduledTask {
@@ -47,10 +47,19 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
     const data = await safeCollect('digest-build', () => buildDigest(db, liveConfig));
     if (data) {
       await safeCollect('digest-send', () => sendDigest(data, liveConfig, db));
-      pruneOldData(db);
     }
   }, { timezone: config.timezone }));
   logger.info('scheduler', `Digest scheduled: ${config.digestCron} (${config.timezone})`);
+
+  // Schedule daily data prune + rollup (03:30) — independent of digest
+  const runPrune = () => {
+    const liveConfig = getEffectiveConfig(db, config);
+    const { rawDays, rollupDays } = liveConfig.retention || { rawDays: 30, rollupDays: 365 };
+    safeCollect('prune', () => pruneOldData(db, rawDays, rollupDays));
+  };
+  runPrune(); // run once on startup to handle backlog
+  scheduledTasks.push(cron.schedule('30 3 * * *', runPrune, { timezone: config.timezone }));
+  logger.info('scheduler', 'Data prune scheduled: daily at 03:30');
 
   // Schedule alert evaluation — always run, check enabled at runtime (hot-reload)
   const alertCron = `*/${Math.max(1, config.collectIntervalMinutes || 5)} * * * *`;
@@ -156,10 +165,19 @@ function startStandaloneScheduler(db: Database.Database, docker: Dockerode, conf
     const data = await safeCollect('digest-build', () => buildDigest(db, liveConfig));
     if (data) {
       await safeCollect('digest-send', () => sendDigest(data, liveConfig, db));
-      pruneOldData(db);
     }
   }, { timezone: config.timezone }));
   logger.info('scheduler', `Digest scheduled: ${config.digestCron} (${config.timezone})`);
+
+  // Schedule daily data prune + rollup (03:30) — independent of digest
+  const runStandalonePrune = () => {
+    const liveConfig = getEffectiveConfig(db, config);
+    const { rawDays, rollupDays } = liveConfig.retention || { rawDays: 30, rollupDays: 365 };
+    safeCollect('prune', () => pruneOldData(db, rawDays, rollupDays));
+  };
+  runStandalonePrune(); // run once on startup
+  scheduledTasks.push(cron.schedule('30 3 * * *', runStandalonePrune, { timezone: config.timezone }));
+  logger.info('scheduler', 'Data prune scheduled: daily at 03:30');
 
   scheduledTasks.push(cron.schedule(config.updateCheckCron, async () => {
     logger.info('scheduler', 'Checking for image updates...');

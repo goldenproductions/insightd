@@ -3,7 +3,7 @@ import type Dockerode from 'dockerode';
 const cron = require('node-cron');
 import logger = require('./utils/logger');
 const { safeCollect } = require('./utils/errors');
-const { pruneOldData } = require('./db/schema');
+const { pruneOldData } = require('./db/schema') as { pruneOldData: (db: Database.Database, rawDays?: number, rollupDays?: number) => void };
 const { ingestContainers, ingestDisk, ingestUpdates, upsertHost } = require('./ingest');
 
 interface ContainerData {
@@ -115,10 +115,14 @@ function startScheduler({ db, docker, config, collectors, digest, alerts }: Sche
     const data = await safeCollect('digest-build', () => buildDigest(db, config));
     if (data) {
       await safeCollect('digest-send', () => sendDigest(data, config, db));
-      pruneOldData(db);
     }
   }, { timezone: config.timezone });
   logger.info('scheduler', `Digest scheduled: ${config.digestCron} (${config.timezone})`);
+
+  // Schedule daily data prune + rollup (03:30) — independent of digest
+  pruneOldData(db); // run once on startup
+  cron.schedule('30 3 * * *', () => pruneOldData(db), { timezone: config.timezone });
+  logger.info('scheduler', 'Data prune scheduled: daily at 03:30');
 
   // Schedule daily update checks
   cron.schedule(config.updateCheckCron, async () => {

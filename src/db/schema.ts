@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 17;
+const SCHEMA_VERSION = 18;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -258,6 +258,53 @@ function bootstrap(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_snapshots_collected ON container_snapshots (collected_at);
+
+    CREATE TABLE IF NOT EXISTS host_rollups (
+      host_id        TEXT NOT NULL,
+      bucket         TEXT NOT NULL,
+      cpu_avg        REAL, cpu_max REAL,
+      mem_used_avg   REAL, mem_used_max REAL, mem_total REAL,
+      load_1_avg     REAL, load_1_max REAL,
+      swap_used_avg  REAL,
+      gpu_util_avg   REAL, cpu_temp_avg REAL,
+      disk_read_avg  REAL, disk_write_avg REAL,
+      net_rx_avg     REAL, net_tx_avg REAL,
+      sample_count   INTEGER NOT NULL,
+      PRIMARY KEY (host_id, bucket)
+    );
+
+    CREATE TABLE IF NOT EXISTS container_rollups (
+      host_id         TEXT NOT NULL,
+      container_name  TEXT NOT NULL,
+      bucket          TEXT NOT NULL,
+      status_running  INTEGER,
+      status_total    INTEGER,
+      cpu_avg         REAL, cpu_max REAL,
+      mem_avg         REAL, mem_max REAL,
+      net_rx_bytes    INTEGER, net_tx_bytes INTEGER,
+      restart_count   INTEGER,
+      sample_count    INTEGER NOT NULL,
+      PRIMARY KEY (host_id, container_name, bucket)
+    );
+
+    CREATE TABLE IF NOT EXISTS disk_rollups (
+      host_id       TEXT NOT NULL,
+      mount_point   TEXT NOT NULL,
+      bucket        TEXT NOT NULL,
+      used_avg      REAL, used_max REAL,
+      total_gb      REAL,
+      sample_count  INTEGER NOT NULL,
+      PRIMARY KEY (host_id, mount_point, bucket)
+    );
+
+    CREATE TABLE IF NOT EXISTS http_rollups (
+      endpoint_id     INTEGER NOT NULL,
+      bucket          TEXT NOT NULL,
+      response_avg_ms INTEGER, response_max_ms INTEGER,
+      up_count        INTEGER, total_count INTEGER,
+      sample_count    INTEGER NOT NULL,
+      PRIMARY KEY (endpoint_id, bucket)
+    );
   `);
 
   // Track schema version and run migrations
@@ -392,26 +439,93 @@ function migrate(db: Database.Database, fromVersion: number): void {
   if (fromVersion < 17) {
     try { db.exec('ALTER TABLE hosts ADD COLUMN host_group_override TEXT'); } catch { /* already exists */ }
   }
+  if (fromVersion < 18) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS host_rollups (
+        host_id TEXT NOT NULL, bucket TEXT NOT NULL,
+        cpu_avg REAL, cpu_max REAL, mem_used_avg REAL, mem_used_max REAL, mem_total REAL,
+        load_1_avg REAL, load_1_max REAL, swap_used_avg REAL,
+        gpu_util_avg REAL, cpu_temp_avg REAL,
+        disk_read_avg REAL, disk_write_avg REAL, net_rx_avg REAL, net_tx_avg REAL,
+        sample_count INTEGER NOT NULL, PRIMARY KEY (host_id, bucket)
+      );
+      CREATE TABLE IF NOT EXISTS container_rollups (
+        host_id TEXT NOT NULL, container_name TEXT NOT NULL, bucket TEXT NOT NULL,
+        status_running INTEGER, status_total INTEGER,
+        cpu_avg REAL, cpu_max REAL, mem_avg REAL, mem_max REAL,
+        net_rx_bytes INTEGER, net_tx_bytes INTEGER, restart_count INTEGER,
+        sample_count INTEGER NOT NULL, PRIMARY KEY (host_id, container_name, bucket)
+      );
+      CREATE TABLE IF NOT EXISTS disk_rollups (
+        host_id TEXT NOT NULL, mount_point TEXT NOT NULL, bucket TEXT NOT NULL,
+        used_avg REAL, used_max REAL, total_gb REAL,
+        sample_count INTEGER NOT NULL, PRIMARY KEY (host_id, mount_point, bucket)
+      );
+      CREATE TABLE IF NOT EXISTS http_rollups (
+        endpoint_id INTEGER NOT NULL, bucket TEXT NOT NULL,
+        response_avg_ms INTEGER, response_max_ms INTEGER,
+        up_count INTEGER, total_count INTEGER,
+        sample_count INTEGER NOT NULL, PRIMARY KEY (endpoint_id, bucket)
+      );
+    `);
+  }
 }
 
 /**
- * Delete data older than 30 days to keep the DB small.
+ * Roll up raw data into hourly summaries, then delete old data.
+ * @param rawDays — days to keep raw snapshots (default 30, min 7)
+ * @param rollupDays — days to keep hourly rollups (default 365, min 30)
  */
-function pruneOldData(db: Database.Database): void {
-  const cutoff = "datetime('now', '-30 days')";
-  const r1 = db.prepare(`DELETE FROM container_snapshots WHERE collected_at < ${cutoff}`).run();
-  const r2 = db.prepare(`DELETE FROM disk_snapshots WHERE collected_at < ${cutoff}`).run();
-  const r3 = db.prepare(`DELETE FROM update_checks WHERE checked_at < ${cutoff}`).run();
-  const r4 = db.prepare(`DELETE FROM alert_state WHERE resolved_at IS NOT NULL AND resolved_at < ${cutoff}`).run();
-  const r5 = db.prepare(`DELETE FROM host_snapshots WHERE collected_at < ${cutoff}`).run();
-  const r7 = db.prepare(`DELETE FROM http_checks WHERE checked_at < ${cutoff}`).run();
+function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: number = 365): void {
+  const { computeRollups, getMetaValue, setMetaValue } = require('./rollups') as {
+    computeRollups: (db: Database.Database) => void;
+    getMetaValue: (db: Database.Database, key: string) => string | null;
+    setMetaValue: (db: Database.Database, key: string, value: string) => void;
+  };
+
+  // 1. Roll up any un-rolled-up data before deleting
+  computeRollups(db);
+
+  // 2. Delete raw data older than rawDays
+  const rawCutoff = `datetime('now', '-${Math.max(7, rawDays)} days')`;
+  const r1 = db.prepare(`DELETE FROM container_snapshots WHERE collected_at < ${rawCutoff}`).run();
+  const r2 = db.prepare(`DELETE FROM disk_snapshots WHERE collected_at < ${rawCutoff}`).run();
+  const r3 = db.prepare(`DELETE FROM update_checks WHERE checked_at < ${rawCutoff}`).run();
+  const r4 = db.prepare(`DELETE FROM alert_state WHERE resolved_at IS NOT NULL AND resolved_at < ${rawCutoff}`).run();
+  const r5 = db.prepare(`DELETE FROM host_snapshots WHERE collected_at < ${rawCutoff}`).run();
+  const r7 = db.prepare(`DELETE FROM http_checks WHERE checked_at < ${rawCutoff}`).run();
+  const r8 = db.prepare(`DELETE FROM insight_feedback WHERE created_at < ${rawCutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
-    SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${cutoff}
-    UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${cutoff}
+    SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
+    UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
   )`).run();
-  const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes + r6.changes + r7.changes;
+
+  // 3. Delete rollups older than rollupDays
+  const rollupCutoff = `datetime('now', '-${Math.max(30, rollupDays)} days')`;
+  const r9 = db.prepare(`DELETE FROM host_rollups WHERE bucket < ${rollupCutoff}`).run();
+  const r10 = db.prepare(`DELETE FROM container_rollups WHERE bucket < ${rollupCutoff}`).run();
+  const r11 = db.prepare(`DELETE FROM disk_rollups WHERE bucket < ${rollupCutoff}`).run();
+  const r12 = db.prepare(`DELETE FROM http_rollups WHERE bucket < ${rollupCutoff}`).run();
+
+  const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
+    + r6.changes + r7.changes + r8.changes + r9.changes + r10.changes + r11.changes + r12.changes;
+
   if (total > 0) {
-    logger.info('schema', `Pruned ${total} rows older than 30 days`);
+    logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);
+  }
+
+  // 4. Update prune timestamp
+  setMetaValue(db, 'last_prune_at', new Date().toISOString().slice(0, 19).replace('T', ' '));
+
+  // 5. Conditional VACUUM: only if >10k rows deleted and last vacuum >7 days ago
+  if (total > 10000) {
+    const lastVacuum = getMetaValue(db, 'last_vacuum_at');
+    const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 19).replace('T', ' ');
+    if (!lastVacuum || lastVacuum < weekAgo) {
+      db.exec('VACUUM');
+      setMetaValue(db, 'last_vacuum_at', new Date().toISOString().slice(0, 19).replace('T', ' '));
+      logger.info('schema', 'Database vacuumed');
+    }
   }
 }
 

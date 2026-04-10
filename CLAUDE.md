@@ -53,7 +53,7 @@ insightd/
     StacksPage.tsx, StackDetailPage.tsx, StackFormPage.tsx  # Container groups (renamed from "Services" in #72)
     InsightsPage.tsx         # Dedicated insights page with feedback (thumbs up/down)
   hub/src/web/public/        # Built frontend assets (served by Node HTTP server)
-  hub/src/db/                # Connection, schema (currently v17), settings
+  hub/src/db/                # Connection, schema (currently v18), settings, rollups
   src/                       # Standalone mode code (Docker only, mirrors hub for single-host)
   tests/                     # Tests using node:test
   docs/                      # Setup guides (kubernetes-setup.md)
@@ -97,7 +97,7 @@ docker compose up -d        # Run full stack (mosquitto + hub + agent)
 
 ## Database
 
-SQLite with WAL mode. **Schema v17.** Key tables: container_snapshots, host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights, insight_feedback, alert_state, sessions, api_keys, webhooks, service_groups (still named in DB; surfaces as "Stacks" in the UI), hosts (with `runtime_type`, `host_group`, and `host_group_override` columns — the UI override beats the agent-reported value via COALESCE in queries).
+SQLite with WAL mode. **Schema v18.** Key tables: container_snapshots, host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights, insight_feedback, alert_state, sessions, api_keys, webhooks, service_groups (still named in DB; surfaces as "Stacks" in the UI), hosts (with `runtime_type`, `host_group`, and `host_group_override` columns — the UI override beats the agent-reported value via COALESCE in queries), host_rollups, container_rollups, disk_rollups, http_rollups (hourly aggregates for long-term retention).
 
 Both schema files (`hub/src/db/schema.ts` and `src/db/schema.ts`) create `sessions`, `api_keys`, and `insight_feedback` in the bootstrap CREATE TABLE batch — fresh installs need them on first boot, not just via the v12/v14 migration paths (fixed in #74).
 
