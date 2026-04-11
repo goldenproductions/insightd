@@ -22,6 +22,7 @@ const CATEGORY_CONFIG: Record<string, { icon: string; color: string; border: str
   performance: { icon: '\u26a1', color: 'text-warning', border: 'border-l-warning' },
   trend: { icon: '\ud83d\udcc8', color: 'text-info', border: 'border-l-info' },
   availability: { icon: '\u23f0', color: 'text-danger', border: 'border-l-danger' },
+  health: { icon: '\ud83e\ude7a', color: 'text-danger', border: 'border-l-danger' },
 };
 
 function entityLink(insight: DashboardInsight): string {
