@@ -277,17 +277,21 @@ function checkHighLoad(db: Database.Database, hostId: string, threshold: number)
 
 function checkContainerUnhealthy(db: Database.Database, hostId: string): AlertItem[] {
   const rows = db.prepare(`
-    SELECT container_name, health_status FROM container_snapshots
+    SELECT container_name, health_status, health_check_output FROM container_snapshots
     WHERE host_id = ? AND collected_at = (
       SELECT MAX(collected_at) FROM container_snapshots WHERE host_id = ?
     ) AND health_status = 'unhealthy'
-  `).all(hostId, hostId) as { container_name: string; health_status: string }[];
+  `).all(hostId, hostId) as { container_name: string; health_status: string; health_check_output: string | null }[];
 
-  return rows.map(r => ({
-    type: 'container_unhealthy', hostId, target: r.container_name,
-    message: `Container "${r.container_name}" on ${hostId} is unhealthy`,
-    value: 'unhealthy',
-  }));
+  return rows.map(r => {
+    const base = `Container "${r.container_name}" on ${hostId} is unhealthy`;
+    const output = r.health_check_output?.slice(0, 200);
+    return {
+      type: 'container_unhealthy', hostId, target: r.container_name,
+      message: output ? `${base} — ${output}` : base,
+      value: 'unhealthy',
+    };
+  });
 }
 
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {

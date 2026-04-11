@@ -99,6 +99,9 @@ export function ContainerDetailPage() {
     ? <Badge text={data.health_status} color={data.health_status === 'healthy' ? 'green' : data.health_status === 'unhealthy' ? 'red' : 'yellow'} />
     : '-';
 
+  const healthOutput = data.health_status === 'unhealthy' && data.health_check_output
+    ? data.health_check_output : null;
+
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'logs', label: 'Logs' },
@@ -147,7 +150,7 @@ export function ContainerDetailPage() {
       {activeTab === 'overview' && (
         <div className="space-y-6">
           {/* Compact status line + I/O */}
-          <div className="rounded-xl border border-border bg-surface px-4 py-3">
+          <div className="rounded-xl border border-border bg-surface px-4 py-3 space-y-2">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
               <span className="flex items-center gap-2 text-sm">
                 <StatusDot status={data.status} />
@@ -174,6 +177,11 @@ export function ContainerDetailPage() {
                 {data.network_tx_bytes != null && <span>Net TX <span className="font-semibold text-fg">{fmtBytes(data.network_tx_bytes)}</span></span>}
                 {data.blkio_read_bytes != null && <span>Disk Read <span className="font-semibold text-fg">{fmtBytes(data.blkio_read_bytes)}</span></span>}
                 {data.blkio_write_bytes != null && <span>Disk Write <span className="font-semibold text-fg">{fmtBytes(data.blkio_write_bytes)}</span></span>}
+              </div>
+            )}
+            {healthOutput && (
+              <div className="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger font-mono whitespace-pre-wrap break-all">
+                {healthOutput}
               </div>
             )}
           </div>
