@@ -1,8 +1,10 @@
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, apiAuth } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
+import { Button } from '@/components/FormField';
 import { PageTitle } from '@/components/PageTitle';
 import { useHubUpdate } from '@/hooks/useHubUpdate';
 import { HubUpdateCard } from './HubUpdateCard';
@@ -12,13 +14,24 @@ import type { VersionInfo, HostWithAgent, ImageUpdate } from '@/types/api';
 import { queryKeys } from '@/lib/queryKeys';
 
 export function UpdatesPage() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token } = useAuth();
+  const queryClient = useQueryClient();
+  const [checkingVersion, setCheckingVersion] = useState(false);
 
   const { data: version } = useQuery({ queryKey: queryKeys.versionCheck(), queryFn: () => api<VersionInfo>('/version-check') });
   const { data: hosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<HostWithAgent[]>('/hosts') });
   const { data: imageUpdates } = useQuery({ queryKey: queryKeys.imageUpdates(), queryFn: () => api<ImageUpdate[]>('/image-updates') });
 
   const { hubStatus, hubError, startHubUpdate } = useHubUpdate();
+
+  async function handleCheckVersion() {
+    setCheckingVersion(true);
+    try {
+      await apiAuth<VersionInfo>('POST', '/version-check', undefined, token);
+      queryClient.invalidateQueries({ queryKey: queryKeys.versionCheck() });
+    } catch { /* ignore */ }
+    setCheckingVersion(false);
+  }
 
   const latestAgent = version?.latestAgentVersion;
   const latestHub = version?.latestHubVersion;
@@ -66,9 +79,16 @@ export function UpdatesPage() {
               </span>
             )}
           </div>
-          {checkedAt && (
-            <p className="text-xs text-muted">Last checked: {checkedAt}</p>
-          )}
+          <div className="flex items-center gap-3">
+            {checkedAt && (
+              <span className="text-xs text-muted">Last checked: {checkedAt}</span>
+            )}
+            {isAuthenticated && (
+              <Button size="sm" variant="secondary" onClick={handleCheckVersion} disabled={checkingVersion}>
+                {checkingVersion ? 'Checking...' : 'Check now'}
+              </Button>
+            )}
+          </div>
         </div>
       </Card>
 

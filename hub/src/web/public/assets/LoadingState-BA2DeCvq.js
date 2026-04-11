@@ -1,1 +1,0 @@
-import{j as e}from"./index-HCDMELqa.js";function n({message:t="Loading..."}){return e.jsxs("div",{className:"flex items-center justify-center gap-2 py-12 text-sm text-muted",children:[e.jsx("span",{className:"inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent"}),t]})}export{n as L};
