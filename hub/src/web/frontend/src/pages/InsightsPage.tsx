@@ -16,6 +16,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   trend: 'Trend',
   availability: 'Availability',
   prediction: 'Prediction',
+  health: 'Health Check',
 };
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -23,6 +24,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   trend: '\ud83d\udcc8',
   availability: '\u23f0',
   prediction: '\ud83d\udd2e',
+  health: '\ud83e\ude7a',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {

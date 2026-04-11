@@ -300,6 +300,28 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
     }
   }
 
+  // --- Health check diagnoses ---
+  const unhealthyContainers = db.prepare(`
+    SELECT cs.host_id, cs.container_name, cs.health_check_output
+    FROM container_snapshots cs
+    INNER JOIN (
+      SELECT host_id, container_name, MAX(collected_at) as max_at
+      FROM container_snapshots GROUP BY host_id, container_name
+    ) latest ON cs.host_id = latest.host_id
+      AND cs.container_name = latest.container_name
+      AND cs.collected_at = latest.max_at
+    WHERE cs.health_status = 'unhealthy'
+  `).all() as { host_id: string; container_name: string; health_check_output: string | null }[];
+
+  for (const { host_id, container_name, health_check_output } of unhealthyContainers) {
+    const entityId = `${host_id}/${container_name}`;
+    const diagnosis = diagnoseHealthCheck(container_name, health_check_output);
+    insert.run('container', entityId, 'health', 'warning',
+      `${container_name} health check failing`,
+      diagnosis, null, null, null);
+    count++;
+  }
+
   // --- Predictive alerts ---
   count += generatePredictions(db, insert);
 
@@ -606,5 +628,44 @@ const MIN_TREND_VALUE: Record<string, number> = {
   memory_used_mb: 200,  // ignore host mem trend below 200 MB
   memory_mb: 100,       // ignore container mem trend below 100 MB
 };
+
+/**
+ * Interpret Docker health check output into a plain-language diagnosis.
+ */
+function diagnoseHealthCheck(containerName: string, output: string | null): string {
+  if (!output) {
+    return `${containerName} is reporting unhealthy but no diagnostic output is available. Check container logs for details.`;
+  }
+
+  const trimmed = output.trim();
+  const lower = trimmed.toLowerCase();
+
+  if (lower.includes('connection refused')) {
+    return `${containerName} health check cannot connect to the service — the main process may have crashed or is not listening on the expected port. Consider restarting the container. (${trimmed})`;
+  }
+  if (lower.includes('timed out') || lower.includes('timeout')) {
+    return `${containerName} health check is timing out — the service may be overloaded or unresponsive. Check CPU and memory usage on this host. (${trimmed})`;
+  }
+  if (lower.match(/\b(502|503|504)\b/)) {
+    return `${containerName} health check is getting server errors — the service is running but unable to handle requests. Check application logs. (${trimmed})`;
+  }
+  if (lower.match(/\b(401|403)\b/)) {
+    return `${containerName} health check is being rejected with an auth error — the health check endpoint may require credentials or the configuration has changed. (${trimmed})`;
+  }
+  if (lower.match(/\b404\b/)) {
+    return `${containerName} health check endpoint is returning 404 — the health check URL may be misconfigured or the application hasn't started fully. (${trimmed})`;
+  }
+  if (lower.includes('name or service not known') || lower.includes('could not resolve') || lower.includes('dns')) {
+    return `${containerName} health check is failing due to DNS resolution — the container cannot resolve hostnames. Check DNS configuration and network connectivity. (${trimmed})`;
+  }
+  if (lower.includes('oom') || lower.includes('killed') || lower.includes('exit code 137')) {
+    return `${containerName} appears to be running out of memory — the process is being killed by the OS. Consider increasing the container's memory limit. (${trimmed})`;
+  }
+  if (lower.includes('no such file') || lower.includes('not found') || lower.includes('command not found')) {
+    return `${containerName} health check command is failing — the health check binary or script may be missing from the container image. (${trimmed})`;
+  }
+
+  return `${containerName} health check is failing: ${trimmed}. Check container logs for more details.`;
+}
 
 module.exports = { generateInsights, getBaselines };
