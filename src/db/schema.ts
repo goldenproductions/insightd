@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 18;
+const SCHEMA_VERSION = 19;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -34,6 +34,7 @@ function bootstrap(db: Database.Database): void {
       blkio_read_bytes INTEGER,
       blkio_write_bytes INTEGER,
       health_status   TEXT,
+      health_check_output TEXT,
       labels          TEXT,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -468,6 +469,9 @@ function migrate(db: Database.Database, fromVersion: number): void {
         sample_count INTEGER NOT NULL, PRIMARY KEY (endpoint_id, bucket)
       );
     `);
+  }
+  if (fromVersion < 19) {
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN health_check_output TEXT'); } catch { /* already exists */ }
   }
 }
 

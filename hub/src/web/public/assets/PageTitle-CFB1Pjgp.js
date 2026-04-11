@@ -1,0 +1,1 @@
+import{j as t}from"./index-HCDMELqa.js";function i({children:s,actions:x,subtitle:e}){return t.jsxs("div",{className:"flex items-start justify-between gap-4",children:[t.jsxs("div",{children:[t.jsx("h1",{className:"text-xl font-bold text-fg",children:s}),e&&t.jsx("p",{className:"mt-1 text-sm text-muted",children:e})]}),x]})}export{i as P};

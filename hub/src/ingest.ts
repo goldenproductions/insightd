@@ -13,6 +13,7 @@ interface ContainerSnapshot {
   blkioReadBytes?: number | null;
   blkioWriteBytes?: number | null;
   healthStatus?: string | null;
+  healthCheckOutput?: string | null;
   labels?: Record<string, string> | string | null;
 }
 
@@ -62,15 +63,15 @@ interface HostData {
  */
 function ingestContainers(db: Database.Database, hostId: string, containers: ContainerSnapshot[]): void {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, labels, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `);
 
   const insertMany = db.transaction((items: ContainerSnapshot[]) => {
     for (const c of items) {
       const labels = typeof c.labels === 'object' ? JSON.stringify(c.labels) : (c.labels || null);
       insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount,
-        c.networkRxBytes ?? null, c.networkTxBytes ?? null, c.blkioReadBytes ?? null, c.blkioWriteBytes ?? null, c.healthStatus ?? null, labels);
+        c.networkRxBytes ?? null, c.networkTxBytes ?? null, c.blkioReadBytes ?? null, c.blkioWriteBytes ?? null, c.healthStatus ?? null, c.healthCheckOutput ?? null, labels);
     }
   });
 

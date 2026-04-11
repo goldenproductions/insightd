@@ -15,6 +15,8 @@ export interface ContainerInfo {
   status: string;
   restartCount: number;
   healthStatus: string | null;
+  /** Last Docker health check output (truncated). Null if no health check configured. */
+  healthCheckOutput?: string | null;
   labels: Record<string, string>;
   /** Image reference — used for update checks. Optional. */
   image?: string;

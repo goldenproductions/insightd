@@ -104,6 +104,13 @@ export class DockerRuntime implements ContainerRuntime {
           restartCount: p.restartCount,
           lastStartedAt: startedAt || null,
         });
+
+        // Extract last health check output (if health checks are configured)
+        const healthLog = (info.State as any)?.Health?.Log;
+        if (Array.isArray(healthLog) && healthLog.length > 0) {
+          const last = healthLog[healthLog.length - 1];
+          p.healthCheckOutput = (last.Output || '').trim().slice(0, 500) || null;
+        }
       } catch {
         // container may have been removed between list and inspect
         const prev = this.restartState.get(p.name);

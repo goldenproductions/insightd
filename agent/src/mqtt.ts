@@ -26,6 +26,7 @@ interface CollectionData {
     blkioReadBytes?: number | null;
     blkioWriteBytes?: number | null;
     healthStatus?: string | null;
+    healthCheckOutput?: string | null;
     labels?: Record<string, string>;
   }>;
   disk: Array<{
@@ -278,6 +279,7 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
       blkio_read_bytes: c.blkioReadBytes ?? null,
       blkio_write_bytes: c.blkioWriteBytes ?? null,
       health_status: c.healthStatus ?? null,
+      health_check_output: c.healthCheckOutput ?? null,
       labels: JSON.stringify(c.labels || {}),
     })),
     disk: data.disk.map(d => ({
