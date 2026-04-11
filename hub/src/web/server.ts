@@ -104,6 +104,7 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/image-updates', handlers.handleImageUpdates);
   router.add('POST', '/api/image-updates/check', handlers.handleRequestUpdateCheck);
   router.add('GET', '/api/version-check', handlers.handleVersionCheck);
+  router.add('POST', '/api/version-check', handlers.handleRefreshVersionCheck);
   router.add('POST', '/api/update/agent/:hostId', handlers.handleUpdateAgent);
   router.add('POST', '/api/update/agents', handlers.handleUpdateAllAgents);
   router.add('POST', '/api/update/hub', handlers.handleUpdateHub);
