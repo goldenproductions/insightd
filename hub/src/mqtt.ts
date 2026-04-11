@@ -43,6 +43,7 @@ interface CollectionPayload {
     blkio_read_bytes?: number | null;
     blkio_write_bytes?: number | null;
     health_status?: string | null;
+    health_check_output?: string | null;
     labels?: Record<string, string> | null;
   }>;
   disk?: Array<{
@@ -211,6 +212,7 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     blkioReadBytes: c.blkio_read_bytes,
     blkioWriteBytes: c.blkio_write_bytes,
     healthStatus: c.health_status,
+    healthCheckOutput: c.health_check_output ?? null,
     labels: c.labels || null,
   }));
 
