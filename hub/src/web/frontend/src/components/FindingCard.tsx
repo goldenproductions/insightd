@@ -1,10 +1,25 @@
 import { useState } from 'react';
 import type { Finding } from '@/types/api';
+import { timeAgo } from '@/lib/formatters';
+
+export interface LiveSnapshot {
+  status?: string | null;
+  healthStatus?: string | null;
+  cpuPercent?: number | null;
+  memoryMb?: number | null;
+  restartCount?: number | null;
+}
 
 interface Props {
   finding: Finding;
   /** Optional raw technical details to show in an expandable section (e.g. Docker health check output) */
   technicalDetails?: string | null;
+  /**
+   * Live snapshot values for the "Current signals" expander. When provided,
+   * users can crack it open to see the exact current metrics alongside the
+   * stable diagnosis text above.
+   */
+  liveSnapshot?: LiveSnapshot;
 }
 
 const SEVERITY_STYLES: Record<Finding['severity'], { border: string; bg: string; text: string }> = {
@@ -19,14 +34,33 @@ const CONFIDENCE_STYLES: Record<Finding['confidence'], string> = {
   low: 'bg-muted/20 text-muted',
 };
 
-export function FindingCard({ finding, technicalDetails }: Props) {
+function formatCpu(v: number | null | undefined): string {
+  if (v == null) return '—';
+  return `${Math.round(v * 10) / 10}%`;
+}
+
+function formatMem(v: number | null | undefined): string {
+  if (v == null) return '—';
+  return `${Math.round(v)} MB`;
+}
+
+export function FindingCard({ finding, technicalDetails, liveSnapshot }: Props) {
   const [showAllEvidence, setShowAllEvidence] = useState(false);
   const [showTechnical, setShowTechnical] = useState(false);
+  const [showLive, setShowLive] = useState(false);
   const styles = SEVERITY_STYLES[finding.severity];
 
   const TOP_EVIDENCE = 4;
   const visibleEvidence = showAllEvidence ? finding.evidence : finding.evidence.slice(0, TOP_EVIDENCE);
   const hiddenCount = Math.max(0, finding.evidence.length - TOP_EVIDENCE);
+
+  const hasLive = liveSnapshot && (
+    liveSnapshot.status != null ||
+    liveSnapshot.healthStatus != null ||
+    liveSnapshot.cpuPercent != null ||
+    liveSnapshot.memoryMb != null ||
+    liveSnapshot.restartCount != null
+  );
 
   return (
     <div className={`rounded-lg border border-border border-l-[3px] ${styles.border} ${styles.bg} p-4 space-y-3`}>
@@ -77,6 +111,38 @@ export function FindingCard({ finding, technicalDetails }: Props) {
         </div>
       )}
 
+      {/* Current signals expander — the evidence above is stable and bucketed,
+          so power users who want the exact live values can crack this open. */}
+      {hasLive && (
+        <div>
+          <button
+            onClick={() => setShowLive(v => !v)}
+            className="text-[11px] text-muted hover:text-fg transition-colors"
+          >
+            {showLive ? '▾' : '▸'} Current signals
+          </button>
+          {showLive && (
+            <div className="mt-1 grid grid-cols-2 gap-x-4 gap-y-1 rounded bg-bg-secondary p-2 text-[11px] text-fg">
+              {liveSnapshot!.status != null && (
+                <><span className="text-muted">Status</span><span>{liveSnapshot!.status}</span></>
+              )}
+              {liveSnapshot!.healthStatus != null && (
+                <><span className="text-muted">Health</span><span>{liveSnapshot!.healthStatus}</span></>
+              )}
+              {liveSnapshot!.cpuPercent != null && (
+                <><span className="text-muted">CPU (now)</span><span>{formatCpu(liveSnapshot!.cpuPercent)}</span></>
+              )}
+              {liveSnapshot!.memoryMb != null && (
+                <><span className="text-muted">Memory (now)</span><span>{formatMem(liveSnapshot!.memoryMb)}</span></>
+              )}
+              {liveSnapshot!.restartCount != null && (
+                <><span className="text-muted">Restart count</span><span>{liveSnapshot!.restartCount}</span></>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Technical details expander */}
       {technicalDetails && (
         <div>
@@ -91,6 +157,14 @@ export function FindingCard({ finding, technicalDetails }: Props) {
               {technicalDetails}
             </pre>
           )}
+        </div>
+      )}
+
+      {/* Footer: when this analysis was last updated. Lets the user see at
+          a glance that the reasoning is stable, even if the page refreshed. */}
+      {finding.diagnosedAt && (
+        <div className="border-t border-border-light pt-2 text-[11px] text-muted">
+          Analysis updated {timeAgo(finding.diagnosedAt)}
         </div>
       )}
     </div>

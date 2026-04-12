@@ -140,6 +140,8 @@ export interface Finding {
   conclusion: string;
   evidence: string[];
   suggestedAction: string;
+  /** ISO timestamp. Stable while the conclusion + severity stay the same. */
+  diagnosedAt?: string;
 }
 
 export interface ContainerDetail extends ContainerSnapshot {

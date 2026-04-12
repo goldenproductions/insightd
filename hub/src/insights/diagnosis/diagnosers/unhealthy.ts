@@ -18,6 +18,16 @@ function round(v: number | null): string {
   return Math.round(v * 10) / 10 + '';
 }
 
+/**
+ * Bucket a value to a fixed step so small fluctuations don't rewrite
+ * evidence strings on every re-run. Returned with a leading `~` so users
+ * see at a glance that the number is approximate.
+ */
+function bucket(v: number | null, step: number, unit: string): string {
+  if (v == null) return '?';
+  return `~${Math.round(v / step) * step}${unit}`;
+}
+
 function formatDuration(minutes: number | null): string {
   if (minutes == null) return '';
   if (minutes < 60) return `${minutes}m`;
@@ -42,25 +52,26 @@ export function diagnoseUnhealthy(ctx: DiagnosisContext): Finding[] {
     evidence.push(`Docker reports: ${ctx.latest.healthCheckOutput}`);
   }
 
-  // Memory evidence with baseline context
+  // Memory evidence with baseline context. Values are bucketed to 10 MB so
+  // minor drifts don't rewrite the sentence on every re-run.
   if (ctx.latest.memoryMb != null) {
     const p95 = ctx.baselines.memory_mb?.p95;
     const comparison = ctx.memoryVsP95 ?? 'unknown';
     if (p95 != null) {
-      evidence.push(`Memory ${comparison} (${round(ctx.latest.memoryMb)} MB, P95 is ${round(p95)} MB)`);
+      evidence.push(`Memory ${comparison} (${bucket(ctx.latest.memoryMb, 10, ' MB')}, P95 ${bucket(p95, 10, ' MB')})`);
     } else {
-      evidence.push(`Memory at ${round(ctx.latest.memoryMb)} MB (no baseline yet)`);
+      evidence.push(`Memory at ${bucket(ctx.latest.memoryMb, 10, ' MB')} (no baseline yet)`);
     }
   }
 
-  // CPU evidence with baseline context
+  // CPU evidence with baseline context. Bucketed to 5 %.
   if (ctx.latest.cpuPercent != null) {
     const p95 = ctx.baselines.cpu_percent?.p95;
     const comparison = ctx.cpuVsP95 ?? 'unknown';
     if (p95 != null) {
-      evidence.push(`CPU ${comparison} (${round(ctx.latest.cpuPercent)}%, P95 is ${round(p95)}%)`);
+      evidence.push(`CPU ${comparison} (${bucket(ctx.latest.cpuPercent, 5, '%')}, P95 ${bucket(p95, 5, '%')})`);
     } else {
-      evidence.push(`CPU at ${round(ctx.latest.cpuPercent)}% (no baseline yet)`);
+      evidence.push(`CPU at ${bucket(ctx.latest.cpuPercent, 5, '%')} (no baseline yet)`);
     }
   }
 
@@ -71,11 +82,11 @@ export function diagnoseUnhealthy(ctx: DiagnosisContext): Finding[] {
     evidence.push(`No recent restarts`);
   }
 
-  // Host state evidence
+  // Host state evidence (also bucketed — host metrics jitter just as much).
   if (ctx.host.underPressure) {
     const parts: string[] = [];
-    if (ctx.host.cpuPercent != null && ctx.host.cpuPercent > 80) parts.push(`CPU ${round(ctx.host.cpuPercent)}%`);
-    if (ctx.host.memoryPercent != null && ctx.host.memoryPercent > 85) parts.push(`memory ${round(ctx.host.memoryPercent)}%`);
+    if (ctx.host.cpuPercent != null && ctx.host.cpuPercent > 80) parts.push(`CPU ${bucket(ctx.host.cpuPercent, 5, '%')}`);
+    if (ctx.host.memoryPercent != null && ctx.host.memoryPercent > 85) parts.push(`memory ${bucket(ctx.host.memoryPercent, 5, '%')}`);
     if (ctx.host.load5 != null && ctx.host.load5 > 8) parts.push(`load ${round(ctx.host.load5)}`);
     evidence.push(`Host ${hostId} is under pressure (${parts.join(', ')})`);
   } else {

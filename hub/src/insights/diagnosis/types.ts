@@ -113,6 +113,13 @@ export interface Finding {
   conclusion: string;
   evidence: string[];
   suggestedAction: string;
+  /**
+   * ISO timestamp for when this conclusion was first reached. Populated by
+   * the sticky-findings layer in `run.ts` — while the conclusion + severity
+   * stay the same, this value is frozen, so the UI can show a stable
+   * "Analysis updated Xm ago" instead of looking like it re-ran every view.
+   */
+  diagnosedAt?: string;
 }
 
 export type Diagnoser = (ctx: DiagnosisContext) => Finding[];
