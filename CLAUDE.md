@@ -21,7 +21,7 @@ Self-hosted server awareness tool for homelabbers. Monitors containers, hosts, a
 - Backend: Node.js 20, TypeScript (strict), SQLite (better-sqlite3), dockerode, @kubernetes/client-node, MQTT, Nodemailer, node-cron, tsx
 - Frontend: React 19, TypeScript (strict), Tailwind CSS v4, Vite 6, React Router v6, TanStack Query v5
 - Docker multi-arch (amd64 + arm64)
-- Tests: ~480 tests using `node:test` + tsx (zero external test dependencies)
+- Tests: ~500 tests using `node:test` + tsx (zero external test dependencies)
 
 ## Project Structure
 
@@ -40,6 +40,7 @@ insightd/
   agent/k8s/                 # Kubernetes manifests (DaemonSet, RBAC) for k8s/k3s deployment
   hub/src/                   # DB, digest, alerts, MQTT subscriber, insights engine
   hub/src/insights/          # Baselines (time-of-day), health scores, capacity-based detector, predictions, correlations
+  hub/src/insights/diagnosis/ # Correlation-based diagnosis framework (context, diagnosers, log cache, runtime)
   hub/src/web/               # HTTP server, API handlers, auth (SQLite sessions + API keys), rate limiting
   hub/src/web/frontend/      # React + TypeScript SPA (Vite build → public/)
   hub/src/web/frontend/src/components/  # Shared UI components (Card, Button, Skeleton, InsightsFeed, etc.)
@@ -53,7 +54,7 @@ insightd/
     StacksPage.tsx, StackDetailPage.tsx, StackFormPage.tsx  # Container groups (renamed from "Services" in #72)
     InsightsPage.tsx         # Dedicated insights page with feedback (thumbs up/down)
   hub/src/web/public/        # Built frontend assets (served by Node HTTP server)
-  hub/src/db/                # Connection, schema (currently v18), settings, rollups
+  hub/src/db/                # Connection, schema (currently v20), settings, rollups
   src/                       # Standalone mode code (Docker only, mirrors hub for single-host)
   tests/                     # Tests using node:test
   docs/                      # Setup guides (kubernetes-setup.md)
@@ -92,12 +93,16 @@ docker compose up -d        # Run full stack (mosquitto + hub + agent)
 - `INSIGHTD_ALLOW_UPDATES` — enable remote agent updates (default false, Docker only)
 - `INSIGHTD_ALLOW_ACTIONS` — enable container start/stop/restart (default false, Docker only)
 - `INSIGHTD_STATUS_PAGE` — enable public status page (default false)
+- `INSIGHTD_RETENTION_RAW_DAYS` — days to keep full-resolution snapshots (default 30, min 7)
+- `INSIGHTD_RETENTION_ROLLUP_DAYS` — days to keep hourly rollups (default 365, min 30)
 - `NODE_NAME` / `NODE_IP` — required in Kubernetes DaemonSet mode (set via downward API)
 - See hub/src/config.ts and agent/src/config.ts for full list (40+ vars)
 
 ## Database
 
-SQLite with WAL mode. **Schema v18.** Key tables: container_snapshots, host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights, insight_feedback, alert_state, sessions, api_keys, webhooks, service_groups (still named in DB; surfaces as "Stacks" in the UI), hosts (with `runtime_type`, `host_group`, and `host_group_override` columns — the UI override beats the agent-reported value via COALESCE in queries), host_rollups, container_rollups, disk_rollups, http_rollups (hourly aggregates for long-term retention).
+SQLite with WAL mode. **Schema v20.** Key tables: container_snapshots (with `health_check_output` column added v19), host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights (with `evidence`, `suggested_action`, `confidence` columns added v20 for diagnosis findings), insight_feedback, alert_state, sessions, api_keys, webhooks, service_groups (still named in DB; surfaces as "Stacks" in the UI), hosts (with `runtime_type`, `host_group`, and `host_group_override` columns — the UI override beats the agent-reported value via COALESCE in queries), host_rollups, container_rollups, disk_rollups, http_rollups (hourly aggregates for long-term retention).
+
+Data retention is configurable via `retention.rawDays` (default 30, min 7) and `retention.rollupDays` (default 365, min 30) settings. Daily prune cron at 03:30 rolls up raw data into hourly aggregates before deleting it, and runs a conditional VACUUM after large prunes. Schema v18 added the four rollup tables and pruning was rewritten in PR #81.
 
 Both schema files (`hub/src/db/schema.ts` and `src/db/schema.ts`) create `sessions`, `api_keys`, and `insight_feedback` in the bootstrap CREATE TABLE batch — fresh installs need them on first boot, not just via the v12/v14 migration paths (fixed in #74).
 
