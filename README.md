@@ -24,15 +24,18 @@ No critical issues. Good week.
 - **Disk monitoring** — usage warnings with "X days until full" forecasts
 - **HTTP endpoint monitoring** — uptime, response time, configurable intervals
 - **Smart insights engine** — capacity-based health scoring (only flags actual saturation, not baseline deviation), time-of-day baselines, predictive alerts, correlation detection
+- **Health check diagnosis** — when a container is unhealthy, insightd correlates metrics, baselines, restart history, host state, and recent logs to explain *why* and suggest *what to do* — not just "wget connection refused"
 - **Insights page** — dedicated `/insights` view with expandable cards, thumbs up/down feedback, and per-session dismiss
-- **Real-time alerts** — 10 alert types with cooldowns, auto-resolution, and webhook delivery
+- **Real-time alerts** — 10 alert types with cooldowns, auto-resolution, and webhook delivery — alerts include the health check output so notifications tell you *why* a container is unhealthy
 - **Webhook notifications** — Slack, Discord, Telegram, ntfy, or any generic webhook
 - **Weekly digest emails** — HTML + plaintext summary of the week
 - **Container actions** — start/stop/restart/remove containers from the UI (opt-in, Docker mode only)
 - **Remove containers** — delete exited containers + clean all insightd data (alerts, history, baselines)
 - **Remote agent updates** — update agents from the hub UI via MQTT (opt-in, Docker mode only)
-- **Image update detection** — compares local images against Docker Hub
+- **Image update detection** — compares local images against Docker Hub, with a "Check now" button on the Updates page
 - **Explainable alerts** — every alert stores why it fired (value, threshold, message) so you can understand what happened
+- **Configurable data retention** — keep raw snapshots for 30 days (configurable), then automatic hourly rollups for long-term trends (default 365 days)
+- **Storage management** — see your database size and last cleanup time on the Settings page, with an on-demand vacuum button
 - **Metric personalities** — baseline-aware human-friendly moods on every metric (e.g. "😌 Normal", "🔥 Way above normal")
 - **Health score breakdown** — click the system health score to see per-host factor analysis
 - **Stacks** — organize containers by purpose across hosts, auto-detected from Docker Compose project labels (UI label, formerly "Services")
@@ -110,14 +113,14 @@ The hub serves a dashboard at `http://localhost:3000`:
 - **Dashboard** — health score with clickable breakdown, availability, compact status bar, unified "Needs Attention" feed, metric personalities
 - **Hosts** — collapsible sections per host group, with status, metrics, and inline group editing
 - **Host detail** — tabbed view: overview, resources, alerts; click the group badge to retag the host
-- **Container detail** — CPU/memory gauges, logs, status history
+- **Container detail** — CPU/memory gauges, logs, status history, structured health diagnosis when unhealthy
 - **Endpoints** — HTTP endpoint monitoring with uptime timelines
 - **Stacks** — container groups with aggregate status (auto-detected from Docker Compose, or create your own)
 - **Alerts** — full alert history with reason, trigger value, and threshold
 - **Insights** — analytical signals (predictions, trends, performance) with thumbs up/down feedback
 - **Updates** — available image updates, remote agent updates
 - **Status page** — public uptime view (enable with `INSIGHTD_STATUS_PAGE=true`)
-- **Settings** — email, alerts, thresholds, API keys
+- **Settings** — email, alerts, thresholds, retention, storage management, API keys
 
 ## Architecture
 
@@ -154,6 +157,8 @@ All configuration can be done via the **Setup Wizard** and **Settings page** in 
 | `INSIGHTD_DIGEST_CRON` | `0 8 * * 1` | Digest schedule (default: Monday 08:00) |
 | `INSIGHTD_COLLECT_INTERVAL` | `5` | Collection interval in minutes |
 | `INSIGHTD_DISK_WARN_THRESHOLD` | `85` | Disk usage warning threshold (%) |
+| `INSIGHTD_RETENTION_RAW_DAYS` | `30` | Days to keep full-resolution snapshots (min 7) |
+| `INSIGHTD_RETENTION_ROLLUP_DAYS` | `365` | Days to keep hourly rollups (min 30) |
 | `TZ` | `UTC` | Timezone for cron schedules |
 
 ## Docker Images
@@ -169,7 +174,7 @@ Insightd is designed to be lightweight:
 
 - **~28MB RAM** in typical use
 - **SQLite** for storage — no external database needed
-- Data older than 30 days is automatically pruned
+- Raw snapshots auto-pruned after 30 days (configurable), with hourly rollups kept for 365 days for long-term trends
 
 ## Development
 
