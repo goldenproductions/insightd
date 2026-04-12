@@ -679,6 +679,105 @@ function handleGetInsightFeedback(req: HandlerReq, res: ServerResponse, db: Data
   return db.prepare('SELECT entity_type, entity_id, category, metric, helpful, created_at FROM insight_feedback ORDER BY created_at DESC').all();
 }
 
+// --- AI diagnose ---
+
+const aiDiagnoseQueries = require('../insights/ai-diagnose/queries') as {
+  getLatestDiagnosis: (db: Database.Database, hostId: string, containerName: string) => any;
+  insertDiagnosis: (db: Database.Database, hostId: string, containerName: string, contextHash: string, call: any) => any;
+  rowToJson: (row: any) => any;
+};
+
+function handleAIDiagnoseStatus(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any): any {
+  const { getEffectiveConfig } = require('../db/settings') as { getEffectiveConfig: (db: Database.Database, c: any) => any };
+  const live = getEffectiveConfig(db, config);
+  return {
+    enabled: !!live.ai?.enabled,
+    model: live.ai?.geminiModel ?? null,
+  };
+}
+
+function handleGetAIDiagnose(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+  const row = aiDiagnoseQueries.getLatestDiagnosis(db, params.hostId, params.containerName);
+  if (!row) {
+    res.statusCode = 404;
+    return { error: 'No AI diagnosis for this container yet' };
+  }
+  return aiDiagnoseQueries.rowToJson(row);
+}
+
+async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const { getEffectiveConfig } = require('../db/settings') as { getEffectiveConfig: (db: Database.Database, c: any) => any };
+  const live = getEffectiveConfig(db, config);
+  if (!live.ai?.enabled) {
+    res.statusCode = 503;
+    return { error: 'ai_disabled', message: 'Set a Gemini API key in Settings → AI Diagnosis (or GEMINI_API_KEY env var) to enable AI diagnosis' };
+  }
+
+  const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
+  if (!latest) { res.statusCode = 404; return { error: 'Container not found' }; }
+
+  const { buildContext } = require('../insights/diagnosis/context') as {
+    buildContext: (db: Database.Database, entity: any, logs: any) => any;
+  };
+  const { getCachedLogs, fetchLogsBackground } = require('../insights/diagnosis/logCache') as {
+    getCachedLogs: (hostId: string, containerName: string) => any;
+    fetchLogsBackground: (hostId: string, containerName: string, containerId: string, fetcher: any) => void;
+  };
+  const { diagnoseUnhealthy } = require('../insights/diagnosis/diagnosers/unhealthy') as {
+    diagnoseUnhealthy: (ctx: any) => any[];
+  };
+  const service = require('../insights/ai-diagnose/service') as {
+    hashDiagnosisInput: (ctx: any, findings: any[]) => string;
+    callGemini: (ctx: any, findings: any[], opts: any) => Promise<any>;
+  };
+
+  const entity = { type: 'container' as const, hostId: params.hostId, containerName: params.containerName };
+  const logs = getCachedLogs(params.hostId, params.containerName);
+  let diagnosisCtx;
+  try {
+    diagnosisCtx = buildContext(db, entity, logs);
+  } catch (err) {
+    res.statusCode = 409;
+    return { error: 'No snapshots available to diagnose yet' };
+  }
+  const findings = diagnoseUnhealthy(diagnosisCtx);
+
+  const contextHash = service.hashDiagnosisInput(diagnosisCtx, findings);
+
+  const existing = aiDiagnoseQueries.getLatestDiagnosis(db, params.hostId, params.containerName);
+  if (existing && existing.context_hash === contextHash) {
+    const ageMs = Date.now() - new Date(existing.created_at.replace(' ', 'T') + 'Z').getTime();
+    if (ageMs < live.ai.cacheMaxAgeMs) {
+      return { ...aiDiagnoseQueries.rowToJson(existing), cached: true };
+    }
+  }
+
+  try {
+    const call = await service.callGemini(diagnosisCtx, findings, {
+      apiKey: live.ai.geminiApiKey,
+      model: live.ai.geminiModel,
+      timeoutMs: live.ai.requestTimeoutMs,
+    });
+    const row = aiDiagnoseQueries.insertDiagnosis(db, params.hostId, params.containerName, contextHash, call);
+
+    // If logs weren't available, warm them for next time
+    if (!logs.available && typeof latest.container_id === 'string' && ctx && ctx.requestLogs) {
+      try {
+        fetchLogsBackground(params.hostId, params.containerName, latest.container_id, async (h: string, cid: string, opts: any) => {
+          return await ctx.requestLogs!(h, cid, opts);
+        });
+      } catch { /* best effort */ }
+    }
+
+    return { ...aiDiagnoseQueries.rowToJson(row), cached: false };
+  } catch (err) {
+    const msg = (err as Error).message || 'AI diagnosis failed';
+    res.statusCode = 502;
+    return { error: 'ai_call_failed', message: msg };
+  }
+}
+
 function handleImageUpdates(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return queries.getAllImageUpdates(db);
 }
@@ -871,7 +970,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }

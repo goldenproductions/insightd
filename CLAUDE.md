@@ -95,12 +95,14 @@ docker compose up -d        # Run full stack (mosquitto + hub + agent)
 - `INSIGHTD_STATUS_PAGE` — enable public status page (default false)
 - `INSIGHTD_RETENTION_RAW_DAYS` — days to keep full-resolution snapshots (default 30, min 7)
 - `INSIGHTD_RETENTION_ROLLUP_DAYS` — days to keep hourly rollups (default 365, min 30)
+- `GEMINI_API_KEY` — optional; enables the "Diagnose with AI" button on container detail (uses Google Gemini free tier)
+- `GEMINI_MODEL` — model to use (default `gemini-2.0-flash`)
 - `NODE_NAME` / `NODE_IP` — required in Kubernetes DaemonSet mode (set via downward API)
 - See hub/src/config.ts and agent/src/config.ts for full list (40+ vars)
 
 ## Database
 
-SQLite with WAL mode. **Schema v20.** Key tables: container_snapshots (with `health_check_output` column added v19), host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights (with `evidence`, `suggested_action`, `confidence` columns added v20 for diagnosis findings), insight_feedback, alert_state, sessions, api_keys, webhooks, service_groups (still named in DB; surfaces as "Stacks" in the UI), hosts (with `runtime_type`, `host_group`, and `host_group_override` columns — the UI override beats the agent-reported value via COALESCE in queries), host_rollups, container_rollups, disk_rollups, http_rollups (hourly aggregates for long-term retention).
+SQLite with WAL mode. **Schema v21.** Key tables: container_snapshots (with `health_check_output` column added v19), host_snapshots, disk_snapshots, http_endpoints, http_checks, baselines, health_scores, insights (with `evidence`, `suggested_action`, `confidence` columns added v20 for diagnosis findings), insight_feedback, ai_diagnoses (v21: persisted Gemini AI diagnoses keyed by host+container+context_hash for cache hits), alert_state, sessions, api_keys, webhooks, service_groups (still named in DB; surfaces as "Stacks" in the UI), hosts (with `runtime_type`, `host_group`, and `host_group_override` columns — the UI override beats the agent-reported value via COALESCE in queries), host_rollups, container_rollups, disk_rollups, http_rollups (hourly aggregates for long-term retention).
 
 Data retention is configurable via `retention.rawDays` (default 30, min 7) and `retention.rollupDays` (default 365, min 30) settings. Daily prune cron at 03:30 rolls up raw data into hourly aggregates before deleting it, and runs a conditional VACUUM after large prunes. Schema v18 added the four rollup tables and pruning was rewritten in PR #81.
 
