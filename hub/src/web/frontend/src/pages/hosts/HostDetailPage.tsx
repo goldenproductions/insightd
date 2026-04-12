@@ -46,12 +46,10 @@ export function HostDetailPage() {
     </div>
   );
 
-  const alertCount = data.alerts.length + (events?.length ?? 0);
-
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'resources', label: 'Resources' },
-    { id: 'alerts', label: 'Alerts', count: alertCount },
+    { id: 'alerts', label: 'Alerts', count: data.alerts.length },
   ];
 
   return (
