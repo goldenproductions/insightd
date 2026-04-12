@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -45,6 +45,20 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
   const { isAuthenticated, authEnabled, token } = useAuth();
   const queryClient = useQueryClient();
   const [showReasoning, setShowReasoning] = useState(false);
+  const [cooldownUntil, setCooldownUntil] = useState<number | null>(null);
+  const [cooldownRemaining, setCooldownRemaining] = useState(0);
+
+  useEffect(() => {
+    if (!cooldownUntil) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.ceil((cooldownUntil - Date.now()) / 1000));
+      setCooldownRemaining(remaining);
+      if (remaining === 0) setCooldownUntil(null);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [cooldownUntil]);
 
   const hid = encodeURIComponent(hostId);
   const cname = encodeURIComponent(containerName);
@@ -70,7 +84,19 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
   });
 
   const mutation = useMutation<AIDiagnosis, Error>({
-    mutationFn: () => apiAuth<AIDiagnosis>('POST', `/hosts/${hid}/containers/${cname}/ai-diagnose`, undefined, token),
+    mutationFn: async () => {
+      try {
+        return await apiAuth<AIDiagnosis>('POST', `/hosts/${hid}/containers/${cname}/ai-diagnose`, undefined, token);
+      } catch (err) {
+        // apiAuth throws ApiError with .status 429 for rate limits
+        if (err instanceof ApiError && err.status === 429) {
+          // The message from the backend is the error text; we can't easily read
+          // retryAfterSeconds without reworking apiAuth, so default to 60s.
+          setCooldownUntil(Date.now() + 60 * 1000);
+        }
+        throw err;
+      }
+    },
     onSuccess: (data) => {
       queryClient.setQueryData(queryKeys.aiDiagnose(hostId, containerName), data);
     },
@@ -95,7 +121,10 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
   const diagnosis = mutation.data ?? existing ?? null;
   const loading = mutation.isPending;
   const authMissing = authEnabled && !isAuthenticated;
-  const errorMsg = mutation.error?.message ?? null;
+  const rateLimited = cooldownRemaining > 0;
+  const errorMsg = rateLimited
+    ? `Rate limited by Gemini. Try again in ${cooldownRemaining}s.`
+    : mutation.error?.message ?? null;
 
   return (
     <div className="rounded-lg border border-border border-l-[3px] border-l-info bg-info/5 p-4 space-y-3">
@@ -113,10 +142,16 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
           variant="primary"
           size="sm"
           onClick={() => mutation.mutate()}
-          disabled={loading || authMissing}
-          title={authMissing ? 'Log in to run AI diagnosis' : undefined}
+          disabled={loading || authMissing || rateLimited}
+          title={authMissing ? 'Log in to run AI diagnosis' : rateLimited ? `Retry available in ${cooldownRemaining}s` : undefined}
         >
-          {loading ? 'Asking…' : diagnosis ? 'Re-run' : 'Diagnose with AI'}
+          {loading
+            ? 'Asking…'
+            : rateLimited
+            ? `Retry in ${cooldownRemaining}s`
+            : diagnosis
+            ? 'Re-run'
+            : 'Diagnose with AI'}
         </Button>
       </div>
 

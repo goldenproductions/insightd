@@ -837,4 +837,25 @@ describe('AI diagnose API', () => {
     assert.equal(res.status, 502);
     assert.equal(res.json().error, 'ai_call_failed');
   });
+
+  it('POST ai-diagnose returns 429 with Retry-After on Gemini rate limit', async () => {
+    ({ server, port } = await startWithConfig(aiConfig));
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
+    ]);
+    const rateLimitBody = JSON.stringify({
+      error: {
+        code: 429,
+        message: 'quota exceeded',
+        details: [{ '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '30s' }],
+      },
+    });
+    globalThis.fetch = (async () => new Response(rateLimitBody, { status: 429 })) as any;
+    const res = await fetchMethod(port, 'POST', '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(res.status, 429);
+    assert.equal(res.headers['retry-after'], '30');
+    const body = res.json();
+    assert.equal(body.error, 'rate_limited');
+    assert.equal(body.retryAfterSeconds, 30);
+  });
 });

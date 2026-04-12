@@ -8,6 +8,7 @@ const {
   buildPrompt,
   parseModelJson,
   callGemini,
+  GeminiRateLimitError,
 } = require('../../hub/src/insights/ai-diagnose/service');
 const {
   getLatestDiagnosis,
@@ -98,16 +99,52 @@ describe('ai-diagnose: buildPrompt', () => {
     assert.match(prompt, /Connection refused/);
     assert.match(prompt, /Upstream dependency is unreachable/);
     assert.match(prompt, /rootCause/);
-    assert.match(prompt, /ONLY the JSON object/);
+    assert.match(prompt, /ONLY this JSON/i);
   });
 
-  it('handles empty findings and logs gracefully', () => {
+  it('omits empty sections for a quiet container', () => {
     const ctx = makeCtx({
+      recent: { snapshots: [], cpuTrend: 'stable', memoryTrend: 'stable', restartsInWindow: 0 },
+      memoryVsP95: null,
+      cpuVsP95: null,
+      unhealthy: { since: null, durationMinutes: null },
+      host: { healthScore: 95, cpuPercent: 10, memoryPercent: 20, load5: 0.5, underPressure: false },
+      coincident: { activeAlerts: [], recentFailures: [], cascadeDetected: false },
       logs: { available: false, lines: [], errorPatterns: [], fetchedAt: null },
     });
     const prompt = buildPrompt(ctx, []);
-    assert.match(prompt, /no structured findings produced/);
-    assert.match(prompt, /no logs available/);
+    // Required sections
+    assert.match(prompt, /CONTAINER:/);
+    assert.match(prompt, /STATE:/);
+    // Omitted sections should not appear
+    assert.doesNotMatch(prompt, /TRENDS:/);
+    assert.doesNotMatch(prompt, /UNHEALTHY:/);
+    assert.doesNotMatch(prompt, /HOST:/);
+    assert.doesNotMatch(prompt, /COINCIDENT:/);
+    assert.doesNotMatch(prompt, /LOGS:/);
+    assert.doesNotMatch(prompt, /FINDINGS:/);
+    assert.doesNotMatch(prompt, /ERROR PATTERNS:/);
+  });
+
+  it('caps log lines at 10 and truncates long lines', () => {
+    const lines = Array.from({ length: 50 }, (_, i) => ({
+      stream: 'stderr' as const, timestamp: null,
+      message: `line${i} ` + 'x'.repeat(300),
+    }));
+    const ctx = makeCtx({
+      logs: { available: true, lines, errorPatterns: [], fetchedAt: '2026-04-12 09:58:00' },
+    });
+    const prompt = buildPrompt(ctx, []);
+    const logMatches = prompt.match(/\[stderr\]/g) ?? [];
+    assert.equal(logMatches.length, 10);
+    assert.match(prompt, /…/); // truncation ellipsis
+    assert.doesNotMatch(prompt, /x{200}/); // no 200+ char runs survive
+  });
+
+  it('is meaningfully shorter than the old verbose format', () => {
+    const prompt = buildPrompt(makeCtx(), SAMPLE_FINDINGS);
+    // Sanity check — full prompt for typical input should be well under 2KB
+    assert.ok(prompt.length < 2000, `prompt too long: ${prompt.length} chars`);
   });
 });
 
@@ -202,13 +239,49 @@ describe('ai-diagnose: callGemini', () => {
   });
 
   it('throws on non-ok HTTP status', async () => {
-    const fakeFetch = async () => new Response('rate limit', { status: 429 });
+    const fakeFetch = async () => new Response('server error', { status: 500 });
     await assert.rejects(
       () => callGemini(makeCtx(), SAMPLE_FINDINGS, {
         apiKey: 'k', model: 'm', timeoutMs: 5000, fetchImpl: fakeFetch,
       }),
-      /429/,
+      /500/,
     );
+  });
+
+  it('throws GeminiRateLimitError on 429 with parsed retry delay', async () => {
+    const body = JSON.stringify({
+      error: {
+        code: 429,
+        message: 'quota exceeded',
+        details: [
+          { '@type': 'type.googleapis.com/google.rpc.RetryInfo', retryDelay: '42s' },
+        ],
+      },
+    });
+    const fakeFetch = async () => new Response(body, { status: 429 });
+    try {
+      await callGemini(makeCtx(), SAMPLE_FINDINGS, {
+        apiKey: 'k', model: 'm', timeoutMs: 5000, fetchImpl: fakeFetch,
+      });
+      assert.fail('expected throw');
+    } catch (err: any) {
+      assert.equal(err.name, 'GeminiRateLimitError');
+      assert.equal(err.retryAfterSeconds, 42);
+      assert.ok(err instanceof GeminiRateLimitError);
+    }
+  });
+
+  it('falls back to 60s retry when 429 has no RetryInfo', async () => {
+    const fakeFetch = async () => new Response('{"error":{"code":429}}', { status: 429 });
+    try {
+      await callGemini(makeCtx(), SAMPLE_FINDINGS, {
+        apiKey: 'k', model: 'm', timeoutMs: 5000, fetchImpl: fakeFetch,
+      });
+      assert.fail('expected throw');
+    } catch (err: any) {
+      assert.equal(err.name, 'GeminiRateLimitError');
+      assert.equal(err.retryAfterSeconds, 60);
+    }
   });
 
   it('throws on empty candidates', async () => {

@@ -773,6 +773,14 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
     return { ...aiDiagnoseQueries.rowToJson(row), cached: false };
   } catch (err) {
     const msg = (err as Error).message || 'AI diagnosis failed';
+    const logger = require('../../../shared/utils/logger');
+    logger.error('ai-diagnose', `Gemini call failed for ${params.hostId}/${params.containerName}: ${msg}`);
+    if ((err as Error).name === 'GeminiRateLimitError') {
+      const retryAfter = (err as any).retryAfterSeconds || 60;
+      res.statusCode = 429;
+      res.setHeader('Retry-After', String(retryAfter));
+      return { error: 'rate_limited', retryAfterSeconds: retryAfter, message: msg };
+    }
     res.statusCode = 502;
     return { error: 'ai_call_failed', message: msg };
   }
