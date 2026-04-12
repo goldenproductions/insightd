@@ -688,9 +688,11 @@ const aiDiagnoseQueries = require('../insights/ai-diagnose/queries') as {
 };
 
 function handleAIDiagnoseStatus(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any): any {
+  const { getEffectiveConfig } = require('../db/settings') as { getEffectiveConfig: (db: Database.Database, c: any) => any };
+  const live = getEffectiveConfig(db, config);
   return {
-    enabled: !!config.ai?.enabled,
-    model: config.ai?.geminiModel ?? null,
+    enabled: !!live.ai?.enabled,
+    model: live.ai?.geminiModel ?? null,
   };
 }
 
@@ -705,9 +707,11 @@ function handleGetAIDiagnose(req: HandlerReq, res: ServerResponse, db: Database.
 
 async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
-  if (!config.ai?.enabled) {
+  const { getEffectiveConfig } = require('../db/settings') as { getEffectiveConfig: (db: Database.Database, c: any) => any };
+  const live = getEffectiveConfig(db, config);
+  if (!live.ai?.enabled) {
     res.statusCode = 503;
-    return { error: 'ai_disabled', message: 'Set GEMINI_API_KEY in the environment to enable AI diagnosis' };
+    return { error: 'ai_disabled', message: 'Set a Gemini API key in Settings → AI Diagnosis (or GEMINI_API_KEY env var) to enable AI diagnosis' };
   }
 
   const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
@@ -744,16 +748,16 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
   const existing = aiDiagnoseQueries.getLatestDiagnosis(db, params.hostId, params.containerName);
   if (existing && existing.context_hash === contextHash) {
     const ageMs = Date.now() - new Date(existing.created_at.replace(' ', 'T') + 'Z').getTime();
-    if (ageMs < config.ai.cacheMaxAgeMs) {
+    if (ageMs < live.ai.cacheMaxAgeMs) {
       return { ...aiDiagnoseQueries.rowToJson(existing), cached: true };
     }
   }
 
   try {
     const call = await service.callGemini(diagnosisCtx, findings, {
-      apiKey: config.ai.geminiApiKey,
-      model: config.ai.geminiModel,
-      timeoutMs: config.ai.requestTimeoutMs,
+      apiKey: live.ai.geminiApiKey,
+      model: live.ai.geminiModel,
+      timeoutMs: live.ai.requestTimeoutMs,
     });
     const row = aiDiagnoseQueries.insertDiagnosis(db, params.hostId, params.containerName, contextHash, call);
 

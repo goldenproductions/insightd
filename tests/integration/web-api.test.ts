@@ -670,6 +670,14 @@ describe('AI diagnose API', () => {
     aiConfig = {
       collectIntervalMinutes: 5,
       web: { enabled: true, port: 0, host: '127.0.0.1' },
+      smtp: { host: '', port: 587, user: '', pass: '', from: '' },
+      alerts: {
+        enabled: false, to: '', cooldownMinutes: 60,
+        cpuPercent: 90, memoryMb: 0, diskPercent: 90, restartCount: 3,
+        containerDown: true, hostCpuPercent: 90, hostMemoryAvailableMb: 0,
+        hostLoadThreshold: 0, containerUnhealthy: true,
+        excludeContainers: '', endpointDown: true, endpointFailureThreshold: 3,
+      },
       ai: {
         enabled: true,
         geminiApiKey: 'test-key',
@@ -777,6 +785,46 @@ describe('AI diagnose API', () => {
     r = await fetch(port, '/api/hosts/h1/containers/nginx/ai-diagnose');
     assert.equal(r.status, 200);
     assert.equal(r.json().rootCause, 'rc');
+  });
+
+  it('DB-set API key enables AI diagnose even with no env/base-config key', async () => {
+    // Simulate a fresh install where no GEMINI_API_KEY env var exists and user
+    // configures the key via Settings page. The DB setting should flip enabled=true.
+    const noKeyConfig = {
+      ...aiConfig,
+      ai: { ...aiConfig.ai, enabled: false, geminiApiKey: '' },
+    };
+    ({ server, port } = await startWithConfig(noKeyConfig));
+    // Initially disabled
+    let status = await fetch(port, '/api/ai-diagnose/status');
+    assert.equal(status.json().enabled, false);
+
+    // Simulate the settings page saving a key into the DB
+    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('ai.geminiApiKey', 'db-key', datetime('now'))").run();
+    db.prepare("INSERT OR REPLACE INTO settings (key, value, updated_at) VALUES ('ai.geminiModel', 'gemini-1.5-pro', datetime('now'))").run();
+
+    // Now it should report enabled with the DB-set model
+    status = await fetch(port, '/api/ai-diagnose/status');
+    assert.equal(status.json().enabled, true);
+    assert.equal(status.json().model, 'gemini-1.5-pro');
+
+    // And a POST should succeed using the DB key
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
+    ]);
+    let capturedUrl = '';
+    globalThis.fetch = (async (url: string) => {
+      capturedUrl = url;
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({
+          rootCause: 'rc', reasoning: 'r', suggestedFix: 'f', confidence: 0.6, caveats: [],
+        }) }] } }],
+      }), { status: 200 });
+    }) as any;
+    const res = await fetchMethod(port, 'POST', '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(res.status, 200);
+    assert.ok(capturedUrl.includes('key=db-key'), 'expected DB key to be used in request');
+    assert.ok(capturedUrl.includes('gemini-1.5-pro:generateContent'), 'expected DB-set model to be used');
   });
 
   it('POST ai-diagnose returns 502 when Gemini fails', async () => {
