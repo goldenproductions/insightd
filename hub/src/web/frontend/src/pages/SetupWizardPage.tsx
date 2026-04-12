@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { api, apiAuth } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 import { useFormMessage } from '@/hooks/useFormMessage';
 import { Button, Input, Select } from '@/components/FormField';
 import { FormField } from '@/components/FormField';
@@ -93,20 +94,20 @@ function PasswordStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
 }
 
 function EmailStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
+  const { token } = useAuth();
   const [host, setHost] = useState('');
   const [port, setPort] = useState('587');
   const [user, setUser] = useState('');
   const [pass, setPass] = useState('');
-  const [from] = useState('');
   const [to, setTo] = useState('');
   const { msg, showSuccess, showError } = useFormMessage();
 
   const save = async () => {
     try {
       await apiAuth('PUT', '/settings', {
-        'smtp.host': host, 'smtp.port': port, 'smtp.user': user, 'smtp.pass': pass, 'smtp.from': from || user, 'digestTo': to,
+        'smtp.host': host, 'smtp.port': port, 'smtp.user': user, 'smtp.pass': pass, 'smtp.from': user, 'digestTo': to,
         'alerts.enabled': 'true', 'alerts.to': to,
-      });
+      }, token);
       showSuccess('Email configured!');
       setTimeout(onNext, 1000);
     } catch (err) { showError(err); }
