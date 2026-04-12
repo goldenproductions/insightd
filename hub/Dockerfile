@@ -1,5 +1,5 @@
 # Frontend build stage
-FROM node:20-alpine AS frontend
+FROM node:25-alpine AS frontend
 WORKDIR /app
 COPY hub/src/web/frontend/package*.json ./hub/src/web/frontend/
 RUN cd hub/src/web/frontend && npm ci
@@ -7,14 +7,14 @@ COPY hub/src/web/frontend/ ./hub/src/web/frontend/
 RUN cd hub/src/web/frontend && npm run build
 
 # Backend build stage — compile better-sqlite3 native addon
-FROM node:20-alpine AS builder
+FROM node:25-alpine AS builder
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY hub/package*.json ./hub/
 RUN cd hub && npm ci --only=production
 
 # Production stage
-FROM node:20-alpine
+FROM node:25-alpine
 WORKDIR /app
 
 COPY --from=builder /app/hub/node_modules ./hub/node_modules
