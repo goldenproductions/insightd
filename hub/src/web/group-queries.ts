@@ -73,38 +73,74 @@ interface GroupUpdateData {
 }
 
 function getGroups(db: Database.Database, showInternal: boolean = false): GroupRow[] {
+  // The old version used `ROW_NUMBER() OVER (PARTITION BY ...)` with no WHERE
+  // clause on container_snapshots, which forces a full scan + window sort of
+  // every row in that table (82k+ in prod). On a 100 MB DB that translated
+  // to ~4 seconds per call — and the internal-filter loop below called it
+  // again per group. The rewrite uses an index-friendly MAX() join restricted
+  // to the last day of snapshots (more than enough for "latest per container"
+  // while still hitting idx_snapshots_host_name_time).
   const groups = db.prepare(`
+    WITH latest AS (
+      SELECT cs.host_id, cs.container_name, cs.status, cs.cpu_percent,
+             cs.memory_mb, cs.labels
+      FROM container_snapshots cs
+      INNER JOIN (
+        SELECT host_id, container_name, MAX(collected_at) AS max_at
+        FROM container_snapshots
+        WHERE collected_at >= datetime('now', '-1 day')
+        GROUP BY host_id, container_name
+      ) m ON m.host_id = cs.host_id
+         AND m.container_name = cs.container_name
+         AND m.max_at = cs.collected_at
+    )
     SELECT sg.*,
       COUNT(sgm.id) as member_count,
-      SUM(CASE WHEN cs.status = 'running' THEN 1 ELSE 0 END) as running_count,
-      ROUND(SUM(cs.cpu_percent), 1) as total_cpu,
-      ROUND(SUM(cs.memory_mb)) as total_memory
+      SUM(CASE WHEN latest.status = 'running' THEN 1 ELSE 0 END) as running_count,
+      ROUND(SUM(latest.cpu_percent), 1) as total_cpu,
+      ROUND(SUM(latest.memory_mb)) as total_memory
     FROM service_groups sg
     LEFT JOIN service_group_members sgm ON sg.id = sgm.group_id
-    LEFT JOIN (
-      SELECT host_id, container_name, status, cpu_percent, memory_mb, labels,
-        ROW_NUMBER() OVER (PARTITION BY host_id, container_name ORDER BY collected_at DESC) as rn
-      FROM container_snapshots
-    ) cs ON cs.host_id = sgm.host_id AND cs.container_name = sgm.container_name AND cs.rn = 1
+    LEFT JOIN latest ON latest.host_id = sgm.host_id AND latest.container_name = sgm.container_name
     GROUP BY sg.id
     ORDER BY sg.name
   `).all() as GroupRow[];
   if (showInternal) return groups;
-  // Hide groups where ALL members are internal (e.g. the "insightd" compose group)
-  return groups.filter(g => {
-    const members = db.prepare(`
-      SELECT cs.labels FROM service_group_members sgm
-      LEFT JOIN (
-        SELECT host_id, container_name, labels,
-          ROW_NUMBER() OVER (PARTITION BY host_id, container_name ORDER BY collected_at DESC) as rn
+
+  // Hide groups where ALL members are internal (the "insightd" compose group).
+  // One query returns every (group_id, labels) pair so we avoid an N-per-group
+  // subquery. Map group_id → labels[] in memory and decide per group.
+  const memberLabels = db.prepare(`
+    WITH latest AS (
+      SELECT cs.host_id, cs.container_name, cs.labels
+      FROM container_snapshots cs
+      INNER JOIN (
+        SELECT host_id, container_name, MAX(collected_at) AS max_at
         FROM container_snapshots
-      ) cs ON cs.host_id = sgm.host_id AND cs.container_name = sgm.container_name AND cs.rn = 1
-      WHERE sgm.group_id = ?
-    `).all(g.id) as LabelsRow[];
+        WHERE collected_at >= datetime('now', '-1 day')
+        GROUP BY host_id, container_name
+      ) m ON m.host_id = cs.host_id
+         AND m.container_name = cs.container_name
+         AND m.max_at = cs.collected_at
+    )
+    SELECT sgm.group_id, latest.labels
+    FROM service_group_members sgm
+    LEFT JOIN latest ON latest.host_id = sgm.host_id AND latest.container_name = sgm.container_name
+  `).all() as Array<{ group_id: number; labels: string | null }>;
+
+  const labelsByGroup = new Map<number, Array<string | null>>();
+  for (const row of memberLabels) {
+    const arr = labelsByGroup.get(row.group_id) ?? [];
+    arr.push(row.labels);
+    labelsByGroup.set(row.group_id, arr);
+  }
+
+  return groups.filter(g => {
+    const members = labelsByGroup.get(g.id as unknown as number) ?? [];
     if (members.length === 0) return true;
-    const allInternal = members.every(m => {
-      if (!m.labels) return false;
-      try { return JSON.parse(m.labels)['insightd.internal'] === 'true'; } catch { return false; }
+    const allInternal = members.every(labels => {
+      if (!labels) return false;
+      try { return JSON.parse(labels)['insightd.internal'] === 'true'; } catch { return false; }
     });
     return !allInternal;
   });

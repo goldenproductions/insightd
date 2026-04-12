@@ -18,7 +18,14 @@ function getDb(dbPath: string): Database.Database {
 
   // Performance pragmas
   db.pragma('journal_mode = WAL');
-  db.pragma('cache_size = -2000'); // 2MB cache
+  // 64 MB page cache (negative = KB). DBs grow to ~100 MB in real installs, so
+  // fitting most of the working set in SQLite's own cache makes cold queries
+  // fast without depending on the OS page cache surviving a restart.
+  db.pragma('cache_size = -65536');
+  // Memory-map up to 256 MB of the database. Reads become direct memory
+  // accesses once pages are resident, which is dramatically faster than
+  // the regular I/O path for large scans on cold cache.
+  db.pragma('mmap_size = 268435456');
   db.pragma('busy_timeout = 5000');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
