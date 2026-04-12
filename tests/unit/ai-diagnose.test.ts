@@ -215,15 +215,15 @@ describe('ai-diagnose: callGemini', () => {
     };
 
     const result = await callGemini(makeCtx(), SAMPLE_FINDINGS, {
-      apiKey: 'test-key', model: 'gemini-2.0-flash', timeoutMs: 5000, fetchImpl: fakeFetch,
+      apiKey: 'test-key', model: 'gemini-2.5-flash', timeoutMs: 5000, fetchImpl: fakeFetch,
     });
 
     assert.equal(result.diagnosis.rootCause, 'Network loss');
-    assert.equal(result.model, 'gemini-2.0-flash');
+    assert.equal(result.model, 'gemini-2.5-flash');
     assert.equal(result.promptTokens, 120);
     assert.equal(result.responseTokens, 45);
     assert.equal(calls.length, 1);
-    assert.match(calls[0].url, /gemini-2\.0-flash:generateContent\?key=test-key$/);
+    assert.match(calls[0].url, /gemini-2\.5-flash:generateContent\?key=test-key$/);
     const body = JSON.parse(calls[0].init.body);
     assert.ok(body.contents[0].parts[0].text.includes('nginx'));
     assert.equal(body.generationConfig.responseMimeType, 'application/json');
@@ -232,7 +232,7 @@ describe('ai-diagnose: callGemini', () => {
   it('throws when apiKey is missing', async () => {
     await assert.rejects(
       () => callGemini(makeCtx(), SAMPLE_FINDINGS, {
-        apiKey: '', model: 'gemini-2.0-flash', timeoutMs: 5000, fetchImpl: async () => new Response('', { status: 200 }),
+        apiKey: '', model: 'gemini-2.5-flash', timeoutMs: 5000, fetchImpl: async () => new Response('', { status: 200 }),
       }),
       /not configured/,
     );
@@ -322,7 +322,7 @@ describe('ai-diagnose: queries', () => {
         rootCause: 'rc', reasoning: 're', suggestedFix: 'fx',
         confidence: 0.7, caveats: ['c1', 'c2'],
       },
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       promptTokens: 10, responseTokens: 20, latencyMs: 1500,
     };
     const row = insertDiagnosis(db, 'h1', 'nginx', 'hash-abc', call);

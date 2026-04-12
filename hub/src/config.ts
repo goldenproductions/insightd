@@ -81,7 +81,7 @@ const config = Object.freeze({
   // AI diagnosis (Gemini)
   ai: Object.freeze({
     geminiApiKey: process.env.GEMINI_API_KEY || '',
-    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
     get enabled(): boolean {
       return !!this.geminiApiKey;
     },

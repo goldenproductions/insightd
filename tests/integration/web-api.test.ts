@@ -681,7 +681,7 @@ describe('AI diagnose API', () => {
       ai: {
         enabled: true,
         geminiApiKey: 'test-key',
-        geminiModel: 'gemini-2.0-flash',
+        geminiModel: 'gemini-2.5-flash',
         requestTimeoutMs: 5000,
         cacheMaxAgeMs: 24 * 60 * 60 * 1000,
       },
@@ -706,7 +706,7 @@ describe('AI diagnose API', () => {
     ({ server, port } = await startWithConfig(aiConfig));
     const res = await fetch(port, '/api/ai-diagnose/status');
     assert.equal(res.json().enabled, true);
-    assert.equal(res.json().model, 'gemini-2.0-flash');
+    assert.equal(res.json().model, 'gemini-2.5-flash');
   });
 
   it('POST /api/hosts/:h/containers/:c/ai-diagnose returns 503 when disabled', async () => {
@@ -750,7 +750,7 @@ describe('AI diagnose API', () => {
     const body1 = first.json();
     assert.equal(body1.rootCause, 'Upstream unreachable');
     assert.equal(body1.cached, false);
-    assert.equal(body1.model, 'gemini-2.0-flash');
+    assert.equal(body1.model, 'gemini-2.5-flash');
     assert.equal(body1.confidence, 0.85);
     assert.deepEqual(body1.caveats, ['Could also be DNS']);
     assert.equal(calls, 1);

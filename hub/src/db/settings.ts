@@ -125,7 +125,7 @@ const SETTING_DEFS: SettingDef[] = [
 
   // AI Diagnosis
   { key: 'ai.geminiApiKey', env: 'GEMINI_API_KEY', type: 'string', category: 'AI Diagnosis', label: 'Gemini API Key', hotReload: true, default: '', sensitive: true, description: 'Enables the "Diagnose with AI" button on container detail. Get a free key at https://aistudio.google.com/apikey' },
-  { key: 'ai.geminiModel', env: 'GEMINI_MODEL', type: 'string', category: 'AI Diagnosis', label: 'Gemini Model', hotReload: true, default: 'gemini-2.0-flash', description: 'Model to use (default: gemini-2.0-flash — free tier, fast)' },
+  { key: 'ai.geminiModel', env: 'GEMINI_MODEL', type: 'string', category: 'AI Diagnosis', label: 'Gemini Model', hotReload: true, default: 'gemini-2.5-flash', description: 'Model to use (default: gemini-2.5-flash — free tier, fast)' },
   { key: 'ai.requestTimeoutMs', env: 'GEMINI_TIMEOUT_MS', type: 'int', category: 'AI Diagnosis', label: 'Request Timeout (ms)', hotReload: true, default: '20000', description: 'Abort Gemini request after this many milliseconds' },
 ];
 
@@ -214,7 +214,7 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
   // fall back to baseConfig.ai.geminiApiKey for that case (used by tests/embedded configs).
   const aiApiKeyResolved = get('ai.geminiApiKey') as string;
   const aiApiKey = aiApiKeyResolved || baseConfig.ai?.geminiApiKey || '';
-  const aiModel = (get('ai.geminiModel') as string) || baseConfig.ai?.geminiModel || 'gemini-2.0-flash';
+  const aiModel = (get('ai.geminiModel') as string) || baseConfig.ai?.geminiModel || 'gemini-2.5-flash';
   const aiTimeout = (get('ai.requestTimeoutMs') as number) || baseConfig.ai?.requestTimeoutMs || 20000;
 
   return {
