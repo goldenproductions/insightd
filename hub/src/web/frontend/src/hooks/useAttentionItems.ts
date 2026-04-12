@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import type { DashboardData } from '@/types/api';
+import type { DashboardData, Alert } from '@/types/api';
 import { fmtDurationMs } from '@/lib/formatters';
 
 export interface AttentionItem {
@@ -10,6 +10,19 @@ export interface AttentionItem {
   meta: string;
   time: string | null;
   to: string;
+}
+
+const HOST_SCOPED_ALERTS = new Set(['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load']);
+const ENDPOINT_SCOPED_ALERTS = new Set(['endpoint_down']);
+
+function alertLink(alert: Alert): string {
+  if (HOST_SCOPED_ALERTS.has(alert.alert_type)) {
+    return `/hosts/${encodeURIComponent(alert.host_id)}`;
+  }
+  if (ENDPOINT_SCOPED_ALERTS.has(alert.alert_type)) {
+    return `/endpoints`;
+  }
+  return `/hosts/${encodeURIComponent(alert.host_id)}/containers/${encodeURIComponent(alert.target)}`;
 }
 
 export function useAttentionItems(data: DashboardData | undefined): AttentionItem[] {
@@ -25,7 +38,7 @@ export function useAttentionItems(data: DashboardData | undefined): AttentionIte
         detail: alert.message ? alert.target : alert.target,
         meta: alert.host_id,
         time: alert.triggered_at,
-        to: `/hosts/${encodeURIComponent(alert.host_id)}/containers/${encodeURIComponent(alert.target)}`,
+        to: alertLink(alert),
       });
     }
 
