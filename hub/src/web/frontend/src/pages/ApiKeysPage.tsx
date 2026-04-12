@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -17,6 +17,21 @@ export function ApiKeysPage() {
   const [name, setName] = useState('');
   const [newKey, setNewKey] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'ok' | 'err'>('idle');
+
+  // Reset the copy state when a fresh key is generated.
+  useEffect(() => { setCopyState('idle'); }, [newKey]);
+
+  const copyKey = async () => {
+    if (!newKey) return;
+    try {
+      await navigator.clipboard.writeText(newKey);
+      setCopyState('ok');
+    } catch {
+      setCopyState('err');
+    }
+    setTimeout(() => setCopyState('idle'), 2500);
+  };
 
   const { data: keys } = useQuery({
     queryKey: queryKeys.apiKeys(),
@@ -86,11 +101,20 @@ export function ApiKeysPage() {
               {newKey}
             </code>
             <button
-              onClick={() => { navigator.clipboard.writeText(newKey).catch(() => {}); }}
-              className="mt-2 rounded px-2 py-1 text-xs font-medium bg-surface border border-border text-secondary"
+              onClick={copyKey}
+              className={`mt-2 rounded px-2 py-1 text-xs font-medium border ${
+                copyState === 'ok' ? 'bg-success/10 border-success text-success' :
+                copyState === 'err' ? 'bg-danger/10 border-danger text-danger' :
+                'bg-surface border-border text-secondary'
+              }`}
             >
-              Copy to clipboard
+              {copyState === 'ok' ? 'Copied!' : copyState === 'err' ? 'Copy failed' : 'Copy to clipboard'}
             </button>
+            {copyState === 'err' && (
+              <div className="mt-1 text-xs text-danger">
+                Clipboard access denied — select the key above and copy manually.
+              </div>
+            )}
           </div>
         )}
       </Card>

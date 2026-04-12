@@ -41,7 +41,7 @@ export function EndpointDetailPage() {
       <BackLink to="/endpoints" label="Back to Endpoints" />
 
       <div className="flex items-center gap-3">
-        <StatusDot status={isUp ? 'up' : isUp === 0 ? 'down' : 'none'} size="lg" />
+        <StatusDot status={isUp === null ? 'none' : isUp ? 'up' : 'down'} size="lg" />
         <h1 className="text-xl font-bold text-fg">{data.name}</h1>
         {isAuthenticated && (
           <LinkButton to={`/endpoints/${endpointId}/edit`} variant="primary" size="sm">Edit</LinkButton>

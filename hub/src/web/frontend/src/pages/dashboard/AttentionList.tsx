@@ -9,16 +9,11 @@ const KIND_CONFIG: Record<string, { icon: string; label: string }> = {
 };
 
 export function AttentionList({ attentionItems }: { attentionItems: AttentionItem[] }) {
-  if (attentionItems.length === 0) {
-    return (
-      <Card>
-        <div className="flex items-center justify-center gap-2 py-3">
-          <span className="text-base">&#x2705;</span>
-          <span className="text-sm font-medium text-success">All systems operational</span>
-        </div>
-      </Card>
-    );
-  }
+  // When nothing needs attention, render nothing — the rest of the dashboard
+  // (status row, host metrics) already communicates overall health, so a
+  // dedicated "All systems operational" card is just filler that pushes real
+  // content down the page.
+  if (attentionItems.length === 0) return null;
 
   return (
     <Card>
@@ -27,13 +22,13 @@ export function AttentionList({ attentionItems }: { attentionItems: AttentionIte
         <span className="text-xs text-muted">{attentionItems.length} item{attentionItems.length !== 1 ? 's' : ''}</span>
       </div>
       <div className="space-y-2">
-        {attentionItems.map((item, i) => {
+        {attentionItems.map((item) => {
           const config = KIND_CONFIG[item.kind] ?? KIND_CONFIG.alert!;
           const borderColor = item.severity === 'critical' ? 'border-l-danger' : 'border-l-warning';
           const titleColor = item.severity === 'critical' ? 'text-danger' : 'text-warning';
 
           return (
-            <Link key={i} to={item.to}
+            <Link key={`${item.kind}-${item.to}`} to={item.to}
               className={`block rounded-lg border-l-[3px] ${borderColor} bg-bg-secondary p-3 transition-colors hover:bg-surface-hover`}
             >
               <div className="flex items-start gap-2.5">
