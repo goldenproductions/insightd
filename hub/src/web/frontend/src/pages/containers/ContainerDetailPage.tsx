@@ -22,6 +22,7 @@ import { useConfirm } from '@/hooks/useConfirm';
 import { MetricGauge } from './MetricGauge';
 import { getAnalogy, findBaseline } from '@/lib/analogies';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
+import { FindingCard } from '@/components/FindingCard';
 import { queryKeys } from '@/lib/queryKeys';
 
 export function ContainerDetailPage() {
@@ -99,8 +100,7 @@ export function ContainerDetailPage() {
     ? <Badge text={data.health_status} color={data.health_status === 'healthy' ? 'green' : data.health_status === 'unhealthy' ? 'red' : 'yellow'} />
     : '-';
 
-  const healthOutput = data.health_status === 'unhealthy' && data.health_check_output
-    ? data.health_check_output : null;
+  const showHealthFailure = data.health_status === 'unhealthy';
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
@@ -179,12 +179,30 @@ export function ContainerDetailPage() {
                 {data.blkio_write_bytes != null && <span>Disk Write <span className="font-semibold text-fg">{fmtBytes(data.blkio_write_bytes)}</span></span>}
               </div>
             )}
-            {healthOutput && (
-              <div className="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger font-mono whitespace-pre-wrap break-all">
-                {healthOutput}
-              </div>
-            )}
           </div>
+
+          {/* Health check diagnosis (rich finding card) */}
+          {showHealthFailure && data.findings && data.findings.length > 0 && (
+            <div className="space-y-3">
+              {data.findings.map((finding, i) => (
+                <FindingCard key={i} finding={finding} technicalDetails={data.health_check_output} />
+              ))}
+            </div>
+          )}
+          {/* Fallback: unhealthy but no structured findings yet (e.g. right after schema migration) */}
+          {showHealthFailure && (!data.findings || data.findings.length === 0) && (
+            <div className="rounded-lg border border-border border-l-[3px] border-l-danger bg-danger/10 p-4">
+              <div className="text-sm font-semibold text-danger">🩺 {data.container_name} is reporting unhealthy</div>
+              {data.health_diagnosis && (
+                <p className="mt-2 text-xs text-fg">{data.health_diagnosis}</p>
+              )}
+              {data.health_check_output && (
+                <pre className="mt-2 rounded bg-bg-secondary p-2 font-mono text-[11px] text-muted whitespace-pre-wrap break-all">
+                  {data.health_check_output}
+                </pre>
+              )}
+            </div>
+          )}
 
           {/* CPU & Memory gauges */}
           <div className="grid gap-4 md:grid-cols-2">

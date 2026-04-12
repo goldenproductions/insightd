@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 19;
+const SCHEMA_VERSION = 20;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -213,6 +213,9 @@ function bootstrap(db: Database.Database): void {
       metric        TEXT,
       current_value REAL,
       baseline_value REAL,
+      evidence      TEXT,
+      suggested_action TEXT,
+      confidence    TEXT,
       computed_at   TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -472,6 +475,11 @@ function migrate(db: Database.Database, fromVersion: number): void {
   }
   if (fromVersion < 19) {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN health_check_output TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 20) {
+    try { db.exec('ALTER TABLE insights ADD COLUMN evidence TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE insights ADD COLUMN suggested_action TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE insights ADD COLUMN confidence TEXT'); } catch { /* already exists */ }
   }
 }
 

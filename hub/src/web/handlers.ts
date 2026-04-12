@@ -208,7 +208,7 @@ function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Databas
   return queries.getAlerts(db, activeOnly);
 }
 
-function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
   const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
@@ -216,9 +216,42 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     res.statusCode = 404;
     return { error: 'Container not found' };
   }
+
+  // Run correlation-based diagnosis
+  let findings: any[] = [];
+  let health_diagnosis: string | null = null;
+  if (latest.health_status === 'unhealthy') {
+    try {
+      const { runDiagnosis } = require('../insights/diagnosis/run');
+      findings = runDiagnosis(db, { type: 'container', hostId: params.hostId, containerName: params.containerName });
+      // Keep flat health_diagnosis for backward compat — take the top finding's conclusion
+      if (findings.length > 0) {
+        health_diagnosis = findings[0].conclusion;
+      } else {
+        const { diagnoseHealthCheck } = require('../../../shared/utils/health-diagnosis');
+        health_diagnosis = diagnoseHealthCheck(params.containerName, latest.health_check_output);
+      }
+
+      // If logs aren't cached yet, fire a background fetch so next view is enriched
+      const { getCachedLogs, fetchLogsBackground } = require('../insights/diagnosis/logCache');
+      const cached = getCachedLogs(params.hostId, params.containerName);
+      if (!cached.available && ctx && ctx.requestLogs) {
+        fetchLogsBackground(params.hostId, params.containerName, latest.container_id, async (h: string, cid: string, opts: any) => {
+          return await ctx.requestLogs!(h, cid, opts);
+        });
+      }
+    } catch (err) {
+      // Never let diagnosis failure break the container detail page
+      const { diagnoseHealthCheck } = require('../../../shared/utils/health-diagnosis');
+      health_diagnosis = diagnoseHealthCheck(params.containerName, latest.health_check_output);
+    }
+  }
+
   return {
     ...latest,
     host_id: params.hostId,
+    health_diagnosis,
+    findings,
     history: queries.getContainerHistory(db, params.hostId, params.containerName, hours),
     alerts: queries.getContainerAlerts(db, params.hostId, params.containerName),
   };

@@ -216,6 +216,28 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     labels: c.labels || null,
   }));
 
+  // Detect containers transitioning to unhealthy — pre-warm the log cache for diagnosis
+  const unhealthyTransitions: Array<{ name: string; id: string }> = [];
+  if (containers.length > 0) {
+    const prevStatuses = db.prepare(`
+      SELECT cs.container_name, cs.health_status
+      FROM container_snapshots cs
+      INNER JOIN (
+        SELECT container_name, MAX(collected_at) as max_at
+        FROM container_snapshots WHERE host_id = ?
+        GROUP BY container_name
+      ) latest ON cs.container_name = latest.container_name AND cs.collected_at = latest.max_at
+      WHERE cs.host_id = ?
+    `).all(hostId, hostId) as Array<{ container_name: string; health_status: string | null }>;
+    const prevMap = new Map(prevStatuses.map(p => [p.container_name, p.health_status]));
+    for (const c of containers) {
+      const prev = prevMap.get(c.name);
+      if (c.healthStatus === 'unhealthy' && prev !== 'unhealthy') {
+        unhealthyTransitions.push({ name: c.name, id: c.id });
+      }
+    }
+  }
+
   const disk = (payload.disk || []).map(d => ({
     mountPoint: d.mount_point,
     totalGb: d.total_gb,
@@ -228,6 +250,17 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     ingestContainers(db, hostId, containers);
     const { autoAssignGroups } = require('./web/group-queries');
     autoAssignGroups(db, hostId, containers);
+
+    // Fire background log fetches for containers that just went unhealthy
+    if (unhealthyTransitions.length > 0) {
+      const { fetchLogsBackground } = require('./insights/diagnosis/logCache');
+      for (const { name, id } of unhealthyTransitions) {
+        logger.info('diagnosis', `Pre-warming logs for ${hostId}/${name} (health transitioned to unhealthy)`);
+        fetchLogsBackground(hostId, name, id, async (h: string, cid: string, opts: any) => {
+          return await requestContainerLogs(h, cid, opts);
+        });
+      }
+    }
   }
   if (disk.length > 0) ingestDisk(db, hostId, disk);
 
