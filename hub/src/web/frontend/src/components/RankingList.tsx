@@ -11,7 +11,7 @@ interface Props<T> {
 
 export function RankingList<T extends object>({ items, valueKey, formatFn, analogyFn, nameKey = 'container_name' as keyof T, hostKey = 'host_id' as keyof T }: Props<T>) {
   if (!items || items.length === 0) {
-    return <p className="py-4 text-center text-xs text-muted">No data</p>;
+    return <p className="py-4 text-center text-xs text-muted">No ranking data yet.</p>;
   }
 
   const max = Math.max(...items.map(r => (r[valueKey] as number) || 0), 1);

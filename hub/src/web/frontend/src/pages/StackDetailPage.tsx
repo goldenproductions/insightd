@@ -14,6 +14,9 @@ import { fmtPercent } from '@/lib/formatters';
 import { useState, useMemo } from 'react';
 import { BackLink } from '@/components/BackLink';
 import { LoadingState } from '@/components/LoadingState';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { useConfirm } from '@/hooks/useConfirm';
+import { AlertBanner } from '@/components/AlertBanner';
 
 export function StackDetailPage() {
   const { groupId } = useParams();
@@ -21,14 +24,33 @@ export function StackDetailPage() {
   const { isAuthenticated, token } = useAuth();
   const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
+  const { confirm, dialogProps } = useConfirm();
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const [pendingRemoval, setPendingRemoval] = useState<string | null>(null);
 
   const { data } = useQuery({ queryKey: queryKeys.group(groupId), queryFn: () => api<ServiceGroupDetail>(`/groups/${groupId}`), refetchInterval: 30_000 });
 
   const removeMutation = useMutation({
     mutationFn: ({ hostId, containerName }: { hostId: string; containerName: string }) =>
       apiAuth('DELETE', `/groups/${groupId}/members`, { hostId, containerName }, token),
+    onMutate: ({ hostId, containerName }) => {
+      setPendingRemoval(`${hostId}/${containerName}`);
+      setRemoveError(null);
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.group(groupId) }),
+    onError: (err) => setRemoveError(err instanceof Error ? err.message : 'Failed to remove container from stack'),
+    onSettled: () => setPendingRemoval(null),
   });
+
+  const handleRemove = async (hostId: string, containerName: string) => {
+    const ok = await confirm({
+      title: 'Remove container from this stack?',
+      message: `${hostId} / ${containerName}\n\nThis only removes the container from the stack grouping — it won't stop or delete the container itself.`,
+      confirmLabel: 'Remove',
+      danger: true,
+    });
+    if (ok) removeMutation.mutate({ hostId, containerName });
+  };
 
   const { running, totalCpu, totalMem } = useMemo(() => {
     if (!data) return { running: 0, totalCpu: 0, totalMem: 0 };
@@ -52,12 +74,19 @@ export function StackDetailPage() {
     { header: 'Source', accessor: r => <Badge text={r.source} color={r.source === 'manual' ? 'blue' : 'gray'} /> },
     ...(isAuthenticated ? [{
       header: '',
-      accessor: (r: typeof data.members[number]) => (
-        <button
-          onClick={e => { e.stopPropagation(); removeMutation.mutate({ hostId: r.host_id, containerName: r.container_name }); }}
-          className="text-xs text-danger hover:text-danger"
-        >Remove</button>
-      ),
+      accessor: (r: typeof data.members[number]) => {
+        const rowKey = `${r.host_id}/${r.container_name}`;
+        const pending = pendingRemoval === rowKey;
+        return (
+          <button
+            onClick={e => { e.stopPropagation(); if (!pending) handleRemove(r.host_id, r.container_name); }}
+            disabled={pending}
+            className={`text-xs text-danger hover:text-danger ${pending ? 'opacity-50 cursor-wait' : ''}`}
+          >
+            {pending ? 'Removing…' : 'Remove'}
+          </button>
+        );
+      },
     }] : []),
   ];
 
@@ -90,6 +119,11 @@ export function StackDetailPage() {
           </div>
         )}
         {showAddForm && <AddContainerForm groupId={parseInt(groupId!, 10)} token={token} onAdded={() => { setShowAddForm(false); queryClient.invalidateQueries({ queryKey: queryKeys.group(groupId) }); }} />}
+        {removeError && (
+          <div className="mb-3">
+            <AlertBanner message={removeError} color="red" onDismiss={() => setRemoveError(null)} />
+          </div>
+        )}
         <DataTable
           columns={columns}
           data={data.members}
@@ -97,6 +131,8 @@ export function StackDetailPage() {
           emptyText="No containers in this stack"
         />
       </Card>
+
+      <ConfirmDialog {...dialogProps} />
     </div>
   );
 }

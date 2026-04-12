@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import type { Host, ContainerSnapshot } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
-import { Badge } from '@/components/Badge';
 import { timeAgo } from '@/lib/formatters';
 import { useShowInternal } from '@/hooks/useShowInternal';
 import { PageTitle } from '@/components/PageTitle';
@@ -137,7 +136,6 @@ function HostCard({ host, onClick, showInternal }: { host: Host; onClick: () => 
           <StatusDot status={host.is_online ? 'online' : 'offline'} size="md" />
           {host.host_id}
         </span>
-        <Badge text={host.is_online ? 'online' : 'offline'} color={host.is_online ? 'green' : 'red'} />
       </div>
       <div className="mt-2 text-xs text-muted">
         {running}/{total} containers running<br />

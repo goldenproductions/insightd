@@ -3,7 +3,7 @@ import { timeAgo } from '@/lib/formatters';
 
 export function EventTimeline({ events }: { events: EventItem[] }) {
   if (events.length === 0) {
-    return <p className="py-4 text-center text-xs text-muted">No events</p>;
+    return <p className="py-4 text-center text-xs text-muted">No events in this window.</p>;
   }
 
   return (

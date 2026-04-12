@@ -36,13 +36,17 @@ export function WebhooksPage() {
   const testMutation = useMutation({
     mutationFn: (id: number) => apiAuth<WebhookTestResult>('POST', `/webhooks/${id}/test`, undefined, token),
     onSuccess: (data, id) => {
+      // Result persists until the user dismisses it or triggers another test.
+      // Hiding it automatically after a few seconds made it easy to miss
+      // failures on a flaky endpoint.
       setTestResult(prev => ({ ...prev, [id]: { ok: data.ok, msg: data.ok ? 'Sent!' : `Failed: ${data.error || data.status}` } }));
-      setTimeout(() => setTestResult(prev => { const n = { ...prev }; delete n[id]; return n; }), 3000);
     },
     onError: (err, id) => {
       setTestResult(prev => ({ ...prev, [id]: { ok: false, msg: err instanceof Error ? err.message : 'Failed' } }));
     },
   });
+
+  const dismissTestResult = (id: number) => setTestResult(prev => { const n = { ...prev }; delete n[id]; return n; });
 
   if (!isAuthenticated) {
     return <EmptyState message="Log in to manage webhooks." />;
@@ -68,13 +72,36 @@ export function WebhooksPage() {
       header: 'Test',
       accessor: r => {
         const result = testResult[r.id];
-        if (result) return <span className={`text-xs ${result.ok ? 'text-success' : 'text-danger'}`}>{result.msg}</span>;
+        const pending = testMutation.isPending && testMutation.variables === r.id;
+        if (result) {
+          return (
+            <span className="inline-flex items-center gap-1.5">
+              <span className={`text-xs ${result.ok ? 'text-success' : 'text-danger'}`}>{result.msg}</span>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); testMutation.mutate(r.id); }}
+                className="rounded px-1.5 py-0.5 text-[10px] font-medium bg-bg-secondary border border-border text-secondary hover:text-fg"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); dismissTestResult(r.id); }}
+                aria-label="Dismiss"
+                className="rounded px-1 text-xs leading-none text-muted hover:text-fg"
+              >
+                ×
+              </button>
+            </span>
+          );
+        }
         return (
           <button
             onClick={e => { e.stopPropagation(); testMutation.mutate(r.id); }}
-            className="rounded-lg px-2.5 py-1 text-xs font-medium transition-colors bg-bg-secondary border border-border text-secondary"
+            disabled={pending}
+            className="rounded-lg px-2.5 py-1 text-xs font-medium transition-colors bg-bg-secondary border border-border text-secondary disabled:opacity-50"
           >
-            Test
+            {pending ? 'Testing…' : 'Test'}
           </button>
         );
       },

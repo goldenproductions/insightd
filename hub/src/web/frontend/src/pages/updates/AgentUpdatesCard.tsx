@@ -153,7 +153,7 @@ export function AgentUpdatesCard({ hosts, latestAgent }: Props) {
           );
         })}
         {(hosts || []).length === 0 && (
-          <p className="text-sm text-muted">No agents connected.</p>
+          <p className="text-xs text-muted">No agents connected.</p>
         )}
       </div>
     </Card>
