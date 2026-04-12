@@ -78,7 +78,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.status, 'ok');
-    assert.equal(data.schemaVersion, 20);
+    assert.equal(data.schemaVersion, 21);
   });
 
   it('GET /api/hosts returns host list', async () => {
@@ -646,5 +646,147 @@ describe('Web API integration', () => {
     // Auth is disabled in tests (no admin password seeded), so authenticate() returns null
     const res = await fetchMethod(port, 'POST', '/api/auth', { password: 'whatever' });
     assert.equal(res.status, 401);
+  });
+});
+
+describe('AI diagnose API', () => {
+  let db: any;
+  let server: any;
+  let port: number;
+  let aiConfig: any;
+  let origFetch: typeof globalThis.fetch;
+
+  async function startWithConfig(cfg: any) {
+    const { startWebServer } = require('../../hub/src/web/server');
+    return new Promise<{ server: any; port: number }>((resolve) => {
+      const s = startWebServer(db, cfg);
+      s.on('listening', () => resolve({ server: s, port: s.address().port }));
+    });
+  }
+
+  beforeEach(async () => {
+    db = createTestDb();
+    origFetch = globalThis.fetch;
+    aiConfig = {
+      collectIntervalMinutes: 5,
+      web: { enabled: true, port: 0, host: '127.0.0.1' },
+      ai: {
+        enabled: true,
+        geminiApiKey: 'test-key',
+        geminiModel: 'gemini-2.0-flash',
+        requestTimeoutMs: 5000,
+        cacheMaxAgeMs: 24 * 60 * 60 * 1000,
+      },
+    };
+  });
+
+  afterEach(() => {
+    if (server) server.close();
+    db.close();
+    globalThis.fetch = origFetch;
+  });
+
+  it('GET /api/ai-diagnose/status reports disabled when no key', async () => {
+    const cfg = { ...aiConfig, ai: { ...aiConfig.ai, enabled: false, geminiApiKey: '' } };
+    ({ server, port } = await startWithConfig(cfg));
+    const res = await fetch(port, '/api/ai-diagnose/status');
+    assert.equal(res.status, 200);
+    assert.equal(res.json().enabled, false);
+  });
+
+  it('GET /api/ai-diagnose/status reports enabled with model', async () => {
+    ({ server, port } = await startWithConfig(aiConfig));
+    const res = await fetch(port, '/api/ai-diagnose/status');
+    assert.equal(res.json().enabled, true);
+    assert.equal(res.json().model, 'gemini-2.0-flash');
+  });
+
+  it('POST /api/hosts/:h/containers/:c/ai-diagnose returns 503 when disabled', async () => {
+    const cfg = { ...aiConfig, ai: { ...aiConfig.ai, enabled: false, geminiApiKey: '' } };
+    ({ server, port } = await startWithConfig(cfg));
+    seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent }]);
+    const res = await fetchMethod(port, 'POST', '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(res.status, 503);
+    assert.equal(res.json().error, 'ai_disabled');
+  });
+
+  it('POST /api/hosts/:h/containers/:c/ai-diagnose returns 404 when container missing', async () => {
+    ({ server, port } = await startWithConfig(aiConfig));
+    const res = await fetchMethod(port, 'POST', '/api/hosts/h1/containers/ghost/ai-diagnose');
+    assert.equal(res.status, 404);
+  });
+
+  it('POST ai-diagnose happy path: calls Gemini, persists, subsequent call is cached', async () => {
+    ({ server, port } = await startWithConfig(aiConfig));
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', cpu: 50, mem: 400, at: recent },
+    ]);
+
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response(JSON.stringify({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({
+          rootCause: 'Upstream unreachable',
+          reasoning: 'Logs indicate connection refused coincident with host pressure.',
+          suggestedFix: 'Verify upstream service and restart container.',
+          confidence: 0.85,
+          caveats: ['Could also be DNS'],
+        }) }] } }],
+        usageMetadata: { promptTokenCount: 200, candidatesTokenCount: 80 },
+      }), { status: 200 });
+    }) as any;
+
+    const first = await fetchMethod(port, 'POST', '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(first.status, 200);
+    const body1 = first.json();
+    assert.equal(body1.rootCause, 'Upstream unreachable');
+    assert.equal(body1.cached, false);
+    assert.equal(body1.model, 'gemini-2.0-flash');
+    assert.equal(body1.confidence, 0.85);
+    assert.deepEqual(body1.caveats, ['Could also be DNS']);
+    assert.equal(calls, 1);
+
+    const row = db.prepare('SELECT * FROM ai_diagnoses WHERE host_id = ? AND container_name = ?').get('h1', 'nginx');
+    assert.ok(row);
+    assert.equal(row.root_cause, 'Upstream unreachable');
+
+    // Second call should hit the cache since context didn't change
+    const second = await fetchMethod(port, 'POST', '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(second.status, 200);
+    assert.equal(second.json().cached, true);
+    assert.equal(calls, 1); // no new Gemini call
+  });
+
+  it('GET ai-diagnose returns 404 before any run, then the persisted diagnosis', async () => {
+    ({ server, port } = await startWithConfig(aiConfig));
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
+    ]);
+
+    let r = await fetch(port, '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(r.status, 404);
+
+    globalThis.fetch = (async () => new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify({
+        rootCause: 'rc', reasoning: 'rea', suggestedFix: 'fix', confidence: 0.5, caveats: [],
+      }) }] } }],
+    }), { status: 200 })) as any;
+
+    await fetchMethod(port, 'POST', '/api/hosts/h1/containers/nginx/ai-diagnose');
+    r = await fetch(port, '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(r.status, 200);
+    assert.equal(r.json().rootCause, 'rc');
+  });
+
+  it('POST ai-diagnose returns 502 when Gemini fails', async () => {
+    ({ server, port } = await startWithConfig(aiConfig));
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
+    ]);
+    globalThis.fetch = (async () => new Response('boom', { status: 500 })) as any;
+    const res = await fetchMethod(port, 'POST', '/api/hosts/h1/containers/nginx/ai-diagnose');
+    assert.equal(res.status, 502);
+    assert.equal(res.json().error, 'ai_call_failed');
   });
 });

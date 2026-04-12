@@ -77,6 +77,17 @@ const config = Object.freeze({
     endpointDown: process.env.INSIGHTD_ALERT_ENDPOINT_DOWN !== 'false',
     endpointFailureThreshold: parseInt(process.env.INSIGHTD_ALERT_ENDPOINT_FAILURES || '3', 10),
   }),
+
+  // AI diagnosis (Gemini)
+  ai: Object.freeze({
+    geminiApiKey: process.env.GEMINI_API_KEY || '',
+    geminiModel: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+    get enabled(): boolean {
+      return !!this.geminiApiKey;
+    },
+    requestTimeoutMs: parseInt(process.env.GEMINI_TIMEOUT_MS || '20000', 10),
+    cacheMaxAgeMs: parseInt(process.env.GEMINI_CACHE_MAX_AGE_MS || String(24 * 60 * 60 * 1000), 10),
+  }),
 });
 
 function validate(): string[] {

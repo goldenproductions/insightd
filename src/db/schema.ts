@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 20;
+const SCHEMA_VERSION = 21;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -232,6 +232,26 @@ function bootstrap(db: Database.Database): void {
       created_at   TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(entity_type, entity_id, category, metric)
     );
+
+    CREATE TABLE IF NOT EXISTS ai_diagnoses (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id         TEXT NOT NULL,
+      container_name  TEXT NOT NULL,
+      context_hash    TEXT NOT NULL,
+      model           TEXT NOT NULL,
+      root_cause      TEXT NOT NULL,
+      reasoning       TEXT NOT NULL,
+      suggested_fix   TEXT NOT NULL,
+      confidence      REAL,
+      caveats         TEXT,
+      prompt_tokens   INTEGER,
+      response_tokens INTEGER,
+      latency_ms      INTEGER,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ai_diagnoses_container
+      ON ai_diagnoses (host_id, container_name, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS webhooks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -480,6 +500,9 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE insights ADD COLUMN evidence TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE insights ADD COLUMN suggested_action TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE insights ADD COLUMN confidence TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 21) {
+    // ai_diagnoses table created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 
