@@ -133,8 +133,19 @@ export interface ContainerHistory {
   collected_at: string;
 }
 
+export interface Finding {
+  diagnoser: string;
+  severity: 'critical' | 'warning' | 'info';
+  confidence: 'high' | 'medium' | 'low';
+  conclusion: string;
+  evidence: string[];
+  suggestedAction: string;
+}
+
 export interface ContainerDetail extends ContainerSnapshot {
   host_id: string;
+  health_diagnosis: string | null;
+  findings: Finding[];
   history: ContainerHistory[];
   alerts: Alert[];
 }

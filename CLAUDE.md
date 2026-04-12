@@ -125,6 +125,19 @@ See `.impeccable.md` for the full design context. Key principles:
 
 This prevents false positives like "memory critical at 1.4% usage" from low-baseline noise.
 
+### Correlation-Based Diagnosis Engine
+
+For *why* something is wrong (not just *what*), insightd uses a correlation-based diagnosis framework in `hub/src/insights/diagnosis/`:
+
+- **Context builder** (`context.ts`) assembles all relevant signals for an entity from existing queries: latest metrics, recent history, baselines, host state, coincident failures, active alerts, cached logs with parsed error patterns.
+- **Diagnosers** (`diagnosers/`) are pure functions that take the context and return structured `Finding[]` — each with a conclusion, ordered evidence list, suggested action, and confidence level.
+- **Decision trees** in diagnosers use explicit if/else ordered most-specific-first. Same health check output can produce different diagnoses depending on memory trend, restart pattern, host state, and log signals.
+- **Runtime** (`run.ts`) orchestrates the framework. Called from `handleContainerDetail` for instant on-demand results, and from the hourly insights cycle for persistence (writes to `insights` table with `evidence`, `suggested_action`, `confidence` columns added in schema v20).
+- **Log cache** (`logCache.ts`) holds recent container logs with a 5-minute TTL. Pre-warmed by the MQTT subscriber when a container transitions to unhealthy, so diagnosis can use log signals without blocking page loads.
+- **Fallback chain**: if the structured diagnoser returns nothing, flat `diagnoseHealthCheck()` from `shared/utils/health-diagnosis.ts` is used as a last resort.
+
+v1 ships one diagnoser (`diagnoseUnhealthy`). Adding new diagnosers (high memory, restart loop, host pressure, etc.) only requires writing a new function — the framework composes them automatically.
+
 ## React Best Practices
 
 When writing or modifying frontend code in `hub/src/web/frontend/`, follow the Vercel React best practices in `.claude/skills/react-best-practices/`. Key priorities:
