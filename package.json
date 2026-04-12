@@ -28,7 +28,7 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/dockerode": "^3.3.34",
+    "@types/dockerode": "^4.0.1",
     "@types/node": "^20.17.0",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.0",
