@@ -9,6 +9,15 @@ export interface HealthData {
 }
 
 // Dashboard
+export interface DashboardInsight {
+  entity_type: string;
+  entity_id: string;
+  category: string;
+  severity: string;
+  title: string;
+  message: string;
+}
+
 export interface DashboardData {
   hostCount: number;
   hostsOnline: number;
@@ -30,7 +39,7 @@ export interface DashboardData {
     hostBreakdown: { hostId: string; score: number; factors: Record<string, { score: number; weight: number; value: number | string; rating: string }> }[];
     computedAt: string;
   } | null;
-  topInsights: { entity_type: string; entity_id: string; category: string; severity: string; title: string; message: string }[];
+  topInsights: DashboardInsight[];
   availability: { overallPercent: number | null; downContainers: { hostId: string; name: string; uptimePercent: number; downMinutes: number }[] };
 }
 

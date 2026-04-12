@@ -1,4 +1,7 @@
 export const queryKeys = {
+  // Health
+  health: () => ['health'] as const,
+
   // Dashboard
   dashboard: (showInternal?: boolean) => ['dashboard', showInternal] as const,
   rankings: () => ['rankings'] as const,
