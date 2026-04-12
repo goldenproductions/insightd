@@ -444,22 +444,39 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
   } catch { /* group queries not available */ }
 
   // 24h availability per container — only for containers still being reported.
-  // Containers that have stopped reporting (deleted, filtered, etc.) are
-  // excluded so they don't show as "0% uptime" in the dashboard.
-  const availRows = db.prepare(`
-    SELECT host_id, container_name, labels,
-      COUNT(*) as total,
-      SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running
+  // Two-pass to avoid a correlated EXISTS over the snapshot table: first get
+  // the set of (host,name) pairs active in the last 15 min, then aggregate
+  // 24h stats filtered to that set. Joining via a temp table is much cheaper
+  // than re-evaluating EXISTS for every matching row.
+  const activePairs = db.prepare(`
+    SELECT DISTINCT host_id, container_name
     FROM container_snapshots
-    WHERE collected_at >= datetime('now', '-1 day')
-      AND EXISTS (
-        SELECT 1 FROM container_snapshots cs2
-        WHERE cs2.host_id = container_snapshots.host_id
-          AND cs2.container_name = container_snapshots.container_name
-          AND cs2.collected_at > datetime('now', '-15 minutes')
-      )
-    GROUP BY host_id, container_name
-  `).all() as AvailabilityRow[];
+    WHERE collected_at > datetime('now', '-15 minutes')
+  `).all() as Array<{ host_id: string; container_name: string }>;
+  const availRows: AvailabilityRow[] = [];
+  if (activePairs.length > 0) {
+    const availStmt = db.prepare(`
+      SELECT labels,
+        COUNT(*) as total,
+        SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running
+      FROM container_snapshots
+      WHERE host_id = ? AND container_name = ?
+        AND collected_at >= datetime('now', '-1 day')
+    `);
+    for (const pair of activePairs) {
+      const row = availStmt.get(pair.host_id, pair.container_name) as
+        { labels: string | null; total: number; running: number } | undefined;
+      if (row && row.total > 0) {
+        availRows.push({
+          host_id: pair.host_id,
+          container_name: pair.container_name,
+          labels: row.labels,
+          total: row.total,
+          running: row.running,
+        });
+      }
+    }
+  }
   const availFiltered = showInternal ? availRows : availRows.filter(c => {
     if (!c.labels) return true;
     try { return JSON.parse(c.labels)['insightd.internal'] !== 'true'; } catch { return true; }
