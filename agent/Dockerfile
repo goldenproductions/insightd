@@ -1,5 +1,5 @@
 # Build stage — compile TypeScript to JavaScript
-FROM node:20-alpine AS builder
+FROM node:25-alpine AS builder
 WORKDIR /app
 
 # Install root devDependencies (type definitions needed for compilation)
@@ -17,7 +17,7 @@ COPY agent/tsconfig.build.json ./agent/
 RUN cd agent && npx tsc -p tsconfig.build.json
 
 # Production stage — no tsx, no devDependencies, no type packages
-FROM node:20-alpine
+FROM node:25-alpine
 WORKDIR /app
 
 COPY agent/package*.json ./agent/
