@@ -98,6 +98,9 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/hosts/:hostId/insights', handlers.handleGetHostInsights);
   router.add('POST', '/api/insights/feedback', handlers.handleInsightFeedback);
   router.add('GET', '/api/insights/feedback', handlers.handleGetInsightFeedback);
+  router.add('GET', '/api/ai-diagnose/status', handlers.handleAIDiagnoseStatus);
+  router.add('GET', '/api/hosts/:hostId/containers/:containerName/ai-diagnose', handlers.handleGetAIDiagnose);
+  router.add('POST', '/api/hosts/:hostId/containers/:containerName/ai-diagnose', handlers.handleAIDiagnose);
   router.add('GET', '/api/setup/status', handlers.handleSetupStatus);
   router.add('POST', '/api/setup/password', handlers.handleSetupPassword);
   router.add('POST', '/api/setup/complete', handlers.handleSetupComplete);

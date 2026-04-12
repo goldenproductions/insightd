@@ -23,6 +23,7 @@ import { MetricGauge } from './MetricGauge';
 import { getAnalogy, findBaseline } from '@/lib/analogies';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
 import { FindingCard } from '@/components/FindingCard';
+import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
 
 export function ContainerDetailPage() {
@@ -203,6 +204,9 @@ export function ContainerDetailPage() {
               )}
             </div>
           )}
+
+          {/* AI diagnosis — available any time, especially useful when findings are sparse */}
+          <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />
 
           {/* CPU & Memory gauges */}
           <div className="grid gap-4 md:grid-cols-2">

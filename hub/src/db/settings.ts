@@ -62,11 +62,20 @@ interface AlertsConfig {
   endpointFailureThreshold: number;
 }
 
+interface AiConfig {
+  geminiApiKey: string;
+  geminiModel: string;
+  requestTimeoutMs: number;
+  cacheMaxAgeMs: number;
+  enabled?: boolean;
+}
+
 interface BaseConfig {
   digestTo: string;
   diskWarnPercent: number;
   smtp: SmtpConfig;
   alerts: AlertsConfig;
+  ai?: AiConfig;
   [key: string]: any;
 }
 
@@ -113,6 +122,11 @@ const SETTING_DEFS: SettingDef[] = [
   // Status Page
   { key: 'statusPage.enabled', env: 'INSIGHTD_STATUS_PAGE', type: 'bool', category: 'Status Page', label: 'Enable public status page', hotReload: true, default: 'false', description: 'Serve a public status page at /status (no login required)' },
   { key: 'statusPage.title', env: 'INSIGHTD_STATUS_PAGE_TITLE', type: 'string', category: 'Status Page', label: 'Page title', hotReload: true, default: 'System Status', description: 'Title shown on the public status page' },
+
+  // AI Diagnosis
+  { key: 'ai.geminiApiKey', env: 'GEMINI_API_KEY', type: 'string', category: 'AI Diagnosis', label: 'Gemini API Key', hotReload: true, default: '', sensitive: true, description: 'Enables the "Diagnose with AI" button on container detail. Get a free key at https://aistudio.google.com/apikey' },
+  { key: 'ai.geminiModel', env: 'GEMINI_MODEL', type: 'string', category: 'AI Diagnosis', label: 'Gemini Model', hotReload: true, default: 'gemini-2.5-flash', description: 'Model to use (default: gemini-2.5-flash — free tier, fast)' },
+  { key: 'ai.requestTimeoutMs', env: 'GEMINI_TIMEOUT_MS', type: 'int', category: 'AI Diagnosis', label: 'Request Timeout (ms)', hotReload: true, default: '20000', description: 'Abort Gemini request after this many milliseconds' },
 ];
 
 function getSettings(db: Database.Database): SettingResult[] {
@@ -195,27 +209,43 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
     return def ? resolveValue(def, dbRows) : undefined;
   };
 
+  // ai.geminiApiKey: DB wins, then env (via resolveValue's env lookup), then baseConfig (programmatic).
+  // resolveValue already reads env — it only returns '' when both DB and env are empty, so we
+  // fall back to baseConfig.ai.geminiApiKey for that case (used by tests/embedded configs).
+  const aiApiKeyResolved = get('ai.geminiApiKey') as string;
+  const aiApiKey = aiApiKeyResolved || baseConfig.ai?.geminiApiKey || '';
+  const aiModel = (get('ai.geminiModel') as string) || baseConfig.ai?.geminiModel || 'gemini-2.5-flash';
+  const aiTimeout = (get('ai.requestTimeoutMs') as number) || baseConfig.ai?.requestTimeoutMs || 20000;
+
   return {
     ...baseConfig,
+    ai: {
+      ...(baseConfig.ai || {}),
+      geminiApiKey: aiApiKey,
+      geminiModel: aiModel,
+      requestTimeoutMs: aiTimeout,
+      cacheMaxAgeMs: baseConfig.ai?.cacheMaxAgeMs ?? 24 * 60 * 60 * 1000,
+      enabled: !!aiApiKey,
+    },
     retention: {
       rawDays: Math.max(7, get('retention.rawDays') || 30),
       rollupDays: Math.max(30, get('retention.rollupDays') || 365),
     },
-    digestTo: get('digestTo') || baseConfig.digestTo,
-    diskWarnPercent: get('diskWarnPercent') || baseConfig.diskWarnPercent,
+    digestTo: get('digestTo') || baseConfig.digestTo || '',
+    diskWarnPercent: get('diskWarnPercent') || baseConfig.diskWarnPercent || 85,
     smtp: {
-      ...baseConfig.smtp,
-      host: get('smtp.host') || baseConfig.smtp.host,
-      port: get('smtp.port') || baseConfig.smtp.port,
-      user: get('smtp.user') || baseConfig.smtp.user,
-      pass: get('smtp.pass') || baseConfig.smtp.pass,
-      from: get('smtp.from') || baseConfig.smtp.from,
+      ...(baseConfig.smtp || {}),
+      host: get('smtp.host') || baseConfig.smtp?.host || '',
+      port: get('smtp.port') || baseConfig.smtp?.port || 587,
+      user: get('smtp.user') || baseConfig.smtp?.user || '',
+      pass: get('smtp.pass') || baseConfig.smtp?.pass || '',
+      from: get('smtp.from') || baseConfig.smtp?.from || '',
     },
     alerts: {
-      ...baseConfig.alerts,
+      ...(baseConfig.alerts || {}),
       enabled: get('alerts.enabled'),
-      to: get('alerts.to') || baseConfig.alerts.to,
-      cooldownMinutes: get('alerts.cooldownMinutes') || baseConfig.alerts.cooldownMinutes,
+      to: get('alerts.to') || baseConfig.alerts?.to || '',
+      cooldownMinutes: get('alerts.cooldownMinutes') || baseConfig.alerts?.cooldownMinutes || 60,
       cpuPercent: get('alerts.cpuPercent'),
       memoryMb: get('alerts.memoryMb'),
       diskPercent: get('alerts.diskPercent'),
@@ -225,9 +255,9 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       hostMemoryAvailableMb: get('alerts.hostMemoryAvailableMb'),
       hostLoadThreshold: get('alerts.hostLoadThreshold'),
       containerUnhealthy: get('alerts.containerUnhealthy'),
-      excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts.excludeContainers,
+      excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts?.excludeContainers || '',
       endpointDown: get('alerts.endpointDown'),
-      endpointFailureThreshold: get('alerts.endpointFailureThreshold') || baseConfig.alerts.endpointFailureThreshold,
+      endpointFailureThreshold: get('alerts.endpointFailureThreshold') || baseConfig.alerts?.endpointFailureThreshold || 3,
     },
   };
 }
