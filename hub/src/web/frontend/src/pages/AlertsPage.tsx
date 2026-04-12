@@ -19,6 +19,23 @@ const columns: Column<Alert>[] = [
   { header: 'Notifications', accessor: r => r.notify_count, hideOnMobile: true },
 ];
 
+/**
+ * Map an alert to the most relevant detail page. Container-scoped alerts
+ * link to the container; host-scoped (disk, host CPU/memory/load) link to
+ * the host; endpoint alerts link to the endpoint detail page.
+ */
+function alertLink(alert: Alert): string {
+  const hostScoped = ['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load'];
+  const endpointScoped = ['endpoint_down'];
+  if (hostScoped.includes(alert.alert_type)) {
+    return `/hosts/${encodeURIComponent(alert.host_id)}`;
+  }
+  if (endpointScoped.includes(alert.alert_type)) {
+    return `/endpoints`;
+  }
+  return `/hosts/${encodeURIComponent(alert.host_id)}/containers/${encodeURIComponent(alert.target)}`;
+}
+
 export function AlertsPage() {
   const navigate = useNavigate();
   const { data: alerts } = useQuery({ queryKey: queryKeys.alerts(), queryFn: () => api<Alert[]>('/alerts?active=false'), refetchInterval: 30_000 });
@@ -31,7 +48,7 @@ export function AlertsPage() {
           columns={columns}
           data={alerts || []}
           emptyText="No alerts"
-          onRowClick={r => navigate(`/hosts/${encodeURIComponent(r.host_id)}/containers/${encodeURIComponent(r.target)}`)}
+          onRowClick={r => navigate(alertLink(r))}
         />
       </Card>
     </div>
