@@ -186,7 +186,18 @@ export function ContainerDetailPage() {
           {showHealthFailure && data.findings && data.findings.length > 0 && (
             <div className="space-y-3">
               {data.findings.map((finding, i) => (
-                <FindingCard key={i} finding={finding} technicalDetails={data.health_check_output} />
+                <FindingCard
+                  key={i}
+                  finding={finding}
+                  technicalDetails={data.health_check_output}
+                  liveSnapshot={{
+                    status: data.status,
+                    healthStatus: data.health_status,
+                    cpuPercent: data.cpu_percent,
+                    memoryMb: data.memory_mb,
+                    restartCount: data.restart_count,
+                  }}
+                />
               ))}
             </div>
           )}

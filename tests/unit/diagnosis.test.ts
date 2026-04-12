@@ -4,6 +4,7 @@ const { createTestDb } = require('../helpers/db');
 const { suppressConsole } = require('../helpers/mocks');
 const { runDiagnosis } = require('../../hub/src/insights/diagnosis/run');
 const { setCachedLogs, _clearCache } = require('../../hub/src/insights/diagnosis/logCache');
+const { stickyFindings, _clearStickyCache } = require('../../hub/src/insights/diagnosis/sticky');
 
 function ts(date: Date): string {
   return date.toISOString().slice(0, 19).replace('T', ' ');
@@ -50,6 +51,7 @@ describe('diagnosis engine', () => {
     restore = suppressConsole();
     db = createTestDb();
     _clearCache();
+    _clearStickyCache();
   });
 
   afterEach(() => {
@@ -202,5 +204,79 @@ describe('diagnosis engine', () => {
     assert.ok(persisted[0]!.evidence); // JSON array
     assert.ok(persisted[0]!.suggested_action);
     assert.ok(persisted[0]!.confidence);
+  });
+
+  it('stamps findings with diagnosedAt via sticky layer', () => {
+    seedSnapshot(db, { name: 'svc', health: 'unhealthy', cpu: 10, mem: 100, healthOutput: 'boom', collectedAt: ts(new Date(NOW - 60_000)) });
+    seedHostSnapshot(db, 'h1', 20, 2000, 8000, 1.0, ts(new Date(NOW - 60_000)));
+
+    const findings = runDiagnosis(db, { type: 'container', hostId: 'h1', containerName: 'svc' });
+    assert.equal(findings.length, 1);
+    assert.ok(findings[0]!.diagnosedAt, 'expected diagnosedAt to be set');
+    // Must be a parseable ISO timestamp
+    assert.ok(!isNaN(Date.parse(findings[0]!.diagnosedAt!)));
+  });
+});
+
+describe('sticky findings', () => {
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = suppressConsole();
+    _clearStickyCache();
+  });
+
+  afterEach(() => { restore(); });
+
+  const baseFinding = (overrides: any = {}) => ({
+    diagnoser: 'unhealthy-container',
+    severity: 'warning' as const,
+    confidence: 'medium' as const,
+    conclusion: 'nginx is reporting unhealthy',
+    evidence: ['Memory elevated (~520 MB, P95 ~400 MB)', 'CPU normal (~30%, P95 ~40%)'],
+    suggestedAction: 'Restart it',
+    ...overrides,
+  });
+
+  it('returns the same cached finding when conclusion + severity unchanged', () => {
+    const first = stickyFindings('h1', 'nginx', [baseFinding()], 1_000_000);
+    const second = stickyFindings('h1', 'nginx', [
+      baseFinding({ evidence: ['Memory elevated (~530 MB, P95 ~400 MB)', 'CPU normal (~35%, P95 ~40%)'] }),
+    ], 2_000_000);
+
+    // diagnosedAt should be frozen to the first run's timestamp
+    assert.equal(first[0]!.diagnosedAt, second[0]!.diagnosedAt);
+    // Evidence should be the cached version, not the "drifted" one
+    assert.deepEqual(second[0]!.evidence, first[0]!.evidence);
+  });
+
+  it('replaces cache and restamps when conclusion changes', () => {
+    const first = stickyFindings('h1', 'nginx', [baseFinding()], 1_000_000);
+    const second = stickyFindings('h1', 'nginx', [
+      baseFinding({ conclusion: 'nginx is crash-looping', confidence: 'high' }),
+    ], 2_000_000);
+
+    assert.notEqual(first[0]!.diagnosedAt, second[0]!.diagnosedAt);
+    assert.equal(second[0]!.conclusion, 'nginx is crash-looping');
+    assert.equal(second[0]!.diagnosedAt, new Date(2_000_000).toISOString());
+  });
+
+  it('replaces cache and restamps when severity changes', () => {
+    const first = stickyFindings('h1', 'nginx', [baseFinding()], 1_000_000);
+    const second = stickyFindings('h1', 'nginx', [
+      baseFinding({ severity: 'critical' as const }),
+    ], 2_000_000);
+
+    assert.notEqual(first[0]!.diagnosedAt, second[0]!.diagnosedAt);
+    assert.equal(second[0]!.severity, 'critical');
+  });
+
+  it('keys cache per (host, container, diagnoser) — different containers do not share state', () => {
+    stickyFindings('h1', 'nginx', [baseFinding()], 1_000_000);
+    const other = stickyFindings('h1', 'redis', [
+      baseFinding({ conclusion: 'redis is reporting unhealthy' }),
+    ], 2_000_000);
+    assert.equal(other[0]!.diagnosedAt, new Date(2_000_000).toISOString());
+    assert.equal(other[0]!.conclusion, 'redis is reporting unhealthy');
   });
 });

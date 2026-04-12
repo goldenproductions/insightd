@@ -18,6 +18,9 @@ const { getCachedLogs } = require('./logCache') as {
 const { diagnoseUnhealthy } = require('./diagnosers/unhealthy') as {
   diagnoseUnhealthy: (ctx: any) => Finding[];
 };
+const { stickyFindings } = require('./sticky') as {
+  stickyFindings: (hostId: string, containerName: string, fresh: Finding[]) => Finding[];
+};
 
 const DIAGNOSERS = [diagnoseUnhealthy];
 
@@ -44,10 +47,15 @@ export function runDiagnosis(
     return []; // no snapshots yet, nothing to diagnose
   }
 
-  const findings: Finding[] = [];
+  const fresh: Finding[] = [];
   for (const diagnoser of DIAGNOSERS) {
-    findings.push(...diagnoser(ctx));
+    fresh.push(...diagnoser(ctx));
   }
+
+  // Run through the sticky layer so evidence + diagnosedAt stay stable
+  // across re-runs when the conclusion hasn't actually changed. This is
+  // what users see on the container detail page.
+  const findings = stickyFindings(entity.hostId, entity.containerName, fresh);
 
   if (options.persistCategory && findings.length > 0) {
     persistFindings(db, entity, options.persistCategory, findings);
