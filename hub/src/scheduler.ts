@@ -78,8 +78,12 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'HTTP endpoint checks scheduled: every minute');
 
-  // Schedule insights engine — hourly baseline computation + health scores
-  scheduledTasks.push(cron.schedule('0 * * * *', async () => {
+  // Schedule insights engine — baselines + health scores every 15 minutes.
+  // Previously hourly, but health factors like CPU/memory/load should
+  // reflect the current metrics window, and a full hour of drift made the
+  // dashboard breakdown look stale against host detail pages. 15 min is a
+  // sweet spot: fast enough to feel live, cheap enough (~150 ms per run).
+  scheduledTasks.push(cron.schedule('*/15 * * * *', async () => {
     logger.info('scheduler', 'Computing insights...');
     const { computeBaselines } = require('./insights/baselines');
     const { computeHealthScores } = require('./insights/health');
@@ -89,7 +93,7 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
     await safeCollect('health-scores', () => computeHealthScores(db, baselineCache));
     await safeCollect('insights', () => generateInsights(db, baselineCache));
   }, { timezone: config.timezone }));
-  logger.info('scheduler', 'Insights engine scheduled: hourly');
+  logger.info('scheduler', 'Insights engine scheduled: every 15 minutes');
 
   // Schedule version check — daily + run once on startup
   const { checkForUpdates } = require('./version-check');

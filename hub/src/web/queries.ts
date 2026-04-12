@@ -522,18 +522,77 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
   return result;
 }
 
+/**
+ * Rescore a host's `alerts` factor against a live count. Mutates the
+ * passed-in factors object and returns the re-weighted host score so the
+ * displayed number actually matches the factors the user sees.
+ *
+ * The formula mirrors `computeHealthScores` in `hub/src/insights/health.ts`:
+ * score = max(0, 100 - count * 20); rating buckets at 0, ≤2, >2.
+ */
+function patchAlertsFactor(factors: Record<string, any>, liveCount: number): number {
+  const existing = factors.alerts;
+  const weight = existing?.weight ?? 15;
+  const score = Math.max(0, 100 - liveCount * 20);
+  const rating = liveCount === 0 ? 'normal' : liveCount <= 2 ? 'elevated' : 'critical';
+  factors.alerts = { score, weight, value: liveCount, rating };
+
+  let total = 0;
+  let totalWeight = 0;
+  for (const key of Object.keys(factors)) {
+    const f = factors[key];
+    if (f && typeof f.score === 'number' && typeof f.weight === 'number') {
+      total += f.score * f.weight;
+      totalWeight += f.weight;
+    }
+  }
+  return totalWeight > 0 ? Math.round(total / totalWeight) : 100;
+}
+
 function getSystemHealthScore(db: Database.Database): { score: number; factors: any; hostBreakdown: any[]; computedAt: string } | null {
   try {
     const row = db.prepare("SELECT score, factors, computed_at FROM health_scores WHERE entity_type = 'system' AND entity_id = 'system'").get() as HealthScoreRow | undefined;
     if (!row) return null;
-    // Include per-host factor breakdowns so the frontend can explain the score
+    // Include per-host factor breakdowns so the frontend can explain the score.
     const hostRows = db.prepare("SELECT entity_id, score, factors FROM health_scores WHERE entity_type = 'host'").all() as HealthScoreRow[];
-    const hostBreakdown = hostRows.map(h => ({
-      hostId: h.entity_id,
-      score: h.score,
-      factors: JSON.parse(h.factors),
-    }));
-    return { score: row.score, factors: JSON.parse(row.factors), hostBreakdown, computedAt: row.computed_at };
+
+    // Alerts are volatile and the `health_scores` row is updated at most every
+    // 15 minutes (and can be stale for longer right after a hub restart).
+    // Re-run the aggregate here so the breakdown users see on the dashboard
+    // matches what they'll see on the host detail page — no "2 alerts" here
+    // vs "1 alert" there because a resolution landed between cron runs.
+    const liveAlertRows = db.prepare(`
+      SELECT host_id, COUNT(*) as c FROM alert_state
+      WHERE resolved_at IS NULL
+      GROUP BY host_id
+    `).all() as Array<{ host_id: string; c: number }>;
+    const liveAlertsByHost = new Map<string, number>(liveAlertRows.map(r => [r.host_id, r.c]));
+
+    let anyHostChanged = false;
+    const hostBreakdown = hostRows.map(h => {
+      const factors = JSON.parse(h.factors) as Record<string, any>;
+      let score = h.score;
+      if (factors.alerts) {
+        const liveCount = liveAlertsByHost.get(h.entity_id) ?? 0;
+        if (liveCount !== factors.alerts.value) {
+          score = patchAlertsFactor(factors, liveCount);
+          anyHostChanged = true;
+        }
+      }
+      return { hostId: h.entity_id, score, factors };
+    });
+
+    // If any host score shifted, recompute the system score from the patched
+    // breakdown so the top-level number stays consistent with the factors.
+    let systemScore = row.score;
+    let systemFactors = JSON.parse(row.factors) as Record<string, any>;
+    if (anyHostChanged && hostBreakdown.length > 0) {
+      const scores = hostBreakdown.map(h => h.score);
+      systemScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+      systemFactors = { ...systemFactors, hostCount: scores.length, hostScores: scores };
+    }
+
+    return { score: systemScore, factors: systemFactors, hostBreakdown, computedAt: row.computed_at };
   } catch { return null; }
 }
 

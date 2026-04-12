@@ -75,6 +75,23 @@ async function main(): Promise<void> {
       }
     });
 
+    // Run the insights engine once on startup. Without this, the dashboard
+    // can show health-score factors that are up to an hour stale after a
+    // rebuild (the `*/15` cron only fires on clock boundaries and doesn't
+    // catch up missed runs). Off-event-loop so startup still completes fast.
+    setImmediate(() => {
+      try {
+        const { computeBaselines } = require('./insights/baselines') as { computeBaselines: (db: Database.Database) => unknown };
+        const { computeHealthScores } = require('./insights/health') as { computeHealthScores: (db: Database.Database, cache: any) => void };
+        const t0 = Date.now();
+        const cache = computeBaselines(db);
+        computeHealthScores(db, cache);
+        logger.info('warmup', `Insights refreshed in ${Date.now() - t0}ms`);
+      } catch (err) {
+        logger.warn('warmup', `Insights warmup failed: ${(err as Error).message}`);
+      }
+    });
+
     const shutdown = (): void => {
       logger.info('main', 'Shutting down gracefully...');
       stopScheduler();
