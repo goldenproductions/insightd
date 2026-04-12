@@ -28,10 +28,10 @@
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
-    "@types/dockerode": "^3.3.34",
+    "@types/dockerode": "^4.0.1",
     "@types/node": "^20.17.0",
     "@types/node-cron": "^3.0.11",
-    "@types/nodemailer": "^6.4.17",
+    "@types/nodemailer": "^8.0.0",
     "mqtt": "^5.15.1",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
