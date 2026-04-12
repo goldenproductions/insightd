@@ -1,38 +1,47 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Link } from 'react-router-dom';
-import type { DashboardData, Rankings } from '@/types/api';
-import { Card } from '@/components/Card';
-import { RankingList } from '@/components/RankingList';
+import { Link, useSearchParams } from 'react-router-dom';
+import type { DashboardData, HealthData } from '@/types/api';
 import { HealthBadge } from '@/components/HealthBadge';
 import { useShowInternal } from '@/hooks/useShowInternal';
 import { StatsGridSkeleton, CardSkeleton } from '@/components/Skeleton';
-import { InsightsFeed } from '@/components/InsightsFeed';
-import { useAttentionItems } from '@/hooks/useAttentionItems';
-import { getAnalogy } from '@/lib/analogies';
+import { useFeedItems } from '@/hooks/useFeedItems';
 import { queryKeys } from '@/lib/queryKeys';
+import { getAnalogy, type MetricType } from '@/lib/analogies';
 import { StatusRow } from './StatusRow';
-import { AttentionList } from './AttentionList';
+import { FeedCard } from './FeedCard';
 
 export function DashboardPage() {
   const { showInternal } = useShowInternal();
   const si = showInternal ? '?showInternal=true' : '';
-  const { data } = useQuery({ queryKey: queryKeys.dashboard(showInternal), queryFn: () => api<DashboardData>(`/dashboard${si}`), refetchInterval: 30_000 });
-  const { data: rankings } = useQuery({ queryKey: queryKeys.rankings(), queryFn: () => api<Rankings>('/rankings?limit=5'), refetchInterval: 30_000 });
+  const { data, error, refetch, isFetching, dataUpdatedAt } = useQuery({
+    queryKey: queryKeys.dashboard(showInternal),
+    queryFn: () => api<DashboardData>(`/dashboard${si}`),
+    refetchInterval: 30_000,
+    retry: 1,
+  });
+  const { data: health } = useQuery({
+    queryKey: queryKeys.health(),
+    queryFn: () => api<HealthData>('/health'),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
 
-  const attentionItems = useAttentionItems(data);
+  const feedItems = useFeedItems(data);
+  const acuteItems = feedItems.filter(i => i.kind !== 'insight');
+  const insightItems = feedItems.filter(i => i.kind === 'insight');
+  const concernCount = acuteItems.length;
+
+  if (error && !data) return <DashboardError error={error} onRetry={() => refetch()} isRetrying={isFetching} />;
 
   if (!data) return (
     <div className="space-y-6">
-      <div className="flex items-center justify-center gap-12 py-4">
-        <div className="flex flex-col items-center gap-2">
-          <div className="h-16 w-16 animate-pulse rounded-full bg-border" />
-          <div className="h-3 w-20 animate-pulse rounded bg-border" />
-        </div>
-        <div className="flex flex-col items-center gap-2">
-          <div className="h-10 w-16 animate-pulse rounded bg-border" />
-          <div className="h-3 w-24 animate-pulse rounded bg-border" />
+      <div className="flex items-center gap-5 py-4">
+        <div className="h-16 w-16 animate-pulse rounded-full bg-border" />
+        <div className="flex-1 space-y-2">
+          <div className="h-5 w-40 animate-pulse rounded bg-border" />
+          <div className="h-4 w-56 animate-pulse rounded bg-border" />
         </div>
       </div>
       <StatsGridSkeleton count={5} />
@@ -41,52 +50,107 @@ export function DashboardPage() {
   );
 
   return (
-    <div className="animate-fade-in space-y-6">
-      {/* Hero */}
-      <HealthHero systemHealthScore={data.systemHealthScore} availability={data.availability} />
+    <div className="animate-fade-in">
+      {/* Hero + StatusRow form a summary unit — tight 16px gap */}
+      <HealthHero systemHealthScore={data.systemHealthScore} availability={data.availability} concernCount={concernCount} />
+      <div className="mt-4">
+        <StatusRow data={data} />
+      </div>
 
-      <StatusRow data={data} />
+      {/* Feed cards — 24px from summary unit, 16px between peer cards */}
+      <FeedCard className="mt-6" title="Needs Attention" items={acuteItems} />
+      <FeedCard
+        className={acuteItems.length > 0 ? 'mt-4' : 'mt-6'}
+        title="Insights"
+        subtitle="Trends and predictions worth knowing"
+        items={insightItems}
+        viewAllHref="/insights"
+      />
 
-      <AttentionList attentionItems={attentionItems} />
+      {/* Peripheral footer */}
+      <div className="mt-6">
+        <DashboardFooter lastUpdatedAt={dataUpdatedAt} isFetching={isFetching} health={health} />
+      </div>
+    </div>
+  );
+}
 
-      {data.topInsights && <InsightsFeed insights={data.topInsights} />}
+function formatRelative(ms: number): string {
+  if (ms < 5_000) return 'just now';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  return `${h}h ago`;
+}
 
-      {/* Stacks */}
-      {data.groups && data.groups.length > 0 && (
-        <Card title="Stacks">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {data.groups.map(g => (
-              <Link key={g.id} to={`/stacks/${g.id}`} className="block rounded-lg p-3 hover-surface card-interactive border border-border" style={{ borderLeft: `3px solid ${g.color || 'var(--color-info)'}` }}
-              >
-                <div className="font-medium text-sm text-fg">{g.icon && <span className="mr-1">{g.icon}</span>}{g.name}</div>
-                <div className="text-xs mt-1 text-muted">
-                  <span className={g.running_count === g.member_count ? 'text-success' : 'text-danger'}>{g.running_count}/{g.member_count}</span> running
-                </div>
-              </Link>
-            ))}
-          </div>
-        </Card>
-      )}
+function formatUptime(seconds: number): string {
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
 
-      {/* Rankings */}
-      {rankings && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card title="Top CPU">
-            <RankingList items={rankings.byCpu} valueKey="cpu_percent" formatFn={v => v.toFixed(1) + '%'} analogyFn={v => getAnalogy('cpu', v)} />
-          </Card>
-          <Card title="Top Memory">
-            <RankingList items={rankings.byMemory} valueKey="memory_mb" formatFn={v => Math.round(v) + ' MB'} analogyFn={v => getAnalogy('memory', v, 1024)} />
-          </Card>
-        </div>
+function DashboardFooter({ lastUpdatedAt, isFetching, health }: { lastUpdatedAt: number; isFetching: boolean; health: HealthData | undefined }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const relative = lastUpdatedAt > 0 ? formatRelative(now - lastUpdatedAt) : '—';
+
+  return (
+    <div className="flex items-center justify-end gap-2 pt-1 text-xs text-muted">
+      <span
+        className={`h-1.5 w-1.5 rounded-full ${isFetching ? 'bg-info animate-pulse' : 'bg-success/70'}`}
+        aria-hidden="true"
+      />
+      <span>Updated {relative}</span>
+      {health && (
+        <>
+          <span aria-hidden="true">&middot;</span>
+          <span>Hub up {formatUptime(health.uptime)}</span>
+        </>
       )}
     </div>
   );
 }
 
+function DashboardError({ error, onRetry, isRetrying }: { error: unknown; onRetry: () => void; isRetrying: boolean }) {
+  const message = error instanceof Error ? error.message : 'Unknown error';
+  return (
+    <div className="animate-fade-in space-y-4">
+      <div className="rounded-xl border border-danger/30 bg-danger/5 p-5">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 text-base leading-none" aria-hidden="true">⚠️</span>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-semibold text-danger">Couldn't load the dashboard</h2>
+            <p className="mt-1 text-sm text-secondary">
+              The hub didn't respond. It might be restarting or temporarily unreachable.
+            </p>
+            <p className="mt-2 font-mono text-xs text-muted break-all">{message}</p>
+            <button
+              onClick={onRetry}
+              disabled={isRetrying}
+              className="mt-4 rounded-lg bg-info px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {isRetrying ? 'Retrying…' : 'Try again'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const RATING_COLORS: Record<string, string> = { normal: 'text-success', elevated: 'text-warning', high: 'text-orange-500', critical: 'text-danger' };
-const RATING_EMOJI: Record<string, string> = { normal: '✅', elevated: '⚠️', high: '🔶', critical: '🔴' };
 const FACTOR_LABELS: Record<string, string> = { cpu: 'CPU', memory: 'Memory', load: 'Load', online: 'Online', alerts: 'Alerts' };
 const FACTOR_UNITS: Record<string, string> = { cpu: '%', memory: '%', load: '' };
+const METRIC_FACTORS = new Set<MetricType>(['cpu', 'memory', 'load']);
 
 function formatFactorValue(key: string, value: number | string): string {
   if (typeof value !== 'number') return String(value);
@@ -94,36 +158,76 @@ function formatFactorValue(key: string, value: number | string): string {
   return `${Math.round(value * 10) / 10}${unit}`;
 }
 
-function HealthHero({ systemHealthScore, availability }: { systemHealthScore: DashboardData['systemHealthScore']; availability: DashboardData['availability'] }) {
-  const [expanded, setExpanded] = useState(false);
+function Chevron({ expanded, className = '' }: { expanded: boolean; className?: string }) {
+  return (
+    <svg
+      className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-180' : ''} ${className}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  );
+}
+
+function HealthHero({ systemHealthScore, availability, concernCount }: { systemHealthScore: DashboardData['systemHealthScore']; availability: DashboardData['availability']; concernCount: number }) {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const expanded = searchParams.get('hero') === 'expanded';
+  const setExpanded = (next: boolean) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (next) p.set('hero', 'expanded');
+      else p.delete('hero');
+      return p;
+    }, { replace: true });
+  };
   const [showAllFactors, setShowAllFactors] = useState(false);
 
+  const stateLabel = concernCount === 0
+    ? 'All clear'
+    : `${concernCount} item${concernCount === 1 ? '' : 's'} need${concernCount === 1 ? 's' : ''} attention`;
+
+  const availText = availability.overallPercent != null
+    ? `${availability.overallPercent}% availability over the last 24h`
+    : 'Availability unavailable';
+  const availColor = availability.overallPercent == null ? 'text-muted'
+    : availability.overallPercent >= 99 ? 'text-success'
+    : availability.overallPercent >= 95 ? 'text-warning'
+    : 'text-danger';
+
   return (
-    <div className="py-4">
-      <div className="flex items-center justify-center gap-12">
-        {systemHealthScore && (
-          <button onClick={() => setExpanded(!expanded)} className="flex flex-col items-center gap-1 cursor-pointer hover:opacity-80 transition-opacity">
-            <HealthBadge score={systemHealthScore.score} size="lg" />
-            <span className="text-xs font-medium text-muted">System Health</span>
-            <span className="text-[10px] text-muted">{expanded ? '▲ hide details' : '▼ why this score?'}</span>
-          </button>
-        )}
-        <div className="flex flex-col items-center gap-1">
-          <span className={`text-4xl font-bold ${
-            availability.overallPercent == null ? 'text-muted'
-              : availability.overallPercent >= 99 ? 'text-success'
-              : availability.overallPercent >= 95 ? 'text-warning'
-              : 'text-danger'
-          }`}>
-            {availability.overallPercent != null ? `${availability.overallPercent}%` : '-'}
-          </span>
-          <span className="text-xs font-medium text-muted">Availability (24h)</span>
+    <div className="py-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center gap-5 rounded-lg p-2 -m-2 text-left transition-opacity hover:opacity-90"
+        aria-expanded={expanded}
+        aria-controls="health-breakdown"
+      >
+        {systemHealthScore && <HealthBadge score={systemHealthScore.score} size="lg" />}
+        <div className="min-w-0 flex-1">
+          <div className={`text-xl font-semibold ${concernCount === 0 ? 'text-fg' : 'text-warning'}`}>
+            {stateLabel}
+          </div>
+          <div className={`mt-0.5 text-sm ${availColor}`}>
+            {availText}
+          </div>
+          {systemHealthScore && (
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted">
+              <span>{expanded ? 'Hide details' : 'Why this score?'}</span>
+              <Chevron expanded={expanded} />
+            </div>
+          )}
         </div>
-      </div>
+      </button>
 
       {expanded && systemHealthScore?.hostBreakdown && (
-        <div className="mt-4 rounded-xl border border-border bg-surface p-4">
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-secondary mb-3">Health Breakdown by Host</h3>
+        <div id="health-breakdown" className="mt-4 rounded-xl border border-border bg-surface p-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-secondary">Health Breakdown by Host</h3>
           <div className="space-y-3">
             {systemHealthScore.hostBreakdown
               .sort((a, b) => a.score - b.score)
@@ -137,15 +241,23 @@ function HealthHero({ systemHealthScore, availability }: { systemHealthScore: Da
                   <Link key={host.hostId} to={`/hosts/${encodeURIComponent(host.hostId)}`}
                     className="flex items-center gap-3 rounded-lg px-3 py-2 hover-surface">
                     <HealthBadge score={host.score} size="sm" />
-                    <div className="flex-1 min-w-0">
+                    <div className="min-w-0 flex-1">
                       <div className="text-sm font-medium text-fg">{host.hostId}</div>
                       {visibleFactors.length > 0 ? (
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
-                          {visibleFactors.map(([key, f]) => (
-                            <span key={key} className={`text-xs ${RATING_COLORS[f.rating] || 'text-muted'}`}>
-                              {RATING_EMOJI[f.rating] || ''} {FACTOR_LABELS[key] || key}: {formatFactorValue(key, f.value)} ({f.rating})
-                            </span>
-                          ))}
+                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                          {visibleFactors.map(([key, f]) => {
+                            const analogy = METRIC_FACTORS.has(key as MetricType) && typeof f.value === 'number'
+                              ? getAnalogy(key as MetricType, f.value)
+                              : null;
+                            return (
+                              <span key={key} className={`text-xs ${RATING_COLORS[f.rating] || 'text-muted'}`}>
+                                {FACTOR_LABELS[key] || key}:{' '}
+                                {analogy
+                                  ? <>{analogy.emoji} {analogy.label} <span className="text-muted">({formatFactorValue(key, f.value)})</span></>
+                                  : <>{formatFactorValue(key, f.value)}</>}
+                              </span>
+                            );
+                          })}
                           {hiddenCount > 0 && <span className="text-xs text-muted">+{hiddenCount} more</span>}
                         </div>
                       ) : (
@@ -162,9 +274,10 @@ function HealthHero({ systemHealthScore, availability }: { systemHealthScore: Da
           {systemHealthScore.hostBreakdown.some(h => Object.values(h.factors).filter(f => f.rating !== 'normal').length > 2) && (
             <button
               onClick={e => { e.stopPropagation(); setShowAllFactors(!showAllFactors); }}
-              className="mt-2 text-xs text-muted hover:text-fg"
+              className="mt-2 flex items-center gap-1 text-xs text-muted hover:text-fg"
             >
-              {showAllFactors ? '▲ Show less' : '▼ Show all factors'}
+              <Chevron expanded={showAllFactors} />
+              <span>{showAllFactors ? 'Show less' : 'Show all factors'}</span>
             </button>
           )}
         </div>
