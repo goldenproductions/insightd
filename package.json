@@ -29,7 +29,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/dockerode": "^3.3.34",
-    "@types/node": "^20.17.0",
+    "@types/node": "^25.6.0",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^6.4.17",
     "mqtt": "^5.15.1",
