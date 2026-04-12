@@ -210,6 +210,76 @@ describe('queries', () => {
       assert.equal(dash.activeAlerts, 1);
       assert.equal(dash.diskWarnings, 1);
     });
+
+    it('patches stale alerts factor with live count in systemHealthScore', () => {
+      // Seed a host with a stale health_scores row claiming 2 active alerts
+      // (alerts.value=2, alerts.score=60) and only 1 live active alert in
+      // alert_state. The dashboard should return the live count and a
+      // recomputed host score, not the stale ones.
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', at: recent },
+      ]);
+      db.prepare(`
+        INSERT INTO health_scores (entity_type, entity_id, score, factors, computed_at)
+        VALUES ('host', 'h1', 85,
+          '{"cpu":{"score":100,"weight":20,"value":20,"rating":"normal"},"memory":{"score":100,"weight":20,"value":30,"rating":"normal"},"load":{"score":100,"weight":15,"value":1,"rating":"normal"},"online":{"score":100,"weight":20,"value":1,"rating":"normal"},"alerts":{"score":60,"weight":15,"value":2,"rating":"elevated"}}',
+          datetime('now', '-2 hours'))
+      `).run();
+      db.prepare(`
+        INSERT INTO health_scores (entity_type, entity_id, score, factors, computed_at)
+        VALUES ('system', 'system', 85, '{"hostCount":1,"hostScores":[85]}', datetime('now', '-2 hours'))
+      `).run();
+      // Only ONE active alert for h1 — the other was resolved mid-hour.
+      seedAlertState(db, [
+        { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: recent },
+        { hostId: 'h1', type: 'high_cpu', target: 'nginx', triggeredAt: old, resolvedAt: recent },
+      ]);
+
+      const dash = getDashboard(db, 10);
+      const hs = dash.systemHealthScore;
+      assert.ok(hs, 'expected systemHealthScore');
+      assert.equal(hs.hostBreakdown.length, 1);
+
+      const h1 = hs.hostBreakdown[0];
+      assert.equal(h1.hostId, 'h1');
+      // alerts factor should reflect the 1 live active alert, not the stale 2
+      assert.equal(h1.factors.alerts.value, 1);
+      assert.equal(h1.factors.alerts.score, 80);
+      assert.equal(h1.factors.alerts.rating, 'elevated');
+
+      // Host score should be recomputed from the patched factors:
+      // (100*20 + 100*20 + 100*15 + 100*20 + 80*15) / 90 = 8700/90 ≈ 96.67 → 97
+      assert.equal(h1.score, 97);
+
+      // System score recomputed from the updated host scores
+      assert.equal(hs.score, 97);
+    });
+
+    it('leaves alerts factor alone when live count matches stored value', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
+      db.prepare(`
+        INSERT INTO health_scores (entity_type, entity_id, score, factors, computed_at)
+        VALUES ('host', 'h1', 80,
+          '{"cpu":{"score":100,"weight":20,"value":20,"rating":"normal"},"alerts":{"score":80,"weight":15,"value":1,"rating":"elevated"}}',
+          datetime('now'))
+      `).run();
+      db.prepare(`
+        INSERT INTO health_scores (entity_type, entity_id, score, factors, computed_at)
+        VALUES ('system', 'system', 80, '{"hostCount":1,"hostScores":[80]}', datetime('now'))
+      `).run();
+      seedAlertState(db, [
+        { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: recent },
+      ]);
+
+      const dash = getDashboard(db, 10);
+      const h1 = dash.systemHealthScore.hostBreakdown[0];
+      assert.equal(h1.factors.alerts.value, 1);
+      // Score stays at stored value since nothing was patched
+      assert.equal(h1.score, 80);
+      assert.equal(dash.systemHealthScore.score, 80);
+    });
   });
 
   describe('getContainerHistory', () => {
