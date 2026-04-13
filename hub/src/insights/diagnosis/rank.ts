@@ -68,7 +68,9 @@ export function rankEvidence(signals: FindingSignal[]): RankedEvidence[] {
     const explanatoryPower = surprise / total;
     return {
       kind: signal.kind,
-      label: signal.conclusion,
+      // Prefer the short semantic label for UI chips; fall back to the long
+      // conclusion text for signals that don't yet ship a shortLabel.
+      label: signal.shortLabel ?? signal.conclusion,
       surprise: Math.round(surprise * 100) / 100,
       explanatoryPower: Math.round(explanatoryPower * 100) / 100,
       score: Math.round(surprise * explanatoryPower * 100) / 100,

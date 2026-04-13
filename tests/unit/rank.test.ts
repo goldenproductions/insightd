@@ -3,12 +3,13 @@ import assert from 'node:assert/strict';
 
 const { rankEvidence } = require('../../hub/src/insights/diagnosis/rank');
 
-function signal(kind: string, confidence: string = 'medium'): any {
+function signal(kind: string, confidence: string = 'medium', shortLabel?: string): any {
   return {
     kind,
     severity: 'warning',
     confidence,
-    conclusion: `${kind} detected`,
+    shortLabel,
+    conclusion: `${kind} detected somewhere in the system with extra words`,
     action: '',
     evidence: [],
     priority: 1,
@@ -54,5 +55,15 @@ describe('rankEvidence', () => {
       assert.ok(Math.abs(r.score - expected) < 0.02,
         `score ${r.score} should match surprise×explanatoryPower = ${expected} for ${r.kind}`);
     }
+  });
+
+  it('uses shortLabel for the RankedEvidence label when present', () => {
+    const ranked = rankEvidence([signal('oom_risk', 'high', 'OOM risk')]);
+    assert.equal(ranked[0].label, 'OOM risk');
+  });
+
+  it('falls back to conclusion when shortLabel is absent', () => {
+    const ranked = rankEvidence([signal('oom_risk', 'high')]);
+    assert.match(ranked[0].label, /oom_risk detected/);
   });
 });

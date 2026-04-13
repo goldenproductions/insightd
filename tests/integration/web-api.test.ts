@@ -547,6 +547,41 @@ describe('Web API integration', () => {
     assert.equal(res.status, 400);
   });
 
+  it('POST /api/insights/feedback records calibration when diagnoser + conclusion_tag provided', async () => {
+    // Submit 5 positive votes on the same (diagnoser, tag) — calibration
+    // should accumulate in confidence_calibration and total helpful_count.
+    for (let i = 0; i < 5; i++) {
+      await fetchMethod(port, 'POST', '/api/insights/feedback', {
+        entity_type: 'container',
+        entity_id: `h1/web-${i}`, // different entities so insight_feedback unique constraint doesn't collide
+        category: 'health',
+        metric: null,
+        helpful: true,
+        diagnoser: 'unified',
+        conclusion_tag: 'zombie_listener',
+      });
+    }
+    const row = db.prepare(
+      `SELECT helpful_count, unhelpful_count FROM confidence_calibration
+       WHERE diagnoser = 'unified' AND conclusion_tag = 'zombie_listener'`,
+    ).get();
+    assert.ok(row, 'calibration row should exist after votes with diagnoser+tag');
+    assert.equal(row.helpful_count, 5);
+    assert.equal(row.unhelpful_count, 0);
+  });
+
+  it('POST /api/insights/feedback skips calibration when diagnoser/tag absent', async () => {
+    // Vote without the new fields — confidence_calibration should stay empty
+    // (the insight_feedback row still gets written, just no posterior update).
+    await fetchMethod(port, 'POST', '/api/insights/feedback', {
+      entity_type: 'host', entity_id: 'h2', category: 'trend', metric: null, helpful: true,
+    });
+    const row = db.prepare(
+      `SELECT COUNT(*) AS n FROM confidence_calibration WHERE diagnoser = 'unified' AND conclusion_tag = 'trend'`,
+    ).get();
+    assert.equal(row.n, 0);
+  });
+
   it('GET /api/insights/feedback returns the feedback list', async () => {
     await fetchMethod(port, 'POST', '/api/insights/feedback', {
       entity_type: 'container', entity_id: 'h1/nginx', category: 'memory', metric: 'memory_mb', helpful: true,

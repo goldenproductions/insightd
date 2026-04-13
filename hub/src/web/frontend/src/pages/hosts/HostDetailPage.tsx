@@ -19,6 +19,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { HostOverviewTab } from './HostOverviewTab';
 import { HostResourcesTab } from './HostResourcesTab';
 import { HostAlertsTab } from './HostAlertsTab';
+import { AnomaliesList } from '@/components/AnomaliesList';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -95,6 +96,10 @@ export function HostDetailPage() {
       {activeTab === 'alerts' && (
         <HostAlertsTab data={data} events={events} />
       )}
+
+      {/* v26 — historical S-H-ESD anomalies for this host. Always visible
+          (but the card hides itself when there's nothing to show). */}
+      <AnomaliesList anomalies={data.anomalies} scope="host" />
 
       <ConfirmDialog {...dialogProps} />
     </div>

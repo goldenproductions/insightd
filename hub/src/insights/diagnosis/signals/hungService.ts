@@ -16,6 +16,7 @@ export function detectHungService(ctx: DiagnosisContext): FindingSignal | null {
     kind: 'hung_service',
     severity: 'warning',
     confidence: 'medium',
+    shortLabel: 'Hung service',
     conclusion: `${containerName}'s service is responding too slowly to health checks`,
     action: `The service may be hung, deadlocked, or processing a long-running operation. Check application logs for stuck operations. A restart will clear any stuck state.`,
     evidence: [`Docker reports: ${ctx.latest.healthCheckOutput}`],

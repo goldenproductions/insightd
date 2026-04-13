@@ -91,6 +91,31 @@ describe('detectOom', () => {
   });
 });
 
+describe('signal shortLabel coverage', () => {
+  // Every detector should ship a non-empty shortLabel so the FindingCard
+  // can render a meaningful chip instead of the long conclusion sentence.
+  const detectors: Array<[string, (ctx: any) => any]> = [
+    ['oom_risk', (c) => detectOom({ ...c, memoryVsP95: 'critical', recent: { ...c.recent, memoryTrend: 'rising' }, latest: { ...c.latest, memoryMb: 700 }, baselines: { memory_mb: { p95: 400 } } })],
+    ['oom_confirmed', (c) => detectOom({ ...c, logs: { available: true, errorPatterns: ['oom'] } })],
+    ['crash_loop', (c) => detectCrashLoop({ ...c, recent: { ...c.recent, restartsInWindow: 3 } })],
+    ['cascade', (c) => detectCascade({ ...c, coincident: { activeAlerts: [], recentFailures: ['a', 'b'], cascadeDetected: true } })],
+    ['host_pressure', (c) => detectHostPressure({ ...c, host: { ...c.host, underPressure: true, cpuPercent: 92 } })],
+    ['app_errors', (c) => detectAppErrors({ ...c, logs: { available: true, errorPatterns: ['fatal'] } })],
+    ['zombie_listener', (c) => detectZombieListener({ ...c, latest: { ...c.latest, healthCheckOutput: 'connection refused' } })],
+    ['hung_service', (c) => detectHungService({ ...c, latest: { ...c.latest, healthCheckOutput: 'timed out' } })],
+  ];
+
+  for (const [name, fire] of detectors) {
+    it(`${name} sets a non-empty shortLabel`, () => {
+      const signal = fire(makeCtx());
+      assert.ok(signal, `${name} should have fired`);
+      assert.ok(signal.shortLabel, `${name} should have a shortLabel`);
+      assert.ok(signal.shortLabel.length > 0 && signal.shortLabel.length <= 40,
+        `${name} shortLabel "${signal.shortLabel}" should be concise (1-40 chars)`);
+    });
+  }
+});
+
 describe('detectCrashLoop', () => {
   it('fires on ≥2 restarts in window', () => {
     const ctx = makeCtx({ recent: { restartsInWindow: 3 } });

@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import type { Finding } from '@/types/api';
+import { Link } from 'react-router-dom';
+import type { Finding, Neighbor } from '@/types/api';
 import { timeAgo } from '@/lib/formatters';
 import { DiagnosisCard, severityStyles } from '@/components/DiagnosisCard';
 import { Button } from '@/components/FormField';
@@ -20,6 +21,13 @@ export interface FindingPrimaryAction {
   title?: string;
 }
 
+export interface FindingFeedbackCallbacks {
+  onHelpful: () => void;
+  onNotHelpful: () => void;
+  /** Current vote state — drives button styling. */
+  current: 'helpful' | 'unhelpful' | null;
+}
+
 interface Props {
   finding: Finding;
   /** Optional raw technical details to show in an expandable section (e.g. Docker health check output) */
@@ -36,12 +44,26 @@ interface Props {
    * diagnosis so the user doesn't have to hunt for the button elsewhere.
    */
   primaryAction?: FindingPrimaryAction;
+  /**
+   * Optional feedback callbacks. When provided, renders thumbs-up/down
+   * buttons in the card footer that feed into Phase 4 confidence
+   * calibration via the insight-feedback endpoint.
+   */
+  feedback?: FindingFeedbackCallbacks;
 }
 
 const CONFIDENCE_STYLES: Record<Finding['confidence'], string> = {
   high: 'bg-success/10 text-success',
   medium: 'bg-warning/10 text-warning',
   low: 'bg-muted/20 text-muted',
+};
+
+// Pill classes for the PPR edge-type badges next to each neighbor.
+const EDGE_STYLES: Record<string, string> = {
+  same_host: 'bg-muted/20 text-muted',
+  same_compose: 'bg-info/10 text-info',
+  same_group: 'bg-info/10 text-info',
+  metric_corr: 'bg-warning/10 text-warning',
 };
 
 function formatCpu(v: number | null | undefined): string {
@@ -54,15 +76,38 @@ function formatMem(v: number | null | undefined): string {
   return `${Math.round(v)} MB`;
 }
 
-export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAction }: Props) {
+function neighborLink(entityId: string): string {
+  const parts = entityId.split('/');
+  if (parts.length === 2) {
+    return `/hosts/${encodeURIComponent(parts[0]!)}/containers/${encodeURIComponent(parts[1]!)}`;
+  }
+  return `/hosts/${encodeURIComponent(entityId)}`;
+}
+
+function neighborLabel(entityId: string): string {
+  const parts = entityId.split('/');
+  return parts.length === 2 ? parts[1]! : entityId;
+}
+
+export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAction, feedback }: Props) {
   const [showAllEvidence, setShowAllEvidence] = useState(false);
   const [showTechnical, setShowTechnical] = useState(false);
   const [showLive, setShowLive] = useState(false);
   const styles = severityStyles(finding.severity);
 
-  const TOP_EVIDENCE = 4;
-  const visibleEvidence = showAllEvidence ? finding.evidence : finding.evidence.slice(0, TOP_EVIDENCE);
-  const hiddenCount = Math.max(0, finding.evidence.length - TOP_EVIDENCE);
+  // Filter out "ppr_root" from the chip row — it's rendered as a dedicated
+  // Related services block below so users can click neighbors.
+  const rankedChips = (finding.evidenceRanked ?? []).filter((e) => e.kind !== 'ppr_root');
+
+  // Evidence visible by default — the single most common complaint from the
+  // v26 audit was that the "good stuff" was hidden behind an expander.
+  const EVIDENCE_VISIBLE_DEFAULT = 6;
+  const visibleEvidence = showAllEvidence
+    ? finding.evidence
+    : finding.evidence.slice(0, EVIDENCE_VISIBLE_DEFAULT);
+  const hiddenCount = Math.max(0, finding.evidence.length - EVIDENCE_VISIBLE_DEFAULT);
+
+  const neighbors: Neighbor[] = finding.neighbors ?? [];
 
   const hasLive = liveSnapshot && (
     liveSnapshot.status != null ||
@@ -82,16 +127,40 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
       </span>
       <span
         className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${CONFIDENCE_STYLES[finding.confidence]}`}
-        title="How sure we are based on signal strength and coincident failures."
+        title="Phase 4 calibrated posterior. Updates as you give feedback."
       >
         {finding.confidence} confidence
       </span>
     </>
   );
 
-  const footer = finding.diagnosedAt ? (
-    <span title={finding.diagnosedAt}>Analysis updated {timeAgo(finding.diagnosedAt)}</span>
-  ) : undefined;
+  const footer = (
+    <div className="flex items-center justify-between gap-2">
+      {finding.diagnosedAt && (
+        <span title={finding.diagnosedAt}>Analysis updated {timeAgo(finding.diagnosedAt)}</span>
+      )}
+      {feedback && (
+        <div className="flex items-center gap-1" role="group" aria-label="Was this diagnosis helpful?">
+          <button
+            onClick={feedback.onHelpful}
+            className={`rounded p-1 text-sm transition-colors ${feedback.current === 'helpful' ? 'bg-success/20 text-success' : 'text-muted hover:bg-muted/10 hover:text-fg'}`}
+            title="Helpful — record a positive calibration vote"
+            aria-pressed={feedback.current === 'helpful'}
+          >
+            👍
+          </button>
+          <button
+            onClick={feedback.onNotHelpful}
+            className={`rounded p-1 text-sm transition-colors ${feedback.current === 'unhelpful' ? 'bg-danger/20 text-danger' : 'text-muted hover:bg-muted/10 hover:text-fg'}`}
+            title="Not helpful — record a negative calibration vote"
+            aria-pressed={feedback.current === 'unhelpful'}
+          >
+            👎
+          </button>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <DiagnosisCard
@@ -101,41 +170,27 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
       pills={pills}
       footer={footer}
     >
-      {/* Evidence list: when the diagnoser shipped `evidenceRanked`, show the
-          top 3 most-explanatory signals first with their headlines, then
-          a "show details" expander that reveals the full evidence text. */}
-      {finding.evidenceRanked && finding.evidenceRanked.length > 0 ? (
-        <div>
-          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Top signals</div>
-          <ul className="space-y-1 text-xs text-fg">
-            {finding.evidenceRanked.map((e, i) => (
-              <li key={i} className="flex gap-2" title={`surprise ${e.surprise}, explains ${Math.round(e.explanatoryPower * 100)}% of total`}>
-                <span className="text-muted mt-0.5">•</span>
-                <span className="flex-1">{e.label}</span>
-                <span className="text-muted text-[10px] tabular-nums">{Math.round(e.explanatoryPower * 100)}%</span>
-              </li>
-            ))}
-          </ul>
-          {finding.evidence.length > 0 && (
-            <button
-              onClick={() => setShowAllEvidence(v => !v)}
-              className="mt-1 text-[11px] text-muted hover:text-fg transition-colors"
+      {/* Signal chips: short semantic labels (e.g. "Zombie listener", "OOM risk")
+          with severity coloring. Only show when there's more than one signal
+          contributing — a single-signal finding is just the title restated. */}
+      {rankedChips.length > 1 && (
+        <div className="flex flex-wrap gap-1">
+          {rankedChips.map((chip, i) => (
+            <span
+              key={i}
+              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${styles.bg} ${styles.text}`}
+              title={`${chip.kind} — surprise ${chip.surprise}, explains ${Math.round(chip.explanatoryPower * 100)}%`}
             >
-              {showAllEvidence ? 'Hide details' : `Show ${finding.evidence.length} evidence item${finding.evidence.length === 1 ? '' : 's'}`}
-            </button>
-          )}
-          {showAllEvidence && finding.evidence.length > 0 && (
-            <ul className="mt-2 space-y-1 border-t border-muted/20 pt-2 text-xs text-fg">
-              {finding.evidence.map((e, i) => (
-                <li key={i} className="flex gap-2">
-                  <span className="text-muted mt-0.5">•</span>
-                  <span className="flex-1">{e}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+              {chip.label}
+              <span className="tabular-nums opacity-70">{Math.round(chip.explanatoryPower * 100)}%</span>
+            </span>
+          ))}
         </div>
-      ) : finding.evidence.length > 0 && (
+      )}
+
+      {/* Evidence list — visible by default. The stable, bucketed values live
+          here; anything "live" moves to the expander at the bottom. */}
+      {finding.evidence.length > 0 && (
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">What we observed</div>
           <ul className="space-y-1 text-xs text-fg">
@@ -154,6 +209,30 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
               {showAllEvidence ? 'Show fewer' : `Show ${hiddenCount} more`}
             </button>
           )}
+        </div>
+      )}
+
+      {/* Related services — PPR neighbors as clickable links. Replaces the
+          old inline "Correlated with: X (same_host)" text buried in evidence. */}
+      {neighbors.length > 0 && (
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Related services</div>
+          <ul className="flex flex-wrap gap-2 text-xs">
+            {neighbors.map((n, i) => (
+              <li key={i}>
+                <Link
+                  to={neighborLink(n.entity_id)}
+                  className="inline-flex items-center gap-1 rounded border border-muted/30 bg-bg-secondary px-2 py-0.5 text-fg hover:bg-muted/20 transition-colors"
+                  title={`${n.entity_id} — weight ${Math.round(n.weight * 100) / 100}`}
+                >
+                  <span>{neighborLabel(n.entity_id)}</span>
+                  <span className={`rounded-full px-1 text-[9px] ${EDGE_STYLES[n.edge_type] ?? 'bg-muted/20 text-muted'}`}>
+                    {n.edge_type.replace('_', ' ')}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

@@ -182,7 +182,19 @@ function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Dat
     res.statusCode = 404;
     return { error: 'Host not found' };
   }
-  return detail;
+  // v26 observability surface: historical S-H-ESD rollup anomalies for this host.
+  let anomalies: any[] = [];
+  try {
+    anomalies = db.prepare(
+      `SELECT metric, bucket, value, residual, robust_z, detected_at
+       FROM rollup_anomalies
+       WHERE entity_type = 'host' AND entity_id = ?
+       ORDER BY detected_at DESC LIMIT 10`,
+    ).all(params.hostId);
+  } catch {
+    // Best-effort — degrade to empty.
+  }
+  return { ...detail, anomalies };
 }
 
 function handleHostContainers(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
@@ -256,6 +268,42 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     }
   }
 
+  // v26 observability surfaces: S-H-ESD anomalies, PPR neighbors, Drain templates.
+  // Best-effort lookups — any failure degrades to empty arrays so the detail
+  // page still renders.
+  let anomalies: any[] = [];
+  let neighbors: any[] = [];
+  let logTemplates: any[] = [];
+  try {
+    const entityId = `${params.hostId}/${params.containerName}`;
+    anomalies = db.prepare(
+      `SELECT metric, bucket, value, residual, robust_z, detected_at
+       FROM rollup_anomalies
+       WHERE entity_type = 'container' AND entity_id = ?
+       ORDER BY detected_at DESC LIMIT 10`,
+    ).all(entityId);
+    neighbors = db.prepare(
+      `SELECT to_entity AS entity_id, edge_type, weight
+       FROM rca_edges WHERE from_entity = ?
+       UNION ALL
+       SELECT from_entity AS entity_id, edge_type, weight
+       FROM rca_edges WHERE to_entity = ?
+       ORDER BY weight DESC LIMIT 10`,
+    ).all(entityId, entityId);
+    const { resolveImageKey } = require('../insights/diagnosis/logCache') as {
+      resolveImageKey: (db: Database.Database, hostId: string, containerName: string) => string;
+    };
+    const imageKey = resolveImageKey(db, params.hostId, params.containerName);
+    logTemplates = db.prepare(
+      `SELECT template_hash, template, occurrence_count, semantic_tag, first_seen, last_seen
+       FROM log_templates
+       WHERE image = ?
+       ORDER BY occurrence_count DESC LIMIT 20`,
+    ).all(imageKey);
+  } catch {
+    // Swallow — degraded rendering is better than a 500.
+  }
+
   return {
     ...latest,
     host_id: params.hostId,
@@ -263,6 +311,9 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     findings,
     history: queries.getContainerHistory(db, params.hostId, params.containerName, hours),
     alerts: queries.getContainerAlerts(db, params.hostId, params.containerName),
+    anomalies,
+    neighbors,
+    logTemplates,
   };
 }
 
@@ -657,7 +708,15 @@ function handleGetHostInsights(req: HandlerReq, res: ServerResponse, db: Databas
 }
 
 async function handleInsightFeedback(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  const body = await readBody(req) as { entity_type?: string; entity_id?: string; category?: string; metric?: string | null; helpful?: boolean };
+  const body = await readBody(req) as {
+    entity_type?: string;
+    entity_id?: string;
+    category?: string;
+    metric?: string | null;
+    helpful?: boolean;
+    diagnoser?: string;
+    conclusion_tag?: string;
+  };
   if (!body.entity_type || !body.entity_id || !body.category || body.helpful == null) {
     res.statusCode = 400;
     return { error: 'entity_type, entity_id, category, and helpful are required' };
@@ -674,13 +733,31 @@ async function handleInsightFeedback(req: HandlerReq, res: ServerResponse, db: D
   `).get(body.entity_type, body.entity_id, body.category, metric, metric) as { id: number } | undefined;
 
   if (existing) {
-    db.prepare("UPDATE insight_feedback SET helpful = ?, created_at = datetime('now') WHERE id = ?").run(helpful, existing.id);
+    db.prepare(
+      "UPDATE insight_feedback SET helpful = ?, created_at = datetime('now'), diagnoser = ?, finding_hash = ? WHERE id = ?",
+    ).run(helpful, body.diagnoser ?? null, body.conclusion_tag ?? null, existing.id);
   } else {
     db.prepare(`
-      INSERT INTO insight_feedback (entity_type, entity_id, category, metric, helpful)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(body.entity_type, body.entity_id, body.category, metric, helpful);
+      INSERT INTO insight_feedback (entity_type, entity_id, category, metric, helpful, diagnoser, finding_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(body.entity_type, body.entity_id, body.category, metric, helpful, body.diagnoser ?? null, body.conclusion_tag ?? null);
   }
+
+  // Update Phase 4 calibration counts when the caller supplied a diagnoser +
+  // conclusion tag (typically from a live Finding on ContainerDetailPage).
+  // The old InsightsPage path still works without these fields; calibration
+  // just stays untouched for those rows.
+  if (body.diagnoser && body.conclusion_tag) {
+    try {
+      const { recordFeedback } = require('../insights/diagnosis/calibration') as {
+        recordFeedback: (db: Database.Database, diagnoser: string, tag: string, helpful: boolean) => void;
+      };
+      recordFeedback(db, body.diagnoser, body.conclusion_tag, body.helpful);
+    } catch {
+      // Calibration update is best-effort — never fail the feedback request.
+    }
+  }
+
   return { ok: true };
 }
 

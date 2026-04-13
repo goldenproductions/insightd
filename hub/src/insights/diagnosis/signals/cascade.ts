@@ -18,6 +18,7 @@ export function detectCascade(ctx: DiagnosisContext): FindingSignal | null {
     kind: 'cascade',
     severity: 'warning',
     confidence: 'medium',
+    shortLabel: 'Cascade failure',
     conclusion: `${containerName} is part of a wider failure on ${hostId}`,
     action: `Multiple containers on ${hostId} are affected simultaneously. This is not isolated — investigate host-level issues: network, storage, a shared dependency (database, cache), or a recent host restart.`,
     evidence: [

@@ -151,6 +151,28 @@ function InsightCard({ insight, isExpanded, onToggle, feedback }: {
   const icon = CATEGORY_ICONS[insight.category] || '\u2139\ufe0f';
   const severityColor = SEVERITY_COLORS[insight.severity] || 'blue';
 
+  // Parse the persisted evidence JSON (schema v20+). Falls back to an empty
+  // array for older rows without the column — still renders cleanly.
+  const evidenceList: string[] = (() => {
+    if (!insight.evidence) return [];
+    try {
+      const parsed = JSON.parse(insight.evidence);
+      return Array.isArray(parsed) ? parsed.filter((s) => typeof s === 'string') : [];
+    } catch {
+      return [];
+    }
+  })();
+  const topEvidence = evidenceList[0];
+
+  // Map category → (diagnoser, conclusion_tag) for Phase 4 calibration.
+  // Only the 'health' category comes from the unified diagnoser today; the
+  // others go through detector.ts with no signal structure, so they remain
+  // view-only (calibration stays empty for those rows).
+  const calibrationKey = insight.category === 'health' ? {
+    diagnoser: 'unified',
+    conclusion_tag: insight.title.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64),
+  } : null;
+
   const feedbackMutation = useMutation({
     mutationFn: (helpful: boolean) =>
       apiAuth('POST', '/insights/feedback', {
@@ -159,6 +181,7 @@ function InsightCard({ insight, isExpanded, onToggle, feedback }: {
         category: insight.category,
         metric: insight.metric,
         helpful,
+        ...(calibrationKey ?? {}),
       }, token),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.insightFeedback() }),
   });
@@ -175,6 +198,9 @@ function InsightCard({ insight, isExpanded, onToggle, feedback }: {
             <span className="text-sm font-medium text-fg">{insight.title}</span>
             <Badge text={CATEGORY_LABELS[insight.category] || insight.category} color={severityColor} />
           </div>
+          {topEvidence && (
+            <p className="mt-0.5 text-xs text-muted">{topEvidence}</p>
+          )}
           <p className="mt-1 text-sm leading-relaxed text-secondary">{insight.message}</p>
         </div>
         <span className="mt-1 shrink-0 text-xs text-muted">{isExpanded ? '\u25b2' : '\u25bc'}</span>
