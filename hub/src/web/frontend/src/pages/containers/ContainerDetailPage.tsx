@@ -134,20 +134,20 @@ export function ContainerDetailPage() {
               {data.status !== 'running' && (
                 <>
                   <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}>
-                    {actionLoading === `${containerName}:start` ? 'Starting...' : 'Start'}
+                    {actionLoading === `${containerName}:start` ? 'Starting…' : 'Start'}
                   </Button>
                   <Button variant="danger" size="sm" onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}>
-                    {actionLoading === `${containerName}:remove` ? 'Removing...' : 'Remove'}
+                    {actionLoading === `${containerName}:remove` ? 'Removing…' : 'Remove'}
                   </Button>
                 </>
               )}
               {data.status === 'running' && (
                 <>
                   <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
-                    {actionLoading === `${containerName}:restart` ? 'Restarting...' : 'Restart'}
+                    {actionLoading === `${containerName}:restart` ? 'Restarting…' : 'Restart'}
                   </Button>
                   <Button variant="danger" size="sm" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
-                    {actionLoading === `${containerName}:stop` ? 'Stopping...' : 'Stop'}
+                    {actionLoading === `${containerName}:stop` ? 'Stopping…' : 'Stop'}
                   </Button>
                 </>
               )}
@@ -232,69 +232,69 @@ export function ContainerDetailPage() {
             </div>
 
             {availability && (
-            <Card title="Process availability (7 days)">
-              <div className="space-y-4">
-                <div className="flex items-center gap-4">
-                  <span className={`text-3xl font-bold ${
-                    availability.summary.uptimePercent == null ? 'text-muted'
-                      : showHealthFailure ? 'text-fg'
-                      : availability.summary.uptimePercent >= 99 ? 'text-success'
-                      : availability.summary.uptimePercent >= 95 ? 'text-warning'
-                      : 'text-danger'
-                  }`}>
-                    {availability.summary.uptimePercent != null ? `${availability.summary.uptimePercent}%` : 'N/A'}
-                  </span>
-                  <span className="text-sm text-muted">process running over 7 days</span>
-                </div>
-                {showHealthFailure && (
-                  <p className="text-xs text-muted">
-                    Process has been running — its health probe is failing. See the diagnosis above.
-                  </p>
-                )}
-
-                <UptimeTimeline
-                  containers={[{
-                    name: containerName!,
-                    slots: availability.timeline.slots,
-                    uptimePercent: availability.timeline.uptimePercent,
-                  }]}
-                />
-
-                <div className="flex gap-4 text-xs text-muted">
-                  <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-success" />{availability.summary.upHours}h up</span>
-                  <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-danger" />{availability.summary.downHours}h down</span>
-                  <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-border opacity-50" />{availability.summary.noDataHours}h no data</span>
-                  <span>of {availability.summary.totalHours}h total</span>
-                </div>
-
-                {availability.incidents.length > 0 && (
-                  <div>
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-secondary">
-                      Downtime Incidents
-                    </h3>
-                    <div className="space-y-1.5">
-                      {availability.incidents.map((inc, i) => (
-                        <div key={i} className="flex items-center gap-3 text-sm">
-                          <span className="h-2 w-2 shrink-0 rounded-full bg-danger" />
-                          <span className="text-secondary">
-                            {inc.ongoing ? 'Down since ' : ''}
-                            {new Date(inc.start + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                            {inc.end && ` \u2192 ${new Date(inc.end + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`}
-                          </span>
-                          <span className={`text-xs font-medium ${inc.ongoing ? 'text-danger' : 'text-muted'}`}>
-                            {inc.ongoing ? 'ongoing' : inc.durationMs != null ? fmtDurationMs(inc.durationMs) : ''}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+              <Card title="Process availability (7 days)">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <span className={`text-3xl font-bold ${
+                      availability.summary.uptimePercent == null ? 'text-muted'
+                        : showHealthFailure ? 'text-fg'
+                        : availability.summary.uptimePercent >= 99 ? 'text-success'
+                        : availability.summary.uptimePercent >= 95 ? 'text-warning'
+                        : 'text-danger'
+                    }`}>
+                      {availability.summary.uptimePercent != null ? `${availability.summary.uptimePercent}%` : 'N/A'}
+                    </span>
+                    <span className="text-sm text-muted">process running over 7 days</span>
                   </div>
-                )}
+                  {showHealthFailure && (
+                    <p className="text-xs text-muted">
+                      Process has been running — its health probe is failing. See the diagnosis above.
+                    </p>
+                  )}
 
-                {availability.incidents.length === 0 && availability.summary.downHours === 0 && (
-                  <p className="text-xs text-muted">No downtime incidents in the last 7 days.</p>
-                )}
-              </div>
-            </Card>
+                  <UptimeTimeline
+                    containers={[{
+                      name: containerName!,
+                      slots: availability.timeline.slots,
+                      uptimePercent: availability.timeline.uptimePercent,
+                    }]}
+                  />
+
+                  <div className="flex gap-4 text-xs text-muted">
+                    <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-success" />{availability.summary.upHours}h up</span>
+                    <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-danger" />{availability.summary.downHours}h down</span>
+                    <span><span className="mr-1 inline-block h-2 w-2 rounded-full bg-border opacity-50" />{availability.summary.noDataHours}h no data</span>
+                    <span>of {availability.summary.totalHours}h total</span>
+                  </div>
+
+                  {availability.incidents.length > 0 && (
+                    <div>
+                      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-secondary">
+                        Downtime incidents
+                      </h3>
+                      <div className="space-y-1.5">
+                        {availability.incidents.map((inc, i) => (
+                          <div key={i} className="flex items-center gap-3 text-sm">
+                            <span className="h-2 w-2 shrink-0 rounded-full bg-danger" />
+                            <span className="text-secondary">
+                              {inc.ongoing ? 'Down since ' : ''}
+                              {new Date(inc.start + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                              {inc.end && ` \u2192 ${new Date(inc.end + 'Z').toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`}
+                            </span>
+                            <span className={`text-xs font-medium ${inc.ongoing ? 'text-danger' : 'text-muted'}`}>
+                              {inc.ongoing ? 'ongoing' : inc.durationMs != null ? fmtDurationMs(inc.durationMs) : ''}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {availability.incidents.length === 0 && availability.summary.downHours === 0 && (
+                    <p className="text-xs text-muted">No downtime incidents in the last 7 days.</p>
+                  )}
+                </div>
+              </Card>
             )}
           </section>
 

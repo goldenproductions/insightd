@@ -43,7 +43,7 @@ export function HistorySummary({ history }: { history: ContainerDetail['history'
   ].sort((a, b) => b.time.localeCompare(a.time));
 
   return (
-    <Card title="History Summary">
+    <Card title="History summary">
       <div className="space-y-4">
         {/* Summary stats */}
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
@@ -87,7 +87,7 @@ export function HistorySummary({ history }: { history: ContainerDetail['history'
         {events.length > 0 ? (
           <div>
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-secondary">
-              Key Events
+              Key events
             </div>
             <div className="space-y-1.5">
               {events.slice(0, 20).map((e, i) => (
