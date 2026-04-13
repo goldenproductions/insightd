@@ -17,7 +17,7 @@ export function detectCrashLoop(ctx: DiagnosisContext): FindingSignal | null {
     confidence: 'high',
     conclusion: `${containerName} is crash-looping`,
     action: `The container has restarted ${restarts} times recently but is still failing its health check. Check container logs for the crash cause — if logs show startup errors, inspect config/volumes. If OOM, increase memory limit.`,
-    evidence: [`${restarts} restart${restarts > 1 ? 's' : ''} in the last 2 hours`],
+    evidence: [`${restarts} restarts in the last 2 hours`],
     priority: 3,
   };
 }
