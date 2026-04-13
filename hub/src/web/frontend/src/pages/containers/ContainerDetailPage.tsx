@@ -33,7 +33,6 @@ export function ContainerDetailPage() {
   const cname = encodeURIComponent(containerName!);
   const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
-  const [showSnapshots, setShowSnapshots] = useState(false);
   const [showCharts, setShowCharts] = useState(true);
   const navigate = useNavigate();
   const { confirm, dialogProps } = useConfirm();
@@ -395,8 +394,6 @@ export function ContainerDetailPage() {
         <ContainerHistoryTab
           alerts={data.alerts}
           history={history}
-          showSnapshots={showSnapshots}
-          setShowSnapshots={setShowSnapshots}
         />
       )}
 
