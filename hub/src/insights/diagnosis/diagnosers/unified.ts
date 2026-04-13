@@ -128,21 +128,31 @@ export function diagnoseUnified(
   const primary = signals.find((s) => s.kind !== 'ppr_root')!;
   const supporting = signals.filter((s) => s !== primary && s.kind !== 'ppr_root');
 
+  // Build evidence with dedupe: signal detectors often include the health
+  // check output line themselves (e.g. zombieListener, hungService), so we
+  // can't just append unconditionally — every push goes through the seen
+  // set so the same string never appears twice.
   const evidence: string[] = [];
+  const seen = new Set<string>();
+  const push = (line: string | null | undefined) => {
+    if (!line) return;
+    if (seen.has(line)) return;
+    seen.add(line);
+    evidence.push(line);
+  };
+
   if (ctx.unhealthy.durationMinutes != null) {
-    evidence.push(`Health check failing for ${formatDuration(ctx.unhealthy.durationMinutes)}`);
+    push(`Health check failing for ${formatDuration(ctx.unhealthy.durationMinutes)}`);
   }
   if (ctx.latest.healthCheckOutput) {
-    evidence.push(`Docker reports: ${ctx.latest.healthCheckOutput}`);
+    push(`Docker reports: ${ctx.latest.healthCheckOutput}`);
   }
-  evidence.push(...primary.evidence);
+  for (const e of primary.evidence) push(e);
   for (const s of supporting) {
-    for (const e of s.evidence) {
-      if (!evidence.includes(e)) evidence.push(e);
-    }
+    for (const e of s.evidence) push(e);
   }
-  evidence.push(...baseEvidence);
-  evidence.push(...neighborEvidence);
+  for (const e of baseEvidence) push(e);
+  for (const e of neighborEvidence) push(e);
 
   return [{
     diagnoser: 'unified',

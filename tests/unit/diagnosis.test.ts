@@ -241,6 +241,29 @@ describe('diagnosis engine', () => {
     assert.equal(findings[0]!.confidence, 'low');
   });
 
+  it('dedupes the health-check-output line when a signal detector already included it', () => {
+    // zombieListener pushes a "Docker reports: …" evidence line itself.
+    // The unified diagnoser also prepends the same line from ctx.latest.
+    // Both should collapse to a single entry via the internal seen-set.
+    for (let i = 6; i >= 0; i--) {
+      seedSnapshot(db, {
+        name: 'adguard', health: i === 0 ? 'unhealthy' : 'healthy',
+        cpu: 5, mem: 110, restarts: 0,
+        healthOutput: i === 0 ? "wget: can't connect: connection refused" : null,
+        collectedAt: ts(new Date(NOW - i * 15 * 60_000)),
+      });
+    }
+    seedHostSnapshot(db, 'h1', 30, 4000, 16000, 1.0, ts(new Date(NOW - 60_000)));
+
+    const findings = runDiagnosis(db, { type: 'container', hostId: 'h1', containerName: 'adguard' });
+    assert.equal(findings.length, 1);
+    const dockerReports = findings[0]!.evidence.filter((e: string) => e.startsWith('Docker reports:'));
+    assert.equal(
+      dockerReports.length, 1,
+      `expected exactly one 'Docker reports:' line, got ${dockerReports.length}: ${JSON.stringify(findings[0]!.evidence)}`,
+    );
+  });
+
   it('persists findings when persistCategory is set', () => {
     seedSnapshot(db, {
       name: 'svc', health: 'unhealthy', cpu: 5, mem: 100,
