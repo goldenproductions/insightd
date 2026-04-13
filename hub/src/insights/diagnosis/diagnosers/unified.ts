@@ -85,6 +85,7 @@ export function diagnoseUnified(
       kind: 'ppr_root',
       severity: 'info',
       confidence: 'medium',
+      shortLabel: `Correlated with ${neighbors.length} service${neighbors.length === 1 ? '' : 's'}`,
       conclusion: `Upstream correlations detected`,
       action: '',
       evidence: [formatNeighbors(neighbors)],
@@ -98,6 +99,7 @@ export function diagnoseUnified(
       kind: 'fallback',
       severity: 'warning',
       confidence: 'low',
+      shortLabel: 'Unclassified',
       conclusion: `${containerName} is reporting unhealthy`,
       action: '',
       evidence: [],
@@ -163,6 +165,7 @@ export function diagnoseUnified(
     suggestedAction: primary.action,
     signals,
     evidenceRanked: rankEvidence(signals),
+    neighbors: neighbors.length > 0 ? neighbors : undefined,
   }];
 }
 

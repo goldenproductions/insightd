@@ -18,6 +18,7 @@ export function detectZombieListener(ctx: DiagnosisContext): FindingSignal | nul
     kind: 'zombie_listener',
     severity: 'warning',
     confidence: 'medium',
+    shortLabel: 'Zombie listener',
     conclusion: `${containerName}'s service port is not responding, but the process is still running with normal resources`,
     action: `This looks like the application's listener crashed independently while the process stayed alive (a zombie listener). Restart the container to recover. If this recurs, it may be a known issue with the application.`,
     evidence: [

@@ -20,6 +20,7 @@ export function detectOom(ctx: DiagnosisContext): FindingSignal | null {
       kind: 'oom_confirmed',
       severity: 'critical',
       confidence: 'high',
+      shortLabel: 'OOM killed',
       conclusion: `${containerName} has been killed by the OS for using too much memory`,
       action: `Logs show out-of-memory errors. Increase the container's memory limit or investigate what's allocating memory.`,
       evidence: [
@@ -36,6 +37,7 @@ export function detectOom(ctx: DiagnosisContext): FindingSignal | null {
       kind: 'oom_risk',
       severity: 'critical',
       confidence: 'high',
+      shortLabel: 'OOM risk',
       conclusion: `${containerName} is running out of memory`,
       action: `Memory is significantly above baseline and rising. Increase the container's memory limit, investigate for a memory leak, or check \`docker inspect ${containerName}\` for OOMKilled state.`,
       evidence: formatMemoryEvidence(ctx),

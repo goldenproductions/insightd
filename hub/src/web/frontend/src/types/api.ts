@@ -150,6 +150,30 @@ export interface RankedEvidence {
   score: number;
 }
 
+export interface Neighbor {
+  entity_id: string;
+  edge_type: string;
+  weight: number;
+}
+
+export interface RollupAnomaly {
+  metric: string;
+  bucket: string;
+  value: number;
+  residual: number;
+  robust_z: number;
+  detected_at: string;
+}
+
+export interface LogTemplate {
+  template_hash: string;
+  template: string;
+  occurrence_count: number;
+  semantic_tag: string | null;
+  first_seen: string;
+  last_seen: string;
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
@@ -161,6 +185,8 @@ export interface Finding {
   diagnosedAt?: string;
   /** Phase 4 ranked top-3 evidence (optional). */
   evidenceRanked?: RankedEvidence[];
+  /** Phase 3 PPR neighbors exposed as structured data for clickable rendering. */
+  neighbors?: Neighbor[];
 }
 
 export interface ContainerDetail extends ContainerSnapshot {
@@ -169,6 +195,12 @@ export interface ContainerDetail extends ContainerSnapshot {
   findings: Finding[];
   history: ContainerHistory[];
   alerts: Alert[];
+  /** v26 — recent S-H-ESD rollup anomalies for this container. */
+  anomalies?: RollupAnomaly[];
+  /** v26 — top-K PPR neighbors pulled from `rca_edges`. */
+  neighbors?: Neighbor[];
+  /** v26 — Drain log templates mined for this container's image. */
+  logTemplates?: LogTemplate[];
 }
 
 export interface HostDetail extends Host {
@@ -178,6 +210,8 @@ export interface HostDetail extends Host {
   updates: UpdateCheck[];
   hostMetrics: HostMetrics | null;
   diskForecast: DiskForecastItem[];
+  /** v26 — recent S-H-ESD rollup anomalies for this host. */
+  anomalies?: RollupAnomaly[];
 }
 
 // Alerts
@@ -438,6 +472,12 @@ export interface InsightRow {
   metric: string | null;
   current_value: number | null;
   baseline_value: number | null;
+  /** JSON-encoded array of evidence strings (schema v20+). */
+  evidence?: string | null;
+  /** Long-form suggested action text (schema v20+). */
+  suggested_action?: string | null;
+  /** Calibrated confidence from the diagnoser (schema v20+). */
+  confidence?: 'high' | 'medium' | 'low' | null;
   computed_at: string;
 }
 

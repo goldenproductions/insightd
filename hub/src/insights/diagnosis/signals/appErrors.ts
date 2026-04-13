@@ -27,6 +27,7 @@ export function detectAppErrors(ctx: DiagnosisContext): FindingSignal | null {
     kind: 'app_errors',
     severity: 'warning',
     confidence: 'medium',
+    shortLabel: `App errors: ${topLabel}`,
     conclusion: `${containerName} is reporting application errors (${topLabel})`,
     action: `The container is running and resources are normal, but the application is logging errors. Check recent application logs and investigate recent config changes or upstream dependencies.`,
     evidence: burstEvidence.length > 0

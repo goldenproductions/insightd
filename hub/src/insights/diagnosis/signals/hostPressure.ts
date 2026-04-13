@@ -20,6 +20,7 @@ export function detectHostPressure(ctx: DiagnosisContext): FindingSignal | null 
     kind: 'host_pressure',
     severity: 'warning',
     confidence: 'medium',
+    shortLabel: 'Host under pressure',
     conclusion: `${containerName}'s health check is failing while the host is under resource pressure`,
     action: `Host ${hostId} is heavily loaded. The container may be getting starved for CPU or memory. Reduce load on ${hostId} or investigate what else is consuming resources.`,
     evidence: [`Host ${hostId} is under pressure (${parts.join(', ')})`],

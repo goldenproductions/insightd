@@ -161,7 +161,14 @@ export interface FindingSignal {
     | 'fallback';
   severity: 'critical' | 'warning' | 'info';
   confidence: 'high' | 'medium' | 'low';
-  /** Short headline for this signal (used as finding conclusion when primary). */
+  /**
+   * Short semantic name for this signal (e.g. "Zombie listener", "OOM risk").
+   * Used by the evidence ranker + UI chip labels so users don't see long
+   * conclusion sentences duplicated in every rendering location. Optional
+   * for back-compat with any signal emitters that don't yet set it.
+   */
+  shortLabel?: string;
+  /** Long-form headline for this signal (used as finding conclusion when primary). */
   conclusion: string;
   /** Suggested action if this signal is the primary explanation. */
   action: string;
@@ -231,6 +238,12 @@ export interface Finding {
    * older persisted findings keep rendering.
    */
   evidenceRanked?: RankedEvidence[];
+  /**
+   * Top-K PPR neighbors exposed as structured data so the UI can render
+   * them as clickable links. The unified diagnoser populates this from
+   * its internal PPR result when graph data is available.
+   */
+  neighbors?: Neighbor[];
 }
 
 export type Diagnoser = (ctx: DiagnosisContext) => Finding[];
