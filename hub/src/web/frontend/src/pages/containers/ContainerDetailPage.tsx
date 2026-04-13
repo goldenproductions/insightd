@@ -215,7 +215,10 @@ export function ContainerDetailPage() {
             })}
           </div>
         )}
-        {/* AI diagnosis — secondary opinion, only surfaced alongside the rule-based finding */}
+        {/* AI diagnosis in the hero only when something is wrong — pairs with
+            the rule-based finding as a secondary opinion. On healthy
+            containers it moves to the detail layer so it's still reachable
+            without competing with the calm-by-default state. */}
         {showHealthFailure && <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />}
       </section>
 
@@ -298,29 +301,38 @@ export function ContainerDetailPage() {
             )}
           </section>
 
-          {/* ═══ DETAIL LAYER ═══ historical depth, on demand */}
-          {(cpuValues.length > 1 || memValues.length > 1) && (
-            <section>
-              <button
-                onClick={() => setShowCharts(!showCharts)}
-                className="mb-3 text-xs font-medium text-muted hover:text-fg"
-              >
-                {showCharts ? '▲ Hide charts' : '▼ Show charts'}
-              </button>
-              {showCharts && (
-                <div className="space-y-6">
-                  {cpuValues.length > 1 && (
-                    <Card title="CPU (last 24h)">
-                      <BarChart values={cpuValues} minLabel="0%" maxLabel={`${Math.max(...cpuValues).toFixed(0)}%`} />
-                    </Card>
-                  )}
-                  {memValues.length > 1 && (
-                    <Card title="Memory (last 24h)">
-                      <BarChart values={memValues} colorFn={() => 'var(--color-info)'} minLabel="0 MB" maxLabel={`${Math.max(...memValues).toFixed(0)} MB`} />
-                    </Card>
+          {/* ═══ DETAIL LAYER ═══ historical depth + power-user options */}
+          {(cpuValues.length > 1 || memValues.length > 1 || !showHealthFailure) && (
+            <section className="space-y-6">
+              {(cpuValues.length > 1 || memValues.length > 1) && (
+                <div>
+                  <button
+                    onClick={() => setShowCharts(!showCharts)}
+                    className="mb-3 text-xs font-medium text-muted hover:text-fg transition-colors"
+                  >
+                    {showCharts ? '▲ Hide charts' : '▼ Show charts'}
+                  </button>
+                  {showCharts && (
+                    <div className="space-y-6">
+                      {cpuValues.length > 1 && (
+                        <Card title="CPU (last 24h)">
+                          <BarChart values={cpuValues} minLabel="0%" maxLabel={`${Math.max(...cpuValues).toFixed(0)}%`} />
+                        </Card>
+                      )}
+                      {memValues.length > 1 && (
+                        <Card title="Memory (last 24h)">
+                          <BarChart values={memValues} colorFn={() => 'var(--color-info)'} minLabel="0 MB" maxLabel={`${Math.max(...memValues).toFixed(0)} MB`} />
+                        </Card>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
+
+              {/* AI diagnosis on healthy containers — available as a quiet
+                  power-user option. On unhealthy containers it lives in the
+                  hero alongside the rule-based finding instead. */}
+              {!showHealthFailure && <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />}
             </section>
           )}
         </div>
