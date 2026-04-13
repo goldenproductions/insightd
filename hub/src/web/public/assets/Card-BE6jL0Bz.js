@@ -1,1 +1,0 @@
-import{i as e}from"./api-BE-4kkW2.js";var t=e();function n({title:e,children:n,className:r=``}){return(0,t.jsxs)(`div`,{className:`rounded-xl border border-border bg-surface p-4 lg:p-5 ${r}`,children:[e&&(0,t.jsx)(`h2`,{className:`mb-3 text-sm font-semibold uppercase tracking-wide text-secondary`,children:e}),n]})}export{n as t};
