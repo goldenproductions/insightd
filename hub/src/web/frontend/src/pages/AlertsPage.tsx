@@ -8,7 +8,7 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { AlertSilenceControls } from '@/components/AlertSilenceControls';
-import { timeAgo, fmtDurationMs } from '@/lib/formatters';
+import { timeAgo, fmtDurationMs, formatAlertType } from '@/lib/formatters';
 import { PageTitle } from '@/components/PageTitle';
 
 /**
@@ -37,11 +37,16 @@ function durationBetween(start: string, end: string): string {
 }
 
 const activeColumns: Column<Alert>[] = [
-  { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status="red" /> {r.alert_type.replace(/_/g, ' ')}</span> },
-  { header: 'Reason', accessor: r => <span className="text-xs text-secondary">{r.message || `${r.alert_type.replace(/_/g, ' ')} on ${r.target}`}</span>, hideOnMobile: true },
+  { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status="red" /> {formatAlertType(r.alert_type)}</span> },
+  { header: 'Reason', accessor: r => <span className="text-xs text-secondary">{r.message || `${formatAlertType(r.alert_type)} on ${r.target}`}</span>, hideOnMobile: true },
   { header: 'Host', accessor: r => <span className="text-info">{r.host_id}</span> },
-  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
-  { header: 'Reminders', accessor: r => r.notify_count, hideOnMobile: true },
+  { header: 'Triggered', accessor: r => <span title={r.triggered_at}>{timeAgo(r.triggered_at)}</span> },
+  {
+    header: 'Reminders',
+    headerTooltip: 'How many reminder notifications have been sent. After the first send, reminders slow down — see Settings → Alerts → Slow down reminders.',
+    accessor: r => r.notify_count,
+    hideOnMobile: true,
+  },
   {
     header: 'Actions',
     accessor: r => {
@@ -59,10 +64,10 @@ const activeColumns: Column<Alert>[] = [
 ];
 
 const resolvedColumns: Column<Alert>[] = [
-  { header: 'Type', accessor: r => <span className="flex items-center gap-2 text-muted"><StatusDot status="green" /> {r.alert_type.replace(/_/g, ' ')}</span> },
+  { header: 'Type', accessor: r => <span className="flex items-center gap-2 text-muted"><StatusDot status="green" /> {formatAlertType(r.alert_type)}</span> },
   { header: 'Host', accessor: r => <span className="text-secondary">{r.host_id}</span> },
-  { header: 'Triggered', accessor: r => <span className="text-muted">{timeAgo(r.triggered_at)}</span> },
-  { header: 'Resolved', accessor: r => <span className="text-muted">{timeAgo(r.resolved_at!)}</span>, hideOnMobile: true },
+  { header: 'Triggered', accessor: r => <span className="text-muted" title={r.triggered_at}>{timeAgo(r.triggered_at)}</span> },
+  { header: 'Resolved', accessor: r => <span className="text-muted" title={r.resolved_at ?? undefined}>{timeAgo(r.resolved_at!)}</span>, hideOnMobile: true },
   { header: 'Duration', accessor: r => <span className="text-muted">{durationBetween(r.triggered_at, r.resolved_at!)}</span>, hideOnMobile: true },
 ];
 

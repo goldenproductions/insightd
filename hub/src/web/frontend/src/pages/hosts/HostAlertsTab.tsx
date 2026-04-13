@@ -3,13 +3,17 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { EventTimeline } from '@/components/EventTimeline';
 import { EmptyState } from '@/components/EmptyState';
-import { timeAgo } from '@/lib/formatters';
+import { timeAgo, formatAlertType } from '@/lib/formatters';
 
 const alertsCols: Column<Alert>[] = [
-  { header: 'Type', accessor: r => r.alert_type.replace(/_/g, ' ') },
+  { header: 'Type', accessor: r => formatAlertType(r.alert_type) },
   { header: 'Reason', accessor: r => <span className="text-xs text-secondary">{r.message || r.target}</span> },
-  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
-  { header: 'Notifications', accessor: r => r.notify_count },
+  { header: 'Triggered', accessor: r => <span title={r.triggered_at}>{timeAgo(r.triggered_at)}</span> },
+  {
+    header: 'Reminders',
+    headerTooltip: 'How many reminder notifications have been sent. After the first send, reminders slow down — see Settings → Alerts → Slow down reminders.',
+    accessor: r => r.notify_count,
+  },
 ];
 
 interface Props {

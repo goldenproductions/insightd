@@ -6,6 +6,8 @@ export interface Column<T> {
   className?: string;
   /** Hide this column below sm breakpoint on mobile */
   hideOnMobile?: boolean;
+  /** Optional native title= tooltip on the column header */
+  headerTooltip?: string;
 }
 
 interface Props<T> {
@@ -33,7 +35,7 @@ export function DataTable<T>({ columns, data, onRowClick, emptyText = 'No data' 
         <thead>
           <tr className="border-b border-border">
             {columns.map((col, i) => (
-              <th key={i} scope="col" className={`px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted ${col.hideOnMobile ? 'hidden sm:table-cell' : ''} ${col.className || ''}`}>
+              <th key={i} scope="col" title={col.headerTooltip} className={`px-3 py-2 text-left text-xs font-medium uppercase tracking-wide text-muted ${col.hideOnMobile ? 'hidden sm:table-cell' : ''} ${col.className || ''}`}>
                 {col.header}
               </th>
             ))}

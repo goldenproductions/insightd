@@ -64,3 +64,23 @@ export function fmtDurationMs(ms: number): string {
   const remHours = hours % 24;
   return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
 }
+
+const ALERT_TYPE_LABELS: Record<string, string> = {
+  container_down: 'Container stopped',
+  container_unhealthy: 'Container unhealthy',
+  restart_loop: 'Restart loop',
+  high_cpu: 'Container CPU high',
+  high_memory: 'Container memory high',
+  disk_full: 'Disk almost full',
+  high_host_cpu: 'Host CPU high',
+  low_host_memory: 'Host memory low',
+  high_load: 'Host load high',
+  endpoint_down: 'Endpoint down',
+};
+
+/** Map a backend alert_type to a friendlier display label. Falls back to the
+ * underscored-to-spaced raw value for unknown types so new alert kinds still
+ * render readably. */
+export function formatAlertType(type: string): string {
+  return ALERT_TYPE_LABELS[type] ?? type.replace(/_/g, ' ');
+}

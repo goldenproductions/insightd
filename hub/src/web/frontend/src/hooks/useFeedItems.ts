@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import type { DashboardData, Alert, DashboardInsight } from '@/types/api';
 import type { FeedSeverity } from '@/components/FeedRow';
-import { fmtDurationMs } from '@/lib/formatters';
+import { fmtDurationMs, formatAlertType } from '@/lib/formatters';
 
 export interface FeedItem {
   id: string;
@@ -76,7 +76,7 @@ export function useFeedItems(data: DashboardData | undefined): FeedItem[] {
         kind: 'alert',
         severity: 'critical',
         icon: '\ud83d\udd14',
-        title: alert.message || alert.alert_type.replace(/_/g, ' '),
+        title: alert.message || formatAlertType(alert.alert_type),
         pillLabel: 'Alert',
         detail: alert.target,
         meta: alert.host_id,
