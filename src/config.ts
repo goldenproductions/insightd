@@ -46,6 +46,8 @@ const config = Object.freeze({
     enabled: process.env.INSIGHTD_ALERTS_ENABLED === 'true',
     to: process.env.INSIGHTD_ALERTS_TO || process.env.INSIGHTD_DIGEST_TO || '',
     cooldownMinutes: parseInt(process.env.INSIGHTD_ALERT_COOLDOWN || '60', 10),
+    reminderBackoff: process.env.INSIGHTD_ALERT_REMINDER_BACKOFF !== 'false',
+    reminderMaxMinutes: parseInt(process.env.INSIGHTD_ALERT_REMINDER_MAX || '1440', 10),
     cpuPercent: parseInt(process.env.INSIGHTD_ALERT_CPU || '90', 10),
     memoryMb: parseInt(process.env.INSIGHTD_ALERT_MEMORY || '0', 10),
     diskPercent: parseInt(process.env.INSIGHTD_ALERT_DISK || '90', 10),
