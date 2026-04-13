@@ -213,25 +213,31 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
       )}
 
       {/* Related services — PPR neighbors as clickable links. Replaces the
-          old inline "Correlated with: X (same_host)" text buried in evidence. */}
+          old inline "Correlated with: X (same_host)" text buried in evidence.
+          Shape comes from Finding.neighbors which is camelCase and carries
+          an edgeTypes[] array (a pair can share multiple edge types — e.g.
+          same_host AND metric_corr). Primary type drives the pill color. */}
       {neighbors.length > 0 && (
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Related services</div>
           <ul className="flex flex-wrap gap-2 text-xs">
-            {neighbors.map((n, i) => (
-              <li key={i}>
-                <Link
-                  to={neighborLink(n.entity_id)}
-                  className="inline-flex items-center gap-1 rounded border border-muted/30 bg-bg-secondary px-2 py-0.5 text-fg hover:bg-muted/20 transition-colors"
-                  title={`${n.entity_id} — weight ${Math.round(n.weight * 100) / 100}`}
-                >
-                  <span>{neighborLabel(n.entity_id)}</span>
-                  <span className={`rounded-full px-1 text-[9px] ${EDGE_STYLES[n.edge_type] ?? 'bg-muted/20 text-muted'}`}>
-                    {n.edge_type.replace('_', ' ')}
-                  </span>
-                </Link>
-              </li>
-            ))}
+            {neighbors.map((n, i) => {
+              const primaryType = n.edgeTypes[0] ?? 'same_host';
+              return (
+                <li key={i}>
+                  <Link
+                    to={neighborLink(n.entityId)}
+                    className="inline-flex items-center gap-1 rounded border border-muted/30 bg-bg-secondary px-2 py-0.5 text-fg hover:bg-muted/20 transition-colors"
+                    title={`${n.entityId} — PPR score ${n.score}, edge types: ${n.edgeTypes.join(', ')}`}
+                  >
+                    <span>{neighborLabel(n.entityId)}</span>
+                    <span className={`rounded-full px-1 text-[9px] ${EDGE_STYLES[primaryType] ?? 'bg-muted/20 text-muted'}`}>
+                      {primaryType.replace('_', ' ')}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}
