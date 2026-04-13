@@ -30,7 +30,23 @@ interface AlertsConfig {
   endpointDown: boolean | undefined;
   endpointFailureThreshold: number;
   cooldownMinutes: number;
+  reminderBackoff?: boolean;
+  reminderMaxMinutes?: number;
   to: string;
+}
+
+/**
+ * Required minutes between reminders. With backoff enabled, the gap doubles
+ * each reminder (base, 2×, 4×, 8×, …) and caps at reminderMaxMinutes — so a
+ * persistent alert settles into at most one notification per cap window.
+ * notifyCount is the cumulative count *before* the next reminder (so after
+ * the initial send it's 1, meaning "wait base minutes for reminder #1").
+ */
+function requiredReminderGap(notifyCount: number, baseMinutes: number, capMinutes: number, backoff: boolean): number {
+  if (!backoff) return baseMinutes;
+  const exponent = Math.max(0, notifyCount - 1);
+  const scaled = baseMinutes * Math.pow(2, Math.min(exponent, 30));
+  return Math.min(scaled, capMinutes);
 }
 
 interface EvaluatorConfig {
@@ -403,6 +419,8 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
 function processAlerts(db: Database.Database, config: EvaluatorConfig, { triggered, resolved }: EvaluationResult): AlertItem[] {
   const toSend: AlertItem[] = [];
   const cooldownMinutes = config.alerts.cooldownMinutes;
+  const backoff = config.alerts.reminderBackoff !== false;
+  const capMinutes = config.alerts.reminderMaxMinutes ?? 1440;
 
   for (const alert of triggered) {
     const active = db.prepare(`
@@ -421,7 +439,8 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
         "SELECT (julianday('now') - julianday(?)) * 1440 as minutes"
       ).get(active.last_notified) as { minutes: number }).minutes;
 
-      if (minutesSinceLast >= cooldownMinutes) {
+      const requiredGap = requiredReminderGap(active.notify_count, cooldownMinutes, capMinutes, backoff);
+      if (minutesSinceLast >= requiredGap) {
         const newCount = active.notify_count + 1;
         db.prepare('UPDATE alert_state SET last_notified = datetime(\'now\'), notify_count = ? WHERE id = ?').run(newCount, active.id);
         toSend.push({ ...alert, reminderNumber: newCount - 1 });
@@ -478,4 +497,4 @@ async function runAlerts(db: Database.Database, config: EvaluatorConfig): Promis
   }
 }
 
-module.exports = { evaluateAlerts, processAlerts, runAlerts };
+module.exports = { evaluateAlerts, processAlerts, runAlerts, requiredReminderGap };

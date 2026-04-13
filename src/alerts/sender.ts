@@ -64,8 +64,12 @@ function formatBody(alert: AlertItem): string {
 
   lines.push('');
   lines.push('---');
-  lines.push('This alert will repeat every cooldown period until resolved.');
-  lines.push('Set INSIGHTD_ALERTS_ENABLED=false to disable alerts.');
+  if (alert.isResolution) {
+    lines.push('Set INSIGHTD_ALERTS_ENABLED=false to disable alerts.');
+  } else {
+    lines.push('Reminders slow down as the alert persists, up to once per day until resolved.');
+    lines.push('Set INSIGHTD_ALERTS_ENABLED=false to disable alerts.');
+  }
 
   return lines.join('\n');
 }

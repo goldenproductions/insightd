@@ -351,4 +351,132 @@ describe('processAlerts', () => {
     const row = db.prepare('SELECT resolved_at FROM alert_state WHERE target = ?').get('nginx');
     assert.ok(row.resolved_at !== null);
   });
+
+  describe('reminder backoff', () => {
+    const backoffConfig = { alerts: { cooldownMinutes: 60, reminderBackoff: true, reminderMaxMinutes: 1440 } };
+
+    function hoursAgo(hours: number): string {
+      return ts(new Date(NOW - hours * 60 * 60 * 1000));
+    }
+
+    it('suppresses reminder #1 during base cooldown window', () => {
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(1), lastNotified: hoursAgo(0.5), notifyCount: 1 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, backoffConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 0);
+    });
+
+    it('sends reminder #1 once base cooldown has elapsed', () => {
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(2), lastNotified: hoursAgo(1.1), notifyCount: 1 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, backoffConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 1);
+      assert.equal(toSend[0].reminderNumber, 1);
+    });
+
+    it('doubles gap before reminder #2 (suppresses after only 1h)', () => {
+      // notify_count=2 means the initial send + one reminder already happened.
+      // Required gap = base * 2 = 120 minutes. 61 min < 120 → suppress.
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(3), lastNotified: ts(new Date(NOW - 61 * 60 * 1000)), notifyCount: 2 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, backoffConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 0);
+    });
+
+    it('sends reminder #2 once 2× base has elapsed', () => {
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(4), lastNotified: hoursAgo(2.1), notifyCount: 2 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, backoffConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 1);
+      assert.equal(toSend[0].reminderNumber, 2);
+    });
+
+    it('caps the gap at reminderMaxMinutes', () => {
+      // notify_count=10 would request base*2^9 = 30720 minutes; cap is 1440.
+      // Last notified 25h ago → should fire.
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(200), lastNotified: hoursAgo(25), notifyCount: 10 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, backoffConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 1);
+      assert.equal(toSend[0].reminderNumber, 10);
+    });
+
+    it('suppresses when within the cap window', () => {
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(200), lastNotified: hoursAgo(23), notifyCount: 10 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, backoffConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 0);
+    });
+
+    it('falls back to flat cooldown when backoff disabled', () => {
+      const flatConfig = { alerts: { cooldownMinutes: 60, reminderBackoff: false, reminderMaxMinutes: 1440 } };
+      // notify_count=5 — with backoff this would require 960 minutes, but flat should require only 60.
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(10), lastNotified: hoursAgo(1.1), notifyCount: 5 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, flatConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 1);
+      assert.equal(toSend[0].reminderNumber, 5);
+    });
+
+    it('defaults to backoff on when flag is omitted', () => {
+      // No reminderBackoff key at all — must default to true, so notify_count=5 → 960 min required.
+      const defaultConfig = { alerts: { cooldownMinutes: 60 } };
+      seedAlertState(db, [
+        { type: 'container_down', target: 'nginx', triggeredAt: hoursAgo(10), lastNotified: hoursAgo(1.1), notifyCount: 5 },
+      ]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, defaultConfig, { triggered, resolved: [] });
+      assert.equal(toSend.length, 0);
+    });
+  });
+});
+
+describe('requiredReminderGap', () => {
+  let requiredReminderGap: Function;
+  beforeEach(() => {
+    delete require.cache[require.resolve('../../src/alerts/evaluator')];
+    requiredReminderGap = require('../../src/alerts/evaluator').requiredReminderGap;
+  });
+
+  it('returns base for notifyCount=1 (first reminder)', () => {
+    assert.equal(requiredReminderGap(1, 60, 1440, true), 60);
+  });
+
+  it('doubles for each successive reminder', () => {
+    assert.equal(requiredReminderGap(2, 60, 1440, true), 120);
+    assert.equal(requiredReminderGap(3, 60, 1440, true), 240);
+    assert.equal(requiredReminderGap(4, 60, 1440, true), 480);
+    assert.equal(requiredReminderGap(5, 60, 1440, true), 960);
+  });
+
+  it('caps at reminderMaxMinutes', () => {
+    assert.equal(requiredReminderGap(6, 60, 1440, true), 1440);
+    assert.equal(requiredReminderGap(20, 60, 1440, true), 1440);
+    assert.equal(requiredReminderGap(100, 60, 1440, true), 1440);
+  });
+
+  it('returns base when backoff disabled', () => {
+    assert.equal(requiredReminderGap(1, 60, 1440, false), 60);
+    assert.equal(requiredReminderGap(10, 60, 1440, false), 60);
+  });
+
+  it('honours custom base and cap', () => {
+    assert.equal(requiredReminderGap(1, 30, 720, true), 30);
+    assert.equal(requiredReminderGap(5, 30, 720, true), 480);
+    assert.equal(requiredReminderGap(6, 30, 720, true), 720);
+  });
 });

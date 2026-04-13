@@ -48,6 +48,8 @@ interface AlertsConfig {
   enabled: boolean;
   to: string;
   cooldownMinutes: number;
+  reminderBackoff: boolean;
+  reminderMaxMinutes: number;
   cpuPercent: number;
   memoryMb: number;
   diskPercent: number;
@@ -94,7 +96,9 @@ const SETTING_DEFS: SettingDef[] = [
   // Alerts
   { key: 'alerts.enabled', env: 'INSIGHTD_ALERTS_ENABLED', type: 'bool', category: 'Alerts', label: 'Alerts Enabled', hotReload: true, default: 'false' },
   { key: 'alerts.to', env: 'INSIGHTD_ALERTS_TO', type: 'string', category: 'Alerts', label: 'Alert Recipient', hotReload: true, default: '' },
-  { key: 'alerts.cooldownMinutes', env: 'INSIGHTD_ALERT_COOLDOWN', type: 'int', category: 'Alerts', label: 'Cooldown (minutes)', hotReload: true, default: '60' },
+  { key: 'alerts.cooldownMinutes', env: 'INSIGHTD_ALERT_COOLDOWN', type: 'int', category: 'Alerts', label: 'Cooldown (minutes)', hotReload: true, default: '60', description: 'Minutes between the first reminders for a persistent alert. With backoff on, each subsequent reminder doubles this gap up to the cap.' },
+  { key: 'alerts.reminderBackoff', env: 'INSIGHTD_ALERT_REMINDER_BACKOFF', type: 'bool', category: 'Alerts', label: 'Slow down reminders', hotReload: true, default: 'true', description: 'Double the gap between reminders each time (1h → 2h → 4h → 8h → capped). Prevents spam for long-lasting alerts.' },
+  { key: 'alerts.reminderMaxMinutes', env: 'INSIGHTD_ALERT_REMINDER_MAX', type: 'int', category: 'Alerts', label: 'Max reminder gap (minutes)', hotReload: true, default: '1440', description: 'Upper bound on the gap between reminders. Default 1440 = once per day.' },
   { key: 'alerts.cpuPercent', env: 'INSIGHTD_ALERT_CPU', type: 'int', category: 'Alerts', label: 'Container CPU Threshold (%)', hotReload: true, default: '90' },
   { key: 'alerts.memoryMb', env: 'INSIGHTD_ALERT_MEMORY', type: 'int', category: 'Alerts', label: 'Container Memory Threshold (MB)', hotReload: true, default: '0' },
   { key: 'alerts.diskPercent', env: 'INSIGHTD_ALERT_DISK', type: 'int', category: 'Alerts', label: 'Disk Threshold (%)', hotReload: true, default: '90' },
@@ -246,6 +250,8 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       enabled: get('alerts.enabled'),
       to: get('alerts.to') || baseConfig.alerts?.to || '',
       cooldownMinutes: get('alerts.cooldownMinutes') || baseConfig.alerts?.cooldownMinutes || 60,
+      reminderBackoff: get('alerts.reminderBackoff'),
+      reminderMaxMinutes: get('alerts.reminderMaxMinutes') || baseConfig.alerts?.reminderMaxMinutes || 1440,
       cpuPercent: get('alerts.cpuPercent'),
       memoryMb: get('alerts.memoryMb'),
       diskPercent: get('alerts.diskPercent'),
