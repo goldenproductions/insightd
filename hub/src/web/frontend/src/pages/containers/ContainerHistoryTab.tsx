@@ -3,22 +3,26 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { AlertSilenceControls } from '@/components/AlertSilenceControls';
 import { timeAgo } from '@/lib/formatters';
 import { HistorySummary } from './HistorySummary';
-
-const containerAlertsCols: Column<Alert>[] = [
-  { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.resolved_at ? 'green' : 'red'} />{r.alert_type.replace(/_/g, ' ')}</span> },
-  { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
-  { header: 'Resolved', accessor: r => r.resolved_at ? timeAgo(r.resolved_at) : <Badge text="active" color="red" /> },
-  { header: 'Notifications', accessor: r => r.notify_count },
-];
 
 interface ContainerHistoryTabProps {
   alerts: Alert[];
   history: ContainerDetail['history'];
+  hostId?: string;
+  containerName?: string;
 }
 
-export function ContainerHistoryTab({ alerts, history }: ContainerHistoryTabProps) {
+export function ContainerHistoryTab({ alerts, history, hostId, containerName }: ContainerHistoryTabProps) {
+  const containerAlertsCols: Column<Alert>[] = [
+    { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.resolved_at ? 'green' : 'red'} />{r.alert_type.replace(/_/g, ' ')}</span> },
+    { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
+    { header: 'Resolved', accessor: r => r.resolved_at ? timeAgo(r.resolved_at) : <Badge text="active" color="red" /> },
+    { header: 'Notifications', accessor: r => r.notify_count },
+    { header: 'Actions', accessor: r => <AlertSilenceControls alert={r} hostId={hostId} containerName={containerName} /> },
+  ];
+
   return (
     <div className="space-y-8">
       {alerts.length > 0 && (

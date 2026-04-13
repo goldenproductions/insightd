@@ -183,6 +183,9 @@ export interface Alert {
   message: string | null;
   trigger_value: string | null;
   threshold: string | null;
+  silenced_until: string | null;
+  silenced_by: string | null;
+  silenced_at: string | null;
 }
 
 // Timeline

@@ -64,6 +64,8 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/dashboard', handlers.handleDashboard);
   router.add('GET', '/api/rankings', handlers.handleRankings);
   router.add('GET', '/api/alerts', handlers.handleAlerts);
+  router.add('POST', '/api/alerts/:id/silence', handlers.handleSilenceAlert);
+  router.add('DELETE', '/api/alerts/:id/silence', handlers.handleUnsilenceAlert);
   router.add('GET', '/api/agent-setup', handlers.handleAgentSetup);
   router.add('POST', '/api/auth', handlers.handleLogin);
   router.add('GET', '/api/api-keys', handlers.handleGetApiKeys);

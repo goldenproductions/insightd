@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 21;
+const SCHEMA_VERSION = 22;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -108,7 +108,10 @@ function bootstrap(db: Database.Database): void {
       notify_count    INTEGER DEFAULT 1,
       message         TEXT,
       trigger_value   TEXT,
-      threshold       TEXT
+      threshold       TEXT,
+      silenced_until  TEXT,
+      silenced_by     TEXT,
+      silenced_at     TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_alert_host_active
@@ -503,6 +506,11 @@ function migrate(db: Database.Database, fromVersion: number): void {
   }
   if (fromVersion < 21) {
     // ai_diagnoses table created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 22) {
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN silenced_until TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN silenced_by TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN silenced_at TEXT'); } catch { /* already exists */ }
   }
 }
 

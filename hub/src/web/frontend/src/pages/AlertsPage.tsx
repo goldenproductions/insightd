@@ -7,6 +7,7 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { AlertSilenceControls } from '@/components/AlertSilenceControls';
 import { timeAgo } from '@/lib/formatters';
 import { PageTitle } from '@/components/PageTitle';
 
@@ -17,6 +18,23 @@ const columns: Column<Alert>[] = [
   { header: 'Triggered', accessor: r => timeAgo(r.triggered_at) },
   { header: 'Resolved', accessor: r => r.resolved_at ? timeAgo(r.resolved_at) : <Badge text="active" color="red" />, hideOnMobile: true },
   { header: 'Notifications', accessor: r => r.notify_count, hideOnMobile: true },
+  {
+    header: 'Actions',
+    accessor: r => {
+      // Container-scoped alerts pass host + container so the mutation
+      // invalidates both alerts() and the container detail query.
+      const hostScoped = ['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load', 'endpoint_down'];
+      const isContainerScoped = !hostScoped.includes(r.alert_type);
+      return (
+        <AlertSilenceControls
+          alert={r}
+          hostId={isContainerScoped ? r.host_id : undefined}
+          containerName={isContainerScoped ? r.target : undefined}
+        />
+      );
+    },
+    hideOnMobile: true,
+  },
 ];
 
 /**

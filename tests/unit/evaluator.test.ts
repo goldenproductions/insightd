@@ -443,6 +443,72 @@ describe('processAlerts', () => {
       assert.equal(toSend.length, 0);
     });
   });
+
+  describe('silence', () => {
+    const config = { alerts: { cooldownMinutes: 60, reminderBackoff: false } };
+
+    function hoursFromNow(hours: number): string {
+      return ts(new Date(NOW.getTime() + hours * 60 * 60 * 1000));
+    }
+    function hoursAgo(hours: number): string {
+      return ts(new Date(NOW.getTime() - hours * 60 * 60 * 1000));
+    }
+
+    it('blocks reminder when silenced_until is in the future', () => {
+      // Cooldown is 60 min and lastNotified is 2h ago — without silence this would fire.
+      seedAlertState(db, [{
+        type: 'container_down', target: 'nginx',
+        triggeredAt: hoursAgo(3), lastNotified: hoursAgo(2),
+        notifyCount: 1, silencedUntil: hoursFromNow(1),
+      }]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, config, { triggered, resolved: [] });
+      assert.equal(toSend.length, 0);
+    });
+
+    it('allows reminder when silenced_until is in the past (stale silence)', () => {
+      seedAlertState(db, [{
+        type: 'container_down', target: 'nginx',
+        triggeredAt: hoursAgo(3), lastNotified: hoursAgo(2),
+        notifyCount: 1, silencedUntil: hoursAgo(1),
+      }]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, config, { triggered, resolved: [] });
+      assert.equal(toSend.length, 1);
+    });
+
+    it('blocks reminder forever when silenced_until is the far-future sentinel', () => {
+      seedAlertState(db, [{
+        type: 'container_down', target: 'nginx',
+        triggeredAt: hoursAgo(72), lastNotified: hoursAgo(48),
+        notifyCount: 5, silencedUntil: '9999-12-31 23:59:59',
+      }]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, config, { triggered, resolved: [] });
+      assert.equal(toSend.length, 0);
+    });
+
+    it('does NOT affect the initial firing of a brand-new alert', () => {
+      // No existing alert_state row — silence cannot apply because the row doesn't exist yet.
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      const toSend = processAlerts(db, config, { triggered, resolved: [] });
+      assert.equal(toSend.length, 1);
+      assert.equal(toSend[0].reminderNumber, 0);
+    });
+
+    it('does NOT reset notify_count — backoff resumes at the same step on unsilence', () => {
+      seedAlertState(db, [{
+        type: 'container_down', target: 'nginx',
+        triggeredAt: hoursAgo(10), lastNotified: hoursAgo(2),
+        notifyCount: 4, silencedUntil: hoursFromNow(1),
+      }]);
+      const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
+      processAlerts(db, config, { triggered, resolved: [] });
+      // The silenced row's notify_count should be unchanged (still 4).
+      const row = db.prepare('SELECT notify_count FROM alert_state WHERE target = ?').get('nginx') as { notify_count: number };
+      assert.equal(row.notify_count, 4);
+    });
+  });
 });
 
 describe('requiredReminderGap', () => {
