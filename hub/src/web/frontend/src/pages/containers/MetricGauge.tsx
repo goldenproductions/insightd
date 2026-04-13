@@ -8,25 +8,28 @@ export function MetricGauge({ label, current, avg, peak, unit, max, analogy }: {
 
   return (
     <div className="rounded-xl p-4 bg-surface border border-border">
-      <div className="mb-3 flex items-baseline justify-between">
+      <div className="flex items-baseline justify-between">
         <span className="text-sm font-medium text-secondary">{label}</span>
         <span className="text-2xl font-bold" style={{ color }}>
           {current != null ? `${current}${unit}` : '-'}
         </span>
       </div>
-      <div className="relative h-3 w-full rounded-full bg-border">
+      {analogy && (
+        <div className="mt-1 text-sm font-medium text-secondary">
+          <span className="mr-1" aria-hidden>{analogy.emoji}</span>
+          {analogy.label}
+        </div>
+      )}
+      <div className="relative mt-3 h-3 w-full rounded-full bg-border">
         <div className="h-3 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: color }} />
         {avgPct != null && (
           <div className="absolute top-0 h-3 w-0.5 opacity-60" style={{ left: `${avgPct}%`, backgroundColor: 'var(--text-muted)' }}
             title={`avg ${avg}${unit}`} />
         )}
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs text-muted">
-        <div className="flex gap-4">
-          <span>avg <span className="font-medium text-secondary">{avg != null ? `${avg}${unit}` : '-'}</span></span>
-          <span>peak <span className="font-medium text-secondary">{peak != null ? `${peak}${unit}` : '-'}</span></span>
-        </div>
-        {analogy && <span className="text-[10px]">{analogy.emoji} {analogy.label}</span>}
+      <div className="mt-2 flex gap-4 text-xs text-muted">
+        <span>avg <span className="font-medium text-secondary">{avg != null ? `${avg}${unit}` : '-'}</span></span>
+        <span>peak <span className="font-medium text-secondary">{peak != null ? `${peak}${unit}` : '-'}</span></span>
       </div>
     </div>
   );
