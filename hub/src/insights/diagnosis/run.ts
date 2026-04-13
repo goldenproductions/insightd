@@ -49,16 +49,17 @@ export function runDiagnosis(
   }
 
   const raw: Finding[] = diagnoseUnified(ctx, { db });
-  // Recalibrate confidence from historical feedback before sticky-cacheing
-  // so the cache entry reflects the posterior estimate, not the diagnoser's
-  // self-assigned prior. Calibration is a pure function over DB state —
-  // safe to run on every diagnosis pass.
-  const fresh = calibrateFindings(db, raw);
 
-  // Run through the sticky layer so evidence + diagnosedAt stay stable
-  // across re-runs when the conclusion hasn't actually changed. This is
-  // what users see on the container detail page.
-  const findings = stickyFindings(entity.hostId, entity.containerName, fresh);
+  // Run through the sticky layer first so evidence + diagnosedAt stay stable
+  // across re-runs when the conclusion hasn't actually changed.
+  const stable = stickyFindings(entity.hostId, entity.containerName, raw);
+
+  // Calibrate confidence AFTER the sticky layer — confidence is the one
+  // field that should update as users vote, even when the conclusion and
+  // evidence are frozen. Running calibrateFindings first and then sticky
+  // would cache-freeze the calibrated confidence and new votes wouldn't
+  // surface until the conclusion itself changed.
+  const findings = calibrateFindings(db, stable);
 
   if (options.persistCategory && findings.length > 0) {
     persistFindings(db, entity, options.persistCategory, findings);
