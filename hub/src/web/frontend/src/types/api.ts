@@ -142,6 +142,14 @@ export interface ContainerHistory {
   collected_at: string;
 }
 
+export interface RankedEvidence {
+  kind: string;
+  label: string;
+  surprise: number;
+  explanatoryPower: number;
+  score: number;
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
@@ -151,6 +159,8 @@ export interface Finding {
   suggestedAction: string;
   /** ISO timestamp. Stable while the conclusion + severity stay the same. */
   diagnosedAt?: string;
+  /** Phase 4 ranked top-3 evidence (optional). */
+  evidenceRanked?: RankedEvidence[];
 }
 
 export interface ContainerDetail extends ContainerSnapshot {

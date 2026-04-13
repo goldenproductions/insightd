@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 25;
+const SCHEMA_VERSION = 26;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -234,8 +234,19 @@ function bootstrap(db: Database.Database): void {
       category     TEXT NOT NULL,
       metric       TEXT,
       helpful      INTEGER NOT NULL,
+      diagnoser    TEXT,
+      finding_hash TEXT,
       created_at   TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(entity_type, entity_id, category, metric)
+    );
+
+    CREATE TABLE IF NOT EXISTS confidence_calibration (
+      diagnoser       TEXT NOT NULL,
+      conclusion_tag  TEXT NOT NULL,
+      helpful_count   INTEGER NOT NULL DEFAULT 0,
+      unhelpful_count INTEGER NOT NULL DEFAULT 0,
+      updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (diagnoser, conclusion_tag)
     );
 
     CREATE TABLE IF NOT EXISTS ai_diagnoses (
@@ -567,6 +578,11 @@ function migrate(db: Database.Database, fromVersion: number): void {
   }
   if (fromVersion < 25) {
     // rca_edges table + index created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 26) {
+    try { db.exec('ALTER TABLE insight_feedback ADD COLUMN diagnoser TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE insight_feedback ADD COLUMN finding_hash TEXT'); } catch { /* already exists */ }
+    // confidence_calibration table created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 

@@ -189,6 +189,21 @@ export interface PPRResult {
   neighbors: Neighbor[];
 }
 
+/**
+ * One scored evidence item after Phase 4's Adtributor-style ranking pass.
+ * `score = surprise × explanatoryPower`, where `surprise` is the signal's
+ * deviation (MAD units for metric signals, burst intensity for templates,
+ * fixed for binary signals) and `explanatoryPower` is its share of the
+ * total surprise across all fired signals.
+ */
+export interface RankedEvidence {
+  kind: FindingSignal['kind'];
+  label: string;
+  surprise: number;
+  explanatoryPower: number;
+  score: number;
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
@@ -210,6 +225,12 @@ export interface Finding {
    * data instead of parsing evidence strings.
    */
   signals?: FindingSignal[];
+  /**
+   * Top-3 ranked evidence items produced by Phase 4's rankEvidence() pass.
+   * Optional — the UI falls back to `evidence: string[]` when absent, so
+   * older persisted findings keep rendering.
+   */
+  evidenceRanked?: RankedEvidence[];
 }
 
 export type Diagnoser = (ctx: DiagnosisContext) => Finding[];
