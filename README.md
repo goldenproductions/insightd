@@ -24,8 +24,12 @@ No critical issues. Good week.
 - **Disk monitoring** — usage warnings with "X days until full" forecasts
 - **HTTP endpoint monitoring** — uptime, response time, configurable intervals
 - **Smart insights engine** — capacity-based health scoring (only flags actual saturation, not baseline deviation), time-of-day baselines, predictive alerts, correlation detection
-- **Health check diagnosis** — when a container is unhealthy, insightd correlates metrics, baselines, restart history, host state, and recent logs to explain *why* and suggest *what to do* — not just "wget connection refused"
-- **Insights page** — dedicated `/insights` view with expandable cards, thumbs up/down feedback, and per-session dismiss
+- **Research-grounded diagnosis engine** — when a container is unhealthy, insightd runs seven signal detectors against metrics, robust baselines, restart history, host state, and recent logs, then fuses the results through a unified diagnoser that also ranks **correlated upstream services** (Personalized PageRank over a compose/host/service topology). Based on Drain (ICWS 2017), MicroRCA (NOMS 2020), Twitter AnomalyDetection, and Adtributor (NSDI 2014).
+- **Drain log template mining** — recent container logs are mined into per-image templates at diagnosis time. Detects novel error patterns without hand-written regexes; flags templates first-seen in the last 5 minutes as anomaly signals.
+- **S-H-ESD historical anomalies** — Seasonal-Hybrid ESD runs on hourly rollups for every host + container, surfacing real spikes vs the 14-day baseline in a collapsible card on detail pages.
+- **Robust baselines** — `|value − median| / MAD` z-score bands replace "above P95" thresholds, so a normally-quiet host doesn't get flagged for 1.6% CPU drift. Falls back to percentile comparison when MAD is unavailable.
+- **Calibrated confidence** — thumbs-up / thumbs-down feedback on diagnosis cards feeds a Beta(2,2) posterior per `(diagnoser, conclusion_tag)`. After ≥5 votes, the engine learns whether its `high` / `medium` / `low` confidence actually matches operator judgment and recalibrates future findings.
+- **Insights page** — dedicated `/insights` view with expandable cards, thumbs up/down feedback (wired into calibration), and per-session dismiss
 - **Real-time alerts** — 10 alert types with cooldowns, auto-resolution, and webhook delivery — alerts include the health check output so notifications tell you *why* a container is unhealthy
 - **Webhook notifications** — Slack, Discord, Telegram, ntfy, or any generic webhook
 - **Weekly digest emails** — HTML + plaintext summary of the week
@@ -113,7 +117,7 @@ The hub serves a dashboard at `http://localhost:3000`:
 - **Dashboard** — health score with clickable breakdown, availability, compact status bar, unified "Needs Attention" feed, metric personalities
 - **Hosts** — collapsible sections per host group, with status, metrics, and inline group editing
 - **Host detail** — tabbed view: overview, resources, alerts; click the group badge to retag the host
-- **Container detail** — CPU/memory gauges, logs, status history, structured health diagnosis when unhealthy
+- **Container detail** — CPU/memory gauges, logs, status history, structured diagnosis with short signal chips, related services (PPR), historical anomalies, and Drain-mined log patterns
 - **Endpoints** — HTTP endpoint monitoring with uptime timelines
 - **Stacks** — container groups with aggregate status (auto-detected from Docker Compose, or create your own)
 - **Alerts** — full alert history with reason, trigger value, and threshold
