@@ -245,21 +245,34 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
       }
     }
 
-    // Availability
-    const uptimeData = db.prepare(`
-      SELECT COUNT(*) as total, SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running
-      FROM container_snapshots WHERE host_id = ? AND container_name = ? AND collected_at >= datetime('now', '-1 day')
-    `).get(host_id, container_name) as UptimeRow;
+    // Availability — only flag "had downtime" for containers that have actually
+    // *recovered* (are running now). A container that's currently stopped falls
+    // into one of three cases, none of which want this insight:
+    //   1. Intentionally stopped (nginx/postgres/redis sitting exited for weeks) —
+    //      the user doesn't want recurring "had downtime" noise every 15 minutes
+    //   2. Actively crashed right now — the container_unhealthy alert handles it
+    //   3. Stopped recently but never seen — at worst, alert will fire on next tick
+    // Only "was down briefly, is running again" is a legitimate retrospective insight.
+    const latestSnap = db.prepare(
+      `SELECT status FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1`
+    ).get(host_id, container_name) as { status: string } | undefined;
 
-    if (uptimeData.total > 0) {
-      const uptimePct = (uptimeData.running / uptimeData.total) * 100;
-      if (uptimePct < 99 && uptimePct > 0) {
-        const downMinutes = Math.round((uptimeData.total - uptimeData.running) * 5);
-        insert.run('container', entityId, 'availability', uptimePct < 90 ? 'critical' : 'warning',
-          `${container_name} had downtime`,
-          `${container_name} was down for ~${downMinutes} minutes in the last 24 hours (${round(uptimePct)}% uptime)`,
-          null, uptimePct, 99);
-        count++;
+    if (latestSnap?.status === 'running') {
+      const uptimeData = db.prepare(`
+        SELECT COUNT(*) as total, SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) as running
+        FROM container_snapshots WHERE host_id = ? AND container_name = ? AND collected_at >= datetime('now', '-1 day')
+      `).get(host_id, container_name) as UptimeRow;
+
+      if (uptimeData.total > 0) {
+        const uptimePct = (uptimeData.running / uptimeData.total) * 100;
+        if (uptimePct < 99 && uptimePct > 0) {
+          const downMinutes = Math.round((uptimeData.total - uptimeData.running) * 5);
+          insert.run('container', entityId, 'availability', uptimePct < 90 ? 'critical' : 'warning',
+            `${container_name} had downtime`,
+            `${container_name} was down for ~${downMinutes} minutes in the last 24 hours but has recovered (${round(uptimePct)}% uptime)`,
+            null, uptimePct, 99);
+          count++;
+        }
       }
     }
 
@@ -335,7 +348,13 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
 
 /**
  * Generate predictive insights based on 7-day metric trends.
- * Pattern: same linear regression as disk forecast.
+ *
+ * Per the insights philosophy ("usage is healthy, saturation is the problem"),
+ * host predictions gate on *absolute capacity thresholds*, not baseline
+ * percentiles: the question is "will this host run out of resources soon?",
+ * not "will this host's metric wander above its recent average?". A media
+ * host sitting at 7% memory with a slow drift shouldn't fire a prediction
+ * just because its memory_used_mb is creeping above last week's P90.
  */
 function generatePredictions(db: Database.Database, insert: Database.Statement): number {
   let count = 0;
@@ -343,6 +362,13 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
   // Host predictions
   const hosts = db.prepare('SELECT DISTINCT host_id FROM hosts').all() as HostIdRow[];
   for (const { host_id } of hosts) {
+    // Resolve the host's total memory once — used by memory predictions to
+    // compute an 80%-of-capacity saturation ceiling.
+    const hostCapacity = db.prepare(
+      `SELECT memory_total_mb FROM host_snapshots WHERE host_id = ? ORDER BY collected_at DESC LIMIT 1`
+    ).get(host_id) as { memory_total_mb: number | null } | undefined;
+    const memoryTotalMb = hostCapacity?.memory_total_mb ?? null;
+
     for (const [metric, label, unit, table] of [
       ['cpu_percent', 'CPU', '%', 'host_snapshots'],
       ['memory_used_mb', 'Memory', ' MB', 'host_snapshots'],
@@ -350,25 +376,39 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
     ] as const) {
       const pred = computeMetricTrend(db, table, 'host_id', host_id, metric, null);
       if (!pred) continue;
+      if (pred.dailyGrowth <= 0) continue;
+
+      // Determine the saturation ceiling for this metric:
+      //   cpu_percent: 80% (same as the host CPU detector threshold)
+      //   memory_used_mb: 80% of memory_total_mb (skip if we don't know total)
+      //   load_5: 4 (same as the host load detector threshold)
+      let saturation: number | null = null;
+      if (metric === 'cpu_percent') saturation = 80;
+      else if (metric === 'load_5') saturation = 4;
+      else if (metric === 'memory_used_mb' && memoryTotalMb) saturation = memoryTotalMb * 0.8;
+      if (saturation == null) continue;
+      if (pred.current >= saturation) continue; // already saturated — detector handles it
+
+      // Will the metric actually breach the saturation ceiling within 14 days
+      // at the current growth rate? If not, this is normal drift, not a prediction.
+      const remaining = saturation - pred.current;
+      const daysUntil = Math.round(remaining / pred.dailyGrowth);
+      if (daysUntil > 14 || daysUntil <= 0) continue;
+
+      // The live value has to back the trend — if the latest snapshot is
+      // already well below the current average, the trend is fading.
       const bl = db.prepare(
         "SELECT p50, p75, p90 FROM baselines WHERE entity_type = 'host' AND entity_id = ? AND metric = ? AND time_bucket = 'all'"
       ).get(host_id, metric) as { p50: number | null; p75: number | null; p90: number | null } | undefined;
-      if (!bl || bl.p90 == null) continue;
-      if (pred.current >= bl.p90) continue; // already above threshold
-      if (pred.dailyGrowth <= 0) continue;
-      // If the live value is below P75, the trend doesn't match reality — skip
-      if (pred.liveValue != null && bl.p75 != null && pred.liveValue < bl.p75) continue;
-      const remaining = bl.p90 - pred.current;
-      const daysUntil = Math.round(remaining / pred.dailyGrowth);
-      if (daysUntil > 14 || daysUntil <= 0) continue;
-      // Predictions are inherently uncertain — only "critical" if live value also above P75
-      const liveSupports = pred.liveValue != null && bl.p75 != null && pred.liveValue >= bl.p75;
-      const severity = daysUntil <= 3 && liveSupports ? 'critical' : 'warning';
+      if (pred.liveValue != null && bl?.p75 != null && pred.liveValue < bl.p75) continue;
+
+      // Predictions are inherently uncertain — only "critical" within 3 days.
+      const severity = daysUntil <= 3 ? 'critical' : 'warning';
       const dayWord = daysUntil === 1 ? 'day' : 'days';
       insert.run('host', host_id, 'prediction', severity,
         `${label} trending up on ${host_id}`,
-        `${label} at ${round(pred.current)}${unit}, growing ${round(pred.dailyGrowth)}${unit}/day — will exceed P90 (${round(bl.p90)}${unit}) in ~${daysUntil} ${dayWord}`,
-        metric, pred.current, bl.p90);
+        `${label} at ${round(pred.current)}${unit}, growing ${round(pred.dailyGrowth)}${unit}/day — will reach ${round(saturation)}${unit} (saturation) in ~${daysUntil} ${dayWord}`,
+        metric, pred.current, saturation);
       count++;
     }
   }
