@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 23;
+const SCHEMA_VERSION = 24;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -175,20 +175,22 @@ function bootstrap(db: Database.Database): void {
       ON service_group_members (host_id, container_name);
 
     CREATE TABLE IF NOT EXISTS baselines (
-      id           INTEGER PRIMARY KEY AUTOINCREMENT,
-      entity_type  TEXT NOT NULL,
-      entity_id    TEXT NOT NULL,
-      metric       TEXT NOT NULL,
-      time_bucket  TEXT NOT NULL,
-      p50          REAL,
-      p75          REAL,
-      p90          REAL,
-      p95          REAL,
-      p99          REAL,
-      min_val      REAL,
-      max_val      REAL,
-      sample_count INTEGER NOT NULL DEFAULT 0,
-      computed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type      TEXT NOT NULL,
+      entity_id        TEXT NOT NULL,
+      metric           TEXT NOT NULL,
+      time_bucket      TEXT NOT NULL,
+      p50              REAL,
+      p75              REAL,
+      p90              REAL,
+      p95              REAL,
+      p99              REAL,
+      min_val          REAL,
+      max_val          REAL,
+      mad              REAL,
+      mad_sample_count INTEGER,
+      sample_count     INTEGER NOT NULL DEFAULT 0,
+      computed_at      TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(entity_type, entity_id, metric, time_bucket)
     );
 
@@ -348,6 +350,22 @@ function bootstrap(db: Database.Database): void {
       sample_count    INTEGER NOT NULL,
       PRIMARY KEY (endpoint_id, bucket)
     );
+
+    CREATE TABLE IF NOT EXISTS rollup_anomalies (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      entity_type  TEXT NOT NULL,
+      entity_id    TEXT NOT NULL,
+      metric       TEXT NOT NULL,
+      bucket       TEXT NOT NULL,
+      value        REAL NOT NULL,
+      residual     REAL NOT NULL,
+      robust_z     REAL NOT NULL,
+      detected_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(entity_type, entity_id, metric, bucket)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rollup_anomalies_entity
+      ON rollup_anomalies (entity_type, entity_id, detected_at);
   `);
 
   // Track schema version and run migrations
@@ -530,6 +548,11 @@ function migrate(db: Database.Database, fromVersion: number): void {
   }
   if (fromVersion < 23) {
     // log_templates table + index created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 24) {
+    try { db.exec('ALTER TABLE baselines ADD COLUMN mad REAL'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE baselines ADD COLUMN mad_sample_count INTEGER'); } catch { /* already exists */ }
+    // rollup_anomalies table + index created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 

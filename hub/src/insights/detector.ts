@@ -585,10 +585,10 @@ function getBaselines(db: Database.Database, entityType: string, entityId: strin
   const period = getTimePeriod(hour);
 
   const allRows = db.prepare(
-    "SELECT metric, p50, p75, p90, p95, p99, sample_count FROM baselines WHERE entity_type = ? AND entity_id = ? AND time_bucket = 'all'"
+    "SELECT metric, p50, p75, p90, p95, p99, mad, mad_sample_count, sample_count FROM baselines WHERE entity_type = ? AND entity_id = ? AND time_bucket = 'all'"
   ).all(entityType, entityId) as BaselineRow[];
   const periodRows = db.prepare(
-    'SELECT metric, p50, p75, p90, p95, p99, sample_count FROM baselines WHERE entity_type = ? AND entity_id = ? AND time_bucket = ?'
+    'SELECT metric, p50, p75, p90, p95, p99, mad, mad_sample_count, sample_count FROM baselines WHERE entity_type = ? AND entity_id = ? AND time_bucket = ?'
   ).all(entityType, entityId, period) as BaselineRow[];
 
   const map: Record<string, BaselineRow> = {};

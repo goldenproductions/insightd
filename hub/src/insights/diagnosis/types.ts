@@ -15,6 +15,8 @@ export interface BaselineRow {
   p90: number | null;
   p95: number | null;
   p99: number | null;
+  mad: number | null;
+  mad_sample_count: number | null;
   sample_count: number;
 }
 

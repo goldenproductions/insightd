@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
+import { mad as robustMad } from './stats';
 
 const HOST_METRICS: string[] = [
   'cpu_percent', 'memory_used_mb', 'load_1', 'load_5', 'swap_used_mb',
@@ -41,6 +42,8 @@ interface Percentiles {
   p99: number | null;
   min: number | undefined;
   max: number | undefined;
+  mad: number | null;
+  mad_sample_count: number;
   count: number;
 }
 
@@ -57,10 +60,20 @@ function percentile(sorted: number[], p: number): number | null {
 }
 
 function computePercentiles(values: number[]): Percentiles {
+  const p50 = percentile(values, 50);
+  // MAD uses the same sorted values; pass the median we just computed so the
+  // shared helper doesn't re-sort. Skipped for fewer than 10 samples — the
+  // estimate is too noisy to be useful below that.
+  const madValue = values.length >= 10 && p50 != null
+    ? robustMad(values, p50)
+    : null;
   return {
-    p50: percentile(values, 50), p75: percentile(values, 75), p90: percentile(values, 90),
+    p50, p75: percentile(values, 75), p90: percentile(values, 90),
     p95: percentile(values, 95), p99: percentile(values, 99),
-    min: values[0], max: values[values.length - 1], count: values.length,
+    min: values[0], max: values[values.length - 1],
+    mad: madValue != null ? Math.round(madValue * 100) / 100 : null,
+    mad_sample_count: madValue != null ? values.length : 0,
+    count: values.length,
   };
 }
 
@@ -88,17 +101,19 @@ type BaselineCache = Map<string, Record<string, Percentiles & { sample_count: nu
 function computeBaselines(db: Database.Database): BaselineCache {
   const cache: BaselineCache = new Map();
   const upsert = db.prepare(`
-    INSERT INTO baselines (entity_type, entity_id, metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, sample_count, computed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO baselines (entity_type, entity_id, metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, mad, mad_sample_count, sample_count, computed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(entity_type, entity_id, metric, time_bucket) DO UPDATE SET
       p50=excluded.p50, p75=excluded.p75, p90=excluded.p90, p95=excluded.p95, p99=excluded.p99,
-      min_val=excluded.min_val, max_val=excluded.max_val, sample_count=excluded.sample_count, computed_at=excluded.computed_at
+      min_val=excluded.min_val, max_val=excluded.max_val,
+      mad=excluded.mad, mad_sample_count=excluded.mad_sample_count,
+      sample_count=excluded.sample_count, computed_at=excluded.computed_at
   `);
 
   function upsertBucket(entityType: string, entityId: string, metric: string, bucket: string, values: number[]): boolean {
     if (values.length === 0) return false;
     const p = computePercentiles(values);
-    upsert.run(entityType, entityId, metric, bucket, p.p50, p.p75, p.p90, p.p95, p.p99, p.min, p.max, p.count);
+    upsert.run(entityType, entityId, metric, bucket, p.p50, p.p75, p.p90, p.p95, p.p99, p.min, p.max, p.mad, p.mad_sample_count, p.count);
     // Cache the 'all' bucket for downstream use
     if (bucket === 'all') {
       const key = `${entityType}:${entityId}`;
