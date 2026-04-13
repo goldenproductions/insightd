@@ -5,6 +5,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/FormField';
 import { DiagnosisCard } from '@/components/DiagnosisCard';
+import { timeAgo } from '@/lib/formatters';
 
 export interface AIDiagnosis {
   rootCause: string;
@@ -149,7 +150,7 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
           {Math.round(diagnosis.confidence * 100)}% confidence
         </span>
       )}
-      <span>Generated {formatTimestamp(diagnosis.createdAt)}</span>
+      <span title={formatTimestamp(diagnosis.createdAt)}>Generated {timeAgo(diagnosis.createdAt)}</span>
       {diagnosis.cached && <span className="rounded bg-border/60 px-1.5 py-0.5 text-[10px]">cached</span>}
       {diagnosis.latencyMs != null && !diagnosis.cached && <span>&middot; {diagnosis.latencyMs}ms</span>}
     </div>

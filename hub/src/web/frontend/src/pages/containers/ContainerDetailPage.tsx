@@ -113,7 +113,7 @@ export function ContainerDetailPage() {
   const tabs = [
     { id: 'overview', label: 'Overview' },
     { id: 'logs', label: 'Logs' },
-    { id: 'history', label: 'History', count: data.alerts.length },
+    { id: 'history', label: 'Alerts & history', count: data.alerts.length },
   ];
 
   return (
@@ -163,7 +163,13 @@ export function ContainerDetailPage() {
           </div>
           <span className="text-sm">
             <span className="text-muted">Process uptime</span>{' '}
-            <span className={`font-semibold ${uptimePct != null && uptimePct >= 99 ? 'text-success' : uptimePct != null && uptimePct >= 95 ? 'text-warning' : 'text-danger'}`}>
+            <span className={`font-semibold ${
+              uptimePct == null ? 'text-muted'
+                : showHealthFailure ? 'text-fg'
+                : uptimePct >= 99 ? 'text-success'
+                : uptimePct >= 95 ? 'text-warning'
+                : 'text-danger'
+            }`}>
               {uptimePct != null ? `${uptimePct}%` : '-'}
             </span>
           </span>
@@ -226,19 +232,25 @@ export function ContainerDetailPage() {
             </div>
 
             {availability && (
-            <Card title="Availability (7 days)">
+            <Card title="Process availability (7 days)">
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
                   <span className={`text-3xl font-bold ${
                     availability.summary.uptimePercent == null ? 'text-muted'
+                      : showHealthFailure ? 'text-fg'
                       : availability.summary.uptimePercent >= 99 ? 'text-success'
                       : availability.summary.uptimePercent >= 95 ? 'text-warning'
                       : 'text-danger'
                   }`}>
                     {availability.summary.uptimePercent != null ? `${availability.summary.uptimePercent}%` : 'N/A'}
                   </span>
-                  <span className="text-sm text-muted">uptime over 7 days</span>
+                  <span className="text-sm text-muted">process running over 7 days</span>
                 </div>
+                {showHealthFailure && (
+                  <p className="text-xs text-muted">
+                    Process has been running — its health probe is failing. See the diagnosis above.
+                  </p>
+                )}
 
                 <UptimeTimeline
                   containers={[{

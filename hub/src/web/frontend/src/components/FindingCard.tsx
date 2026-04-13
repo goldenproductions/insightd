@@ -81,7 +81,9 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
     </>
   );
 
-  const footer = finding.diagnosedAt ? `Analysis updated ${timeAgo(finding.diagnosedAt)}` : undefined;
+  const footer = finding.diagnosedAt ? (
+    <span title={finding.diagnosedAt}>Analysis updated {timeAgo(finding.diagnosedAt)}</span>
+  ) : undefined;
 
   return (
     <DiagnosisCard
