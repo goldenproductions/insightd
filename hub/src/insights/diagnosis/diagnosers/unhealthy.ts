@@ -12,6 +12,7 @@
  */
 
 import type { DiagnosisContext, Finding } from '../types';
+import { labelForTag } from '../templateClassifier';
 
 function round(v: number | null): string {
   if (v == null) return '?';
@@ -100,10 +101,22 @@ export function diagnoseUnhealthy(ctx: DiagnosisContext): Finding[] {
     evidence.push(`Other containers also failing: ${shown.join(', ')}${more}`);
   }
 
-  // Log patterns
+  // Log patterns — prefer mined templates, fall back to semantic tags.
   if (ctx.logs.available) {
-    if (ctx.logs.errorPatterns.length > 0) {
-      evidence.push(`Recent logs show: ${ctx.logs.errorPatterns.slice(0, 3).join(', ')}`);
+    const bursts = ctx.logs.templateBursts ?? [];
+    const taggedLabels = (ctx.logs.errorPatterns ?? [])
+      .map((tag) => labelForTag(tag) ?? tag)
+      .slice(0, 3);
+    if (bursts.length > 0) {
+      const top = bursts.slice(0, 2).map((b) => {
+        const label = labelForTag(b.semanticTag);
+        return label ? `${label} (×${b.burstCount})` : `"${b.template}" (×${b.burstCount})`;
+      });
+      evidence.push(`Recent logs show: ${top.join('; ')}`);
+    } else if (taggedLabels.length > 0) {
+      evidence.push(`Recent logs show: ${taggedLabels.join(', ')}`);
+    } else if ((ctx.logs.unseenTemplates ?? 0) > 0) {
+      evidence.push(`Recent logs contain ${ctx.logs.unseenTemplates} new log pattern${ctx.logs.unseenTemplates === 1 ? '' : 's'} not seen before`);
     } else {
       evidence.push(`Recent logs show no obvious errors`);
     }
@@ -122,7 +135,7 @@ export function diagnoseUnhealthy(ctx: DiagnosisContext): Finding[] {
     confidence = 'high';
   }
   // 2. OOM confirmed by logs
-  else if (ctx.logs.errorPatterns.includes('out of memory')) {
+  else if ((ctx.logs.errorPatterns ?? []).includes('oom')) {
     conclusion = `${containerName} has been killed by the OS for using too much memory`;
     action = `Logs show out-of-memory errors. Increase the container's memory limit or investigate what's allocating memory.`;
     confidence = 'high';
@@ -146,8 +159,8 @@ export function diagnoseUnhealthy(ctx: DiagnosisContext): Finding[] {
     confidence = 'medium';
   }
   // 6. Application errors visible in logs, resources stable
-  else if (ctx.logs.available && ctx.logs.errorPatterns.length > 0 && ctx.recent.restartsInWindow === 0) {
-    const topPattern = ctx.logs.errorPatterns[0]!;
+  else if (ctx.logs.available && (ctx.logs.errorPatterns ?? []).length > 0 && ctx.recent.restartsInWindow === 0) {
+    const topPattern = labelForTag(ctx.logs.errorPatterns[0]!) ?? ctx.logs.errorPatterns[0]!;
     conclusion = `${containerName} is reporting application errors (${topPattern})`;
     action = `The container is running and resources are normal, but the application is logging errors. Check recent application logs and investigate recent config changes or upstream dependencies.`;
     confidence = 'medium';

@@ -169,11 +169,63 @@ describe('diagnosis engine', () => {
     setCachedLogs('h1', 'postgres', [
       { stream: 'stderr', timestamp: null, message: 'FATAL: database "foo" does not exist' },
       { stream: 'stderr', timestamp: null, message: 'FATAL: database is locked' },
-    ]);
+    ], { db, image: 'postgres' });
 
     const findings = runDiagnosis(db, { type: 'container', hostId: 'h1', containerName: 'postgres' });
     assert.equal(findings.length, 1);
-    assert.ok(findings[0]!.evidence.some((e: string) => e.includes('fatal') || e.includes('database')));
+    // With Drain + templateClassifier, the first matching rule wins: "fatal"
+    // comes before "db_locked" in SEMANTIC_RULES, so we expect a fatal label.
+    assert.ok(
+      findings[0]!.evidence.some((e: string) => e.toLowerCase().includes('fatal')),
+      `expected evidence to mention 'fatal', got: ${JSON.stringify(findings[0]!.evidence)}`,
+    );
+  });
+
+  it('regression: overlay classifier still catches OOM errors in logs (parity with pre-Drain regexes)', () => {
+    for (let i = 6; i >= 0; i--) {
+      seedSnapshot(db, {
+        name: 'leaky', health: i === 0 ? 'unhealthy' : 'healthy',
+        cpu: 10, mem: 200, restarts: 0,
+        healthOutput: i === 0 ? 'probe failed' : null,
+        collectedAt: ts(new Date(NOW - i * 15 * 60_000)),
+      });
+    }
+    seedHostSnapshot(db, 'h1', 30, 4000, 16000, 1.0, ts(new Date(NOW - 60_000)));
+    setCachedLogs('h1', 'leaky', [
+      { stream: 'stderr', timestamp: null, message: 'runtime: out of memory' },
+      { stream: 'stderr', timestamp: null, message: 'fatal: oom-killed' },
+    ], { db, image: 'leaky' });
+
+    const findings = runDiagnosis(db, { type: 'container', hostId: 'h1', containerName: 'leaky' });
+    assert.equal(findings.length, 1);
+    // OOM-confirmed branch should fire (the "out of memory" tag is detected).
+    assert.match(findings[0]!.conclusion, /killed by the OS|memory/i);
+    assert.equal(findings[0]!.confidence, 'high');
+  });
+
+  it('drain mining persists templates to log_templates table', () => {
+    seedSnapshot(db, {
+      name: 'nginx', health: 'unhealthy', cpu: 5, mem: 50,
+      healthOutput: 'probe failed',
+      collectedAt: ts(new Date(NOW - 60_000)),
+    });
+    seedHostSnapshot(db, 'h1', 10, 500, 4000, 0.5, ts(new Date(NOW - 60_000)));
+    setCachedLogs('h1', 'nginx', [
+      { stream: 'stderr', timestamp: null, message: 'upstream 10.0.0.1 failed' },
+      { stream: 'stderr', timestamp: null, message: 'upstream 10.0.0.2 failed' },
+      { stream: 'stderr', timestamp: null, message: 'upstream 192.168.1.5 failed' },
+    ], { db, image: 'nginx' });
+
+    const rows = db.prepare('SELECT image, template, occurrence_count FROM log_templates WHERE image = ?').all('nginx');
+    assert.ok(rows.length >= 1, 'expected at least one template persisted');
+    // All three lines should collapse into one template containing a wildcard.
+    const upstream = rows.find((r: any) => /upstream/.test(r.template));
+    assert.ok(upstream, `expected an 'upstream' template, got: ${JSON.stringify(rows)}`);
+    assert.ok(
+      upstream.template.includes('<*>'),
+      `expected wildcard in collapsed template, got: ${upstream.template}`,
+    );
+    assert.equal(upstream.occurrence_count, 3);
   });
 
   it('falls back gracefully when nothing stands out', () => {

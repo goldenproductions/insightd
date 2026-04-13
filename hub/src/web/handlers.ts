@@ -237,12 +237,17 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
       }
 
       // If logs aren't cached yet, fire a background fetch so next view is enriched
-      const { getCachedLogs, fetchLogsBackground } = require('../insights/diagnosis/logCache');
+      const { getCachedLogs, fetchLogsBackground, resolveImageKey } = require('../insights/diagnosis/logCache');
       const cached = getCachedLogs(params.hostId, params.containerName);
       if (!cached.available && ctx && ctx.requestLogs) {
-        fetchLogsBackground(params.hostId, params.containerName, latest.container_id, async (h: string, cid: string, opts: any) => {
-          return await ctx.requestLogs!(h, cid, opts);
-        });
+        const image = resolveImageKey(db, params.hostId, params.containerName);
+        fetchLogsBackground(
+          params.hostId,
+          params.containerName,
+          latest.container_id,
+          async (h: string, cid: string, opts: any) => ctx.requestLogs!(h, cid, opts),
+          { db, image },
+        );
       }
     } catch (err) {
       // Never let diagnosis failure break the container detail page
@@ -724,9 +729,10 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
   const { buildContext } = require('../insights/diagnosis/context') as {
     buildContext: (db: Database.Database, entity: any, logs: any) => any;
   };
-  const { getCachedLogs, fetchLogsBackground } = require('../insights/diagnosis/logCache') as {
+  const { getCachedLogs, fetchLogsBackground, resolveImageKey } = require('../insights/diagnosis/logCache') as {
     getCachedLogs: (hostId: string, containerName: string) => any;
-    fetchLogsBackground: (hostId: string, containerName: string, containerId: string, fetcher: any) => void;
+    fetchLogsBackground: (hostId: string, containerName: string, containerId: string, fetcher: any, miningCtx?: { db: Database.Database; image: string | null }) => void;
+    resolveImageKey: (db: Database.Database, hostId: string, containerName: string) => string;
   };
   const { diagnoseUnhealthy } = require('../insights/diagnosis/diagnosers/unhealthy') as {
     diagnoseUnhealthy: (ctx: any) => any[];
@@ -768,9 +774,14 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
     // If logs weren't available, warm them for next time
     if (!logs.available && typeof latest.container_id === 'string' && ctx && ctx.requestLogs) {
       try {
-        fetchLogsBackground(params.hostId, params.containerName, latest.container_id, async (h: string, cid: string, opts: any) => {
-          return await ctx.requestLogs!(h, cid, opts);
-        });
+        const image = resolveImageKey(db, params.hostId, params.containerName);
+        fetchLogsBackground(
+          params.hostId,
+          params.containerName,
+          latest.container_id,
+          async (h: string, cid: string, opts: any) => ctx.requestLogs!(h, cid, opts),
+          { db, image },
+        );
       } catch { /* best effort */ }
     }
 

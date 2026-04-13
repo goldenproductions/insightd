@@ -11,17 +11,35 @@
  *     a background fetch (fire-and-forget) so the next view is enriched.
  *   - On unhealthy transition detected in MQTT ingest: pre-warm the cache
  *     so diagnosis has logs by the time someone looks.
+ *
+ * Template mining: when logs are written to the cache and a `LogCacheContext`
+ * is provided (carrying a DB handle + the container's image name), each line
+ * is run through a Drain parse tree. Templates are persisted per image in the
+ * `log_templates` table, and the batch's hits / new templates / bursts are
+ * attached to the cache entry so diagnosers can consume them.
  */
 
-import type { DiagnosisLogs, DiagnosisLogEntry } from './types';
+import type Database from 'better-sqlite3';
+import type {
+  DiagnosisLogs,
+  DiagnosisLogEntry,
+  TemplateHit,
+  TemplateBurst,
+} from './types';
+import { DrainTree, tokenize, type DrainTemplate } from './drain';
+import { classifyTemplate } from './templateClassifier';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_LINES_PER_CACHE_ENTRY = 100;
+const BURST_MIN_COUNT = 3;
 
 interface CacheEntry {
   lines: DiagnosisLogEntry[];
   fetchedAt: number;
   errorPatterns: string[];
+  templates: TemplateHit[];
+  unseenTemplates: number;
+  templateBursts: TemplateBurst[];
 }
 
 const cache = new Map<string, CacheEntry>();
@@ -32,50 +50,171 @@ function cacheKey(hostId: string, containerName: string): string {
 }
 
 /**
- * Pre-defined patterns to extract from log lines. Case-insensitive.
- * Each pattern gets a short human-readable label.
+ * Optional context for template mining at cache-write time. When omitted
+ * (e.g. from test fixtures), the cache still stores the raw lines but does
+ * no template mining and `templates` / `templateBursts` come back empty.
  */
-const LOG_PATTERNS: Array<{ re: RegExp; label: string }> = [
-  { re: /out of memory|oom[-_ ]?killed|cannot allocate memory/i, label: 'out of memory' },
-  { re: /panic:/i, label: 'panic' },
-  { re: /segmentation fault|sigsegv/i, label: 'segmentation fault' },
-  { re: /fatal:/i, label: 'fatal error' },
-  { re: /connection refused/i, label: 'connection refused' },
-  { re: /connection reset/i, label: 'connection reset' },
-  { re: /i\/o timeout|connection timed out/i, label: 'connection timeout' },
-  { re: /no such host|name resolution|could not resolve/i, label: 'DNS resolution failure' },
-  { re: /permission denied|eacces/i, label: 'permission denied' },
-  { re: /disk full|no space left|enospc/i, label: 'disk full' },
-  { re: /too many open files|emfile/i, label: 'too many open files' },
-  { re: /database is locked|sqlite_busy/i, label: 'database locked' },
-  { re: /unauthorized|401/i, label: 'HTTP 401 unauthorized' },
-  { re: /forbidden|403/i, label: 'HTTP 403 forbidden' },
-  { re: /not found|404/i, label: 'HTTP 404 not found' },
-  { re: /bad gateway|502/i, label: 'HTTP 502 bad gateway' },
-  { re: /service unavailable|503/i, label: 'HTTP 503 unavailable' },
-];
+export interface LogCacheContext {
+  db: Database.Database;
+  /**
+   * Image scoping key for Drain templates. When available (from the MQTT
+   * collection payload), the real image name ensures multiple containers
+   * running the same image share their template tree. Falls back to the
+   * container name when null.
+   */
+  image: string | null;
+}
 
-/**
- * Scan log lines for known error patterns. Returns a deduplicated list of
- * labels, most-frequent first.
- */
-export function parseLogPatterns(lines: DiagnosisLogEntry[]): string[] {
-  const counts = new Map<string, number>();
-  for (const line of lines) {
-    const msg = line.message || '';
-    for (const { re, label } of LOG_PATTERNS) {
-      if (re.test(msg)) {
-        counts.set(label, (counts.get(label) ?? 0) + 1);
-      }
-    }
-  }
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([label]) => label);
+interface LoadedTemplate extends DrainTemplate {
+  id: number;
+  lastSeen: string;
+  firstSeen: string;
+}
+
+function loadTemplates(db: Database.Database, imageKey: string): LoadedTemplate[] {
+  const rows = db.prepare(`
+    SELECT id, image, template_hash, template, token_count,
+           occurrence_count, semantic_tag, first_seen, last_seen
+    FROM log_templates
+    WHERE image = ?
+  `).all(imageKey) as Array<{
+    id: number;
+    template_hash: string;
+    template: string;
+    token_count: number;
+    occurrence_count: number;
+    semantic_tag: string | null;
+    first_seen: string;
+    last_seen: string;
+  }>;
+  return rows.map((r) => ({
+    id: r.id,
+    templateHash: r.template_hash,
+    template: r.template,
+    tokenCount: r.token_count,
+    occurrenceCount: r.occurrence_count,
+    semanticTag: r.semantic_tag,
+    firstSeen: r.first_seen,
+    lastSeen: r.last_seen,
+  }));
+}
+
+interface TemplateMiningResult {
+  templates: TemplateHit[];
+  errorPatterns: string[];
+  unseenTemplates: number;
+  templateBursts: TemplateBurst[];
 }
 
 /**
- * Get cached logs for a container. Returns null if no valid entry.
+ * Run Drain over a batch of log lines scoped to a given image key. Persists
+ * new and updated templates in `log_templates` and returns the per-batch
+ * summary for the cache entry.
+ */
+function mineTemplates(
+  db: Database.Database,
+  imageKey: string,
+  lines: DiagnosisLogEntry[],
+): TemplateMiningResult {
+  const seedTemplates = loadTemplates(db, imageKey);
+  const priorById = new Map(seedTemplates.map((t) => [t.templateHash, t] as const));
+
+  const tree = new DrainTree(seedTemplates);
+  const hits = new Map<string, TemplateHit>();
+
+  for (const line of lines) {
+    const msg = line.message || '';
+    if (!msg) continue;
+    const tokens = tokenize(msg);
+    if (tokens.length === 0) continue;
+    const match = tree.match(tokens);
+    const existing = hits.get(match.templateHash);
+    if (existing) {
+      existing.count += 1;
+    } else {
+      const prior = priorById.get(match.templateHash);
+      const semanticTag = prior?.semanticTag ?? classifyTemplate(match.template);
+      hits.set(match.templateHash, {
+        templateHash: match.templateHash,
+        template: match.template,
+        count: 1,
+        semanticTag,
+        isNew: !prior,
+      });
+    }
+  }
+
+  const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const upsert = db.prepare(`
+    INSERT INTO log_templates
+      (image, template_hash, template, token_count, semantic_tag, first_seen, last_seen, occurrence_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(image, template_hash) DO UPDATE SET
+      template = excluded.template,
+      last_seen = excluded.last_seen,
+      occurrence_count = log_templates.occurrence_count + excluded.occurrence_count
+  `);
+
+  const tx = db.transaction((rows: TemplateHit[]) => {
+    for (const hit of rows) {
+      upsert.run(
+        imageKey,
+        hit.templateHash,
+        hit.template,
+        hit.template.split(/\s+/).filter(Boolean).length,
+        hit.semanticTag,
+        now,
+        now,
+        hit.count,
+      );
+    }
+  });
+
+  const hitsArray = [...hits.values()];
+  try {
+    tx(hitsArray);
+  } catch {
+    // Template persistence is best-effort; diagnosis still works off the
+    // in-memory Drain match even if the upsert fails.
+  }
+
+  const errorPatterns: string[] = [];
+  const seenTags = new Set<string>();
+  for (const hit of hitsArray) {
+    if (hit.semanticTag && !seenTags.has(hit.semanticTag)) {
+      seenTags.add(hit.semanticTag);
+      errorPatterns.push(hit.semanticTag);
+    }
+  }
+
+  const unseenTemplates = hitsArray.filter((h) => h.isNew).length;
+  const templateBursts: TemplateBurst[] = hitsArray
+    .filter((h) => h.count >= BURST_MIN_COUNT && (h.isNew || h.semanticTag))
+    .map((h) => ({
+      templateHash: h.templateHash,
+      template: h.template,
+      burstCount: h.count,
+      semanticTag: h.semanticTag,
+    }));
+
+  return {
+    templates: hitsArray.sort((a, b) => b.count - a.count),
+    errorPatterns,
+    unseenTemplates,
+    templateBursts,
+  };
+}
+
+const EMPTY_MINING: TemplateMiningResult = {
+  templates: [],
+  errorPatterns: [],
+  unseenTemplates: 0,
+  templateBursts: [],
+};
+
+/**
+ * Get cached logs for a container. Returns an empty (unavailable) entry if
+ * nothing is cached or the entry has expired.
  */
 export function getCachedLogs(hostId: string, containerName: string): DiagnosisLogs {
   const key = cacheKey(hostId, containerName);
@@ -85,6 +224,9 @@ export function getCachedLogs(hostId: string, containerName: string): DiagnosisL
       available: false,
       lines: [],
       errorPatterns: [],
+      templates: [],
+      unseenTemplates: 0,
+      templateBursts: [],
       fetchedAt: null,
     };
   }
@@ -92,20 +234,41 @@ export function getCachedLogs(hostId: string, containerName: string): DiagnosisL
     available: true,
     lines: entry.lines,
     errorPatterns: entry.errorPatterns,
+    templates: entry.templates,
+    unseenTemplates: entry.unseenTemplates,
+    templateBursts: entry.templateBursts,
     fetchedAt: new Date(entry.fetchedAt).toISOString(),
   };
 }
 
 /**
- * Store logs in the cache. Extracts error patterns once at write time.
+ * Store logs in the cache. When a mining context is provided, each line is
+ * also fed through Drain and templates are persisted to `log_templates`.
  */
-export function setCachedLogs(hostId: string, containerName: string, lines: DiagnosisLogEntry[]): void {
+export function setCachedLogs(
+  hostId: string,
+  containerName: string,
+  lines: DiagnosisLogEntry[],
+  ctx?: LogCacheContext,
+): void {
   const key = cacheKey(hostId, containerName);
   const trimmed = lines.slice(-MAX_LINES_PER_CACHE_ENTRY);
+  let mining: TemplateMiningResult = EMPTY_MINING;
+  if (ctx && ctx.db) {
+    const imageKey = ctx.image && ctx.image.length > 0 ? ctx.image : containerName;
+    try {
+      mining = mineTemplates(ctx.db, imageKey, trimmed);
+    } catch {
+      mining = EMPTY_MINING;
+    }
+  }
   cache.set(key, {
     lines: trimmed,
     fetchedAt: Date.now(),
-    errorPatterns: parseLogPatterns(trimmed),
+    errorPatterns: mining.errorPatterns,
+    templates: mining.templates,
+    unseenTemplates: mining.unseenTemplates,
+    templateBursts: mining.templateBursts,
   });
 }
 
@@ -113,12 +276,14 @@ export function setCachedLogs(hostId: string, containerName: string, lines: Diag
  * Fire-and-forget log fetch. Never throws. Updates the cache on success.
  *
  * @param requestLogs — the MQTT log request function (from hub/src/mqtt.ts)
+ * @param ctx — optional mining context; when provided, fetched logs feed Drain
  */
 export function fetchLogsBackground(
   hostId: string,
   containerName: string,
   containerId: string,
   requestLogs: (hostId: string, containerId: string, options: { lines: number; stream: string }) => Promise<DiagnosisLogEntry[]>,
+  ctx?: LogCacheContext,
 ): void {
   const key = cacheKey(hostId, containerName);
   if (pendingFetches.has(key)) return; // already in flight
@@ -127,7 +292,7 @@ export function fetchLogsBackground(
   (async () => {
     try {
       const lines = await requestLogs(hostId, containerId, { lines: 100, stream: 'both' });
-      setCachedLogs(hostId, containerName, lines);
+      setCachedLogs(hostId, containerName, lines, ctx);
     } catch {
       // Swallow errors — log fetching is best-effort
     } finally {
@@ -152,11 +317,39 @@ export function _clearCache(): void {
   pendingFetches.clear();
 }
 
+/**
+ * Best-effort image-key lookup for callers that don't have the image at hand
+ * (e.g. the container detail HTTP path). Checks `update_checks` for the most
+ * recent image recorded for this container, falling back to the container
+ * name when the update checker hasn't scanned it yet.
+ */
+export function resolveImageKey(
+  db: Database.Database,
+  hostId: string,
+  containerName: string,
+): string {
+  try {
+    const row = db.prepare(`
+      SELECT image FROM update_checks
+      WHERE host_id = ? AND container_name = ?
+      ORDER BY checked_at DESC
+      LIMIT 1
+    `).get(hostId, containerName) as { image: string } | undefined;
+    if (row && row.image) {
+      // Strip tag / digest so `nginx:1.25` and `nginx:1.26` share templates.
+      return row.image.split('@')[0].split(':')[0] || containerName;
+    }
+  } catch {
+    // ignore — resolver is best-effort
+  }
+  return containerName;
+}
+
 module.exports = {
   getCachedLogs,
   setCachedLogs,
   fetchLogsBackground,
   invalidateLogs,
-  parseLogPatterns,
+  resolveImageKey,
   _clearCache,
 };
