@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { Alert } from '@/types/api';
@@ -8,6 +8,7 @@ import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
 import { StatusDot } from '@/components/StatusDot';
 import { AlertSilenceControls } from '@/components/AlertSilenceControls';
+import { AlertsFilterToolbar, type TimeRange } from '@/components/AlertsFilterToolbar';
 import { timeAgo, fmtDurationMs, formatAlertType } from '@/lib/formatters';
 import { PageTitle } from '@/components/PageTitle';
 
@@ -90,56 +91,134 @@ function HeaderSummary({ activeCount, silencedCount, resolvedRecentCount }: { ac
   );
 }
 
+const VALID_RANGES: TimeRange[] = ['24h', '7d', '30d', 'all'];
+
+function rangeToMs(range: TimeRange): number | null {
+  switch (range) {
+    case '24h': return 24 * 60 * 60 * 1000;
+    case '7d':  return 7 * 24 * 60 * 60 * 1000;
+    case '30d': return 30 * 24 * 60 * 60 * 1000;
+    case 'all': return null;
+  }
+}
+
 export function AlertsPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: alerts } = useQuery({ queryKey: queryKeys.alerts(), queryFn: () => api<Alert[]>('/alerts?active=false'), refetchInterval: 30_000 });
 
-  const { active, resolved, silencedCount, resolvedRecentCount, lastResolvedAt } = useMemo(() => {
+  // URL-driven filter state. Default range = 7d to limit noise on first load.
+  const selectedHost = searchParams.get('host');
+  const rawRange = searchParams.get('range') as TimeRange | null;
+  const timeRange: TimeRange = rawRange && VALID_RANGES.includes(rawRange) ? rawRange : '7d';
+
+  const setHost = (host: string | null) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (host) p.set('host', host);
+      else p.delete('host');
+      return p;
+    }, { replace: true });
+  };
+
+  const setRange = (range: TimeRange) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (range !== '7d') p.set('range', range);
+      else p.delete('range');
+      return p;
+    }, { replace: true });
+  };
+
+  const {
+    activeAll, resolvedAll, activeFiltered, resolvedFiltered,
+    hosts, silencedCount, resolvedRecentCount, lastResolvedAt,
+  } = useMemo(() => {
     const list = alerts ?? [];
-    const active: Alert[] = [];
-    const resolved: Alert[] = [];
+    const activeAll: Alert[] = [];
+    const resolvedAll: Alert[] = [];
+    const hostSet = new Set<string>();
     let silencedCount = 0;
     for (const a of list) {
+      hostSet.add(a.host_id);
       if (a.resolved_at == null) {
-        active.push(a);
+        activeAll.push(a);
         if (a.silenced_until != null) silencedCount++;
       } else {
-        resolved.push(a);
+        resolvedAll.push(a);
       }
     }
-    // Resolved list comes from the API ordered by triggered_at DESC; resolution
-    // order is close enough for "last resolved" to peek at the first item.
-    const lastResolvedAt = resolved.length > 0 ? resolved[0]!.resolved_at : null;
+
+    // Header summary uses pre-filter counts so the user always sees the
+    // unfiltered system state regardless of what they're zoomed into.
+    const lastResolvedAt = resolvedAll.length > 0 ? resolvedAll[0]!.resolved_at : null;
     const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    const resolvedRecentCount = resolved.filter(r => {
+    const resolvedRecentCount = resolvedAll.filter(r => {
       const t = new Date(r.resolved_at + 'Z').getTime();
       return isFinite(t) && t >= sevenDaysAgo;
     }).length;
-    return { active, resolved, silencedCount, resolvedRecentCount, lastResolvedAt };
-  }, [alerts]);
+
+    // Apply host filter to both sections, time range filter to resolved only.
+    // Active alerts always show regardless of age — they need attention now.
+    const matchesHost = (a: Alert) => !selectedHost || a.host_id === selectedHost;
+    const activeFiltered = activeAll.filter(matchesHost);
+
+    const rangeMs = rangeToMs(timeRange);
+    const cutoff = rangeMs == null ? null : Date.now() - rangeMs;
+    const matchesRange = (a: Alert) => {
+      if (cutoff == null) return true;
+      const t = new Date(a.resolved_at + 'Z').getTime();
+      return isFinite(t) && t >= cutoff;
+    };
+    const resolvedFiltered = resolvedAll.filter(a => matchesHost(a) && matchesRange(a));
+
+    return {
+      activeAll, resolvedAll, activeFiltered, resolvedFiltered,
+      hosts: Array.from(hostSet).sort(),
+      silencedCount, resolvedRecentCount, lastResolvedAt,
+    };
+  }, [alerts, selectedHost, timeRange]);
+
+  const filterActive = selectedHost != null || timeRange !== '7d';
 
   return (
     <div className="space-y-8">
       <div className="space-y-3">
         <PageTitle>Alerts</PageTitle>
-        <HeaderSummary activeCount={active.length} silencedCount={silencedCount} resolvedRecentCount={resolvedRecentCount} />
+        <HeaderSummary activeCount={activeAll.length} silencedCount={silencedCount} resolvedRecentCount={resolvedRecentCount} />
       </div>
+
+      <AlertsFilterToolbar
+        hosts={hosts}
+        selectedHost={selectedHost}
+        onHostChange={setHost}
+        timeRange={timeRange}
+        onTimeRangeChange={setRange}
+      />
 
       {/* ═══ ACTIVE LAYER ═══ what needs attention right now */}
       <section className="space-y-3">
-        {active.length > 0 ? (
-          <Card title="Active">
+        {activeFiltered.length > 0 ? (
+          <Card title={
+            filterActive && activeFiltered.length !== activeAll.length
+              ? `Active · ${activeFiltered.length} of ${activeAll.length} shown`
+              : 'Active'
+          }>
             <DataTable
               columns={activeColumns}
-              data={active}
+              data={activeFiltered}
               onRowClick={r => navigate(alertLink(r))}
             />
           </Card>
         ) : (
           <Card title="Active">
             <div className="py-6 text-center">
-              <p className="text-sm text-fg">No active alerts.</p>
-              {lastResolvedAt && (
+              <p className="text-sm text-fg">
+                {activeAll.length === 0
+                  ? 'No active alerts.'
+                  : 'No active alerts match the current filter.'}
+              </p>
+              {activeAll.length === 0 && lastResolvedAt && (
                 <p className="mt-1 text-xs text-muted">Last alert resolved {timeAgo(lastResolvedAt)}.</p>
               )}
             </div>
@@ -148,14 +227,22 @@ export function AlertsPage() {
       </section>
 
       {/* ═══ RESOLVED LAYER ═══ history, secondary */}
-      {resolved.length > 0 && (
+      {resolvedAll.length > 0 && (
         <section className="space-y-3">
-          <Card title={`Recent · ${resolved.length} resolved`}>
-            <DataTable
-              columns={resolvedColumns}
-              data={resolved}
-              onRowClick={r => navigate(alertLink(r))}
-            />
+          <Card title={
+            resolvedFiltered.length === resolvedAll.length
+              ? `Recent · ${resolvedAll.length} resolved`
+              : `Recent · ${resolvedFiltered.length} of ${resolvedAll.length} resolved shown`
+          }>
+            {resolvedFiltered.length > 0 ? (
+              <DataTable
+                columns={resolvedColumns}
+                data={resolvedFiltered}
+                onRowClick={r => navigate(alertLink(r))}
+              />
+            ) : (
+              <p className="py-6 text-center text-sm text-muted">No resolved alerts in this range.</p>
+            )}
           </Card>
         </section>
       )}
