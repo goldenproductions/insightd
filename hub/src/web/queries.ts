@@ -72,6 +72,9 @@ interface AlertRow {
   message: string | null;
   trigger_value: string | null;
   threshold: string | null;
+  silenced_until: string | null;
+  silenced_by: string | null;
+  silenced_at: string | null;
 }
 
 interface CountRow {
@@ -164,6 +167,9 @@ interface ContainerAlertRow {
   trigger_value: string | null;
   threshold: string | null;
   notify_count: number;
+  silenced_until: string | null;
+  silenced_by: string | null;
+  silenced_at: string | null;
 }
 
 interface ContainerIdRow {
@@ -347,7 +353,7 @@ function getLatestUpdates(db: Database.Database, hostId: string): UpdateRow[] {
 
 function getAlerts(db: Database.Database, activeOnly?: boolean, hostId?: string): AlertRow[] {
   let sql = `
-    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold
+    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold, silenced_until, silenced_by, silenced_at
     FROM alert_state
   `;
   const conditions: string[] = [];
@@ -647,7 +653,7 @@ function getContainerHistory(db: Database.Database, hostId: string, containerNam
 
 function getContainerAlerts(db: Database.Database, hostId: string, containerName: string): ContainerAlertRow[] {
   return db.prepare(`
-    SELECT id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold
+    SELECT id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold, silenced_until, silenced_by, silenced_at
     FROM alert_state
     WHERE host_id = ? AND target = ?
     ORDER BY triggered_at DESC

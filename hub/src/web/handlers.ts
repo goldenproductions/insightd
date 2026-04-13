@@ -942,6 +942,70 @@ function handlePublicStatus(req: HandlerReq, res: ServerResponse, db: Database.D
   return { title, overallStatus, groups, endpoints, updatedAt: new Date().toISOString() };
 }
 
+/** Extract an opaque audit identifier from the request's auth header. */
+function authIdentifier(req: HandlerReq): string {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return 'unknown';
+  // API keys carry their "insightd_XXXXXXXX" prefix in plain text.
+  // For session tokens, the first 8 chars are enough to distinguish.
+  return token.startsWith('insightd_') ? token.slice(0, 17) : `session:${token.slice(0, 8)}`;
+}
+
+async function handleSilenceAlert(req: HandlerReq, res: ServerResponse, db: Database.Database, _config: any, params: Record<string, string>): Promise<any> {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const id = parseInt(params.id, 10);
+  if (!Number.isFinite(id)) { res.statusCode = 400; return { error: 'Invalid alert id' }; }
+
+  const row = db.prepare('SELECT id, resolved_at FROM alert_state WHERE id = ?').get(id) as { id: number; resolved_at: string | null } | undefined;
+  if (!row) { res.statusCode = 404; return { error: 'Alert not found' }; }
+  if (row.resolved_at != null) { res.statusCode = 409; return { error: 'Alert is already resolved — nothing to silence' }; }
+
+  const body = await readBody(req);
+  const duration = body.durationMinutes;
+  let silencedUntil: string;
+  if (duration === 'resolved') {
+    silencedUntil = '9999-12-31 23:59:59';
+  } else if (typeof duration === 'number' && Number.isFinite(duration) && duration > 0) {
+    silencedUntil = (db.prepare("SELECT datetime('now', ?) as until").get(`+${Math.floor(duration)} minutes`) as { until: string }).until;
+  } else {
+    res.statusCode = 400;
+    return { error: 'durationMinutes must be a positive number or the string "resolved"' };
+  }
+
+  const by = authIdentifier(req);
+  db.prepare(`
+    UPDATE alert_state
+    SET silenced_until = ?, silenced_by = ?, silenced_at = datetime('now')
+    WHERE id = ?
+  `).run(silencedUntil, by, id);
+
+  return db.prepare(`
+    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold, silenced_until, silenced_by, silenced_at
+    FROM alert_state WHERE id = ?
+  `).get(id);
+}
+
+function handleUnsilenceAlert(req: HandlerReq, res: ServerResponse, db: Database.Database, _config: any, params: Record<string, string>): any {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const id = parseInt(params.id, 10);
+  if (!Number.isFinite(id)) { res.statusCode = 400; return { error: 'Invalid alert id' }; }
+
+  const row = db.prepare('SELECT id, resolved_at FROM alert_state WHERE id = ?').get(id) as { id: number; resolved_at: string | null } | undefined;
+  if (!row) { res.statusCode = 404; return { error: 'Alert not found' }; }
+
+  db.prepare(`
+    UPDATE alert_state
+    SET silenced_until = NULL, silenced_by = NULL, silenced_at = NULL
+    WHERE id = ?
+  `).run(id);
+
+  return db.prepare(`
+    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold, silenced_until, silenced_by, silenced_at
+    FROM alert_state WHERE id = ?
+  `).get(id);
+}
+
 async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
   if (!requireAuth(req)) return { error: 'Unauthorized' };
 
@@ -978,7 +1042,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
