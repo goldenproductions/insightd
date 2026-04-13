@@ -254,9 +254,16 @@ export function ContainerDetailPage() {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />
-            {healthPillText && <Badge text={healthPillText} color={healthPillColor} />}
+            {healthPillText && (
+              <span title="Docker runs a health check command inside the container. This is a probe signal — the service may still be responding.">
+                <Badge text={healthPillText} color={healthPillColor} />
+              </span>
+            )}
           </div>
-          <span className="text-sm">
+          <span
+            className="text-sm"
+            title="Percentage of recent history where the container process was running. Not the same as service health."
+          >
             <span className="text-muted">Process uptime</span>{' '}
             <span className={`font-semibold ${
               uptimePct == null ? 'text-muted'
@@ -268,7 +275,7 @@ export function ContainerDetailPage() {
               {uptimePct != null ? `${uptimePct}%` : '-'}
             </span>
           </span>
-          <span className="text-sm">
+          <span className="text-sm" title="Total restarts observed in the recent history window.">
             <span className="text-muted">Restarts</span>{' '}
             <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
           </span>
@@ -333,6 +340,9 @@ export function ContainerDetailPage() {
             {availability && (
               <Card title="Process availability (7 days)">
                 <div className="space-y-4">
+                  <p className="-mt-1 text-[11px] text-muted">
+                    Tracks whether the container process was running, not whether its health probe passed.
+                  </p>
                   <div className="flex items-center gap-4">
                     <span className={`text-3xl font-bold ${
                       availability.summary.uptimePercent == null ? 'text-muted'

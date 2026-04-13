@@ -9,13 +9,21 @@ export function MetricGauge({ label, current, avg, peak, unit, max, analogy }: {
   return (
     <div className="rounded-xl p-4 bg-surface border border-border">
       <div className="flex items-baseline justify-between">
-        <span className="text-sm font-medium text-secondary">{label}</span>
+        <span
+          className="text-sm font-medium text-secondary"
+          title="Rated against this container's own ~30-day history. 🧘 Napping = well below normal, 💪 Solid = normal range, 🔥 Burnout = unusually high."
+        >
+          {label}
+        </span>
         <span className="text-2xl font-bold" style={{ color }}>
           {current != null ? `${current}${unit}` : '-'}
         </span>
       </div>
       {analogy && (
-        <div className="mt-1 text-sm font-medium text-secondary">
+        <div
+          className="mt-1 text-sm font-medium text-secondary"
+          title="How this container compares to its own recent baseline."
+        >
           <span className="mr-1" aria-hidden>{analogy.emoji}</span>
           {analogy.label}
         </div>
