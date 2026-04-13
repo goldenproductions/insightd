@@ -424,9 +424,9 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
 
   for (const alert of triggered) {
     const active = db.prepare(`
-      SELECT id, last_notified, notify_count FROM alert_state
+      SELECT id, last_notified, notify_count, silenced_until FROM alert_state
       WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL
-    `).get(alert.hostId, alert.type, alert.target) as { id: number; last_notified: string; notify_count: number } | undefined;
+    `).get(alert.hostId, alert.type, alert.target) as { id: number; last_notified: string; notify_count: number; silenced_until: string | null } | undefined;
 
     if (!active) {
       db.prepare(`
@@ -435,6 +435,16 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
       `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
       toSend.push({ ...alert, reminderNumber: 0 });
     } else {
+      // Silence guard — block reminders entirely while silenced_until is in the
+      // future. Does NOT reset notify_count, so backoff resumes at the same
+      // step on unsilence. The initial alert above is unaffected.
+      if (active.silenced_until) {
+        const stillSilenced = (db.prepare(
+          "SELECT (julianday(?) > julianday('now')) as still"
+        ).get(active.silenced_until) as { still: number }).still === 1;
+        if (stillSilenced) continue;
+      }
+
       const minutesSinceLast = (db.prepare(
         "SELECT (julianday('now') - julianday(?)) * 1440 as minutes"
       ).get(active.last_notified) as { minutes: number }).minutes;

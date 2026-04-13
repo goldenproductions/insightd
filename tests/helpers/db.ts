@@ -29,6 +29,7 @@ interface UpdateCheckSeed {
 interface AlertStateSeed {
   hostId?: string; type: string; target: string; triggeredAt: string;
   resolvedAt?: string | null; lastNotified?: string | null; notifyCount?: number;
+  silencedUntil?: string | null;
 }
 
 interface HttpEndpointSeed {
@@ -118,11 +119,11 @@ function seedUpdateChecks(db: Database.Database, rows: UpdateCheckSeed[]): void 
 
 function seedAlertState(db: Database.Database, rows: AlertStateSeed[]): void {
   const insert = db.prepare(`
-    INSERT INTO alert_state (host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO alert_state (host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, silenced_until)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
   for (const r of rows) {
-    insert.run(r.hostId || 'local', r.type, r.target, r.triggeredAt, r.resolvedAt || null, r.lastNotified || r.triggeredAt, r.notifyCount ?? 1);
+    insert.run(r.hostId || 'local', r.type, r.target, r.triggeredAt, r.resolvedAt || null, r.lastNotified || r.triggeredAt, r.notifyCount ?? 1, r.silencedUntil ?? null);
   }
 }
 
