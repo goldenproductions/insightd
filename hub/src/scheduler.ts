@@ -88,10 +88,12 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
     const { computeBaselines } = require('./insights/baselines');
     const { computeHealthScores } = require('./insights/health');
     const { generateInsights } = require('./insights/detector');
+    const { runAnomalyDetection } = require('./insights/anomaly/shesd');
     // Compute baselines once and pass the cache to downstream functions
     const baselineCache = await safeCollect('baselines', () => computeBaselines(db));
     await safeCollect('health-scores', () => computeHealthScores(db, baselineCache));
     await safeCollect('insights', () => generateInsights(db, baselineCache));
+    await safeCollect('anomaly-detection', () => runAnomalyDetection(db));
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'Insights engine scheduled: every 15 minutes');
 

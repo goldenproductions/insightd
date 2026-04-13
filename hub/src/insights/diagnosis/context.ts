@@ -10,9 +10,21 @@ import type {
   DiagnosisContext, DiagnosisEntity, BaselineRow, ContainerSnapshotRow,
   TrendDirection, BaselineComparison, DiagnosisLogs,
 } from './types';
+import { robustZ as computeRobustZ } from '../stats';
 
 const { getBaselines } = require('../detector') as {
   getBaselines: (db: Database.Database, entityType: string, entityId: string, hour?: number) => Record<string, BaselineRow>;
+};
+
+// Noise floor per metric: below this absolute deviation from the median we
+// short-circuit to 'normal' regardless of robust-z. Prevents idle containers
+// (0.3% CPU with a MAD of 0.05) from looking "critical" on tiny fluctuations.
+// Mirrors the MIN_ABSOLUTE_DEVIATION constants in detector.ts.
+const ROBUST_NOISE_FLOOR: Record<string, number> = {
+  cpu_percent: 10,
+  memory_mb: 50,
+  memory_used_mb: 100,
+  load_5: 1,
 };
 
 interface LatestContainerRow {
@@ -74,10 +86,38 @@ function computeTrend(values: (number | null)[]): TrendDirection {
 }
 
 /**
- * Compare a value to the P95 baseline, returning a qualitative rating.
- * "normal" = below P95, "elevated" = above P95, "critical" = >30% above P95.
+ * Rate a value against its baseline using a robust z-score
+ * (`|value − p50| / mad`). Bands: `normal` < 2.0 ≤ `elevated` < 3.5 ≤ `critical`.
+ * Falls back to the legacy P95 comparison when `mad` is null (e.g. on a
+ * baseline that existed before schema v24 and hasn't been recomputed yet),
+ * and short-circuits to `normal` when the absolute deviation from the median
+ * is below a per-metric noise floor.
  */
-function compareToBaseline(value: number | null, baseline: BaselineRow | undefined): BaselineComparison {
+function rateAgainstBaseline(
+  metric: string,
+  value: number | null,
+  baseline: BaselineRow | undefined,
+): BaselineComparison {
+  if (value == null || !baseline || baseline.p50 == null) {
+    return legacyP95Compare(value, baseline);
+  }
+  const med = baseline.p50;
+  const madValue = baseline.mad;
+  if (madValue == null || madValue === 0) {
+    return legacyP95Compare(value, baseline);
+  }
+  const absDev = Math.abs(value - med);
+  const floor = ROBUST_NOISE_FLOOR[metric] ?? 0;
+  if (absDev < floor) return 'normal';
+
+  const z = computeRobustZ(value, med, madValue);
+  if (z == null) return legacyP95Compare(value, baseline);
+  if (z < 2.0) return 'normal';
+  if (z < 3.5) return 'elevated';
+  return 'critical';
+}
+
+function legacyP95Compare(value: number | null, baseline: BaselineRow | undefined): BaselineComparison {
   if (value == null || !baseline || baseline.p95 == null) return null;
   const p95 = baseline.p95;
   if (value <= p95) return 'normal';
@@ -123,8 +163,8 @@ export function buildContext(db: Database.Database, entity: DiagnosisEntity, log
   // --- Baselines ---
   const entityId = `${hostId}/${containerName}`;
   const baselines = getBaselines(db, 'container', entityId);
-  const memoryVsP95 = compareToBaseline(latestRow.memory_mb, baselines.memory_mb);
-  const cpuVsP95 = compareToBaseline(latestRow.cpu_percent, baselines.cpu_percent);
+  const memoryVsP95 = rateAgainstBaseline('memory_mb', latestRow.memory_mb, baselines.memory_mb);
+  const cpuVsP95 = rateAgainstBaseline('cpu_percent', latestRow.cpu_percent, baselines.cpu_percent);
 
   // --- Unhealthy episode: when did the current unhealthy streak start? ---
   let unhealthySince: string | null = null;
