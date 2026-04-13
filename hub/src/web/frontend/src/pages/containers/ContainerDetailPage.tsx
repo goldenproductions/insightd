@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, BaselineRow } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, BaselineRow, ContainerSnapshot } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { BarChart } from '@/components/BarChart';
@@ -33,7 +33,6 @@ export function ContainerDetailPage() {
   const cname = encodeURIComponent(containerName!);
   const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
-  const [showSnapshots, setShowSnapshots] = useState(false);
   const [showCharts, setShowCharts] = useState(true);
   const navigate = useNavigate();
   const { confirm, dialogProps } = useConfirm();
@@ -54,6 +53,19 @@ export function ContainerDetailPage() {
     queryFn: () => api<BaselineRow[]>(`/baselines/container/${entityId}`).catch(() => []),
     refetchInterval: false,
   });
+  const { data: siblings } = useQuery({
+    queryKey: queryKeys.hostContainers(hostId),
+    queryFn: () => api<ContainerSnapshot[]>(`/hosts/${hid}/containers`),
+    staleTime: 30_000,
+  });
+
+  // Prev/next sibling navigation. Server-orders alphabetically by container_name,
+  // matching the host page's render order so users aren't disoriented.
+  const siblingNames = siblings?.map(c => c.container_name) ?? [];
+  const currentIdx = containerName ? siblingNames.indexOf(containerName) : -1;
+  const prevName = currentIdx > 0 ? siblingNames[currentIdx - 1] : null;
+  const nextName = currentIdx >= 0 && currentIdx < siblingNames.length - 1 ? siblingNames[currentIdx + 1] : null;
+  const goToSibling = (name: string) => navigate(`/hosts/${hid}/containers/${encodeURIComponent(name)}`);
 
   // Keyboard shortcuts — registered unconditionally (Rules of Hooks); callbacks
   // read the latest `data` via the ref-wrapped trigger inside useKeyboardShortcut.
@@ -96,6 +108,20 @@ export function ContainerDetailPage() {
     description: 'Back to host',
     scope: 'Container detail',
     onTrigger: () => navigate(`/hosts/${hid}`),
+  });
+  useKeyboardShortcut({
+    keys: '[',
+    description: 'Previous container',
+    scope: 'Container detail',
+    disabled: !prevName,
+    onTrigger: () => { if (prevName) goToSibling(prevName); },
+  });
+  useKeyboardShortcut({
+    keys: ']',
+    description: 'Next container',
+    scope: 'Container detail',
+    disabled: !nextName,
+    onTrigger: () => { if (nextName) goToSibling(nextName); },
   });
 
   if (error) return (
@@ -162,7 +188,32 @@ export function ContainerDetailPage() {
 
   return (
     <div className="animate-fade-in space-y-8">
-      <BackLink to={`/hosts/${hid}`} label={`Back to ${hostId}`} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <BackLink to={`/hosts/${hid}`} label={`Back to ${hostId}`} />
+        {(prevName || nextName) && (
+          <div className="flex items-center gap-1 text-xs">
+            <button
+              type="button"
+              onClick={() => prevName && goToSibling(prevName)}
+              disabled={!prevName}
+              title={prevName ? `Previous: ${prevName} ([)` : 'No previous container'}
+              className="rounded px-2 py-1 text-muted transition-colors hover:bg-bg-secondary hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+            >
+              ← {prevName ?? '—'}
+            </button>
+            <span className="px-1 text-[10px] text-muted">{currentIdx >= 0 && siblingNames.length > 0 ? `${currentIdx + 1}/${siblingNames.length}` : ''}</span>
+            <button
+              type="button"
+              onClick={() => nextName && goToSibling(nextName)}
+              disabled={!nextName}
+              title={nextName ? `Next: ${nextName} (])` : 'No next container'}
+              className="rounded px-2 py-1 text-muted transition-colors hover:bg-bg-secondary hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+            >
+              {nextName ?? '—'} →
+            </button>
+          </div>
+        )}
+      </div>
 
       {/* ═══ HERO LAYER ═══
           Identity, live status, and (when things are wrong) the diagnosis that
@@ -203,9 +254,16 @@ export function ContainerDetailPage() {
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
             <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />
-            {healthPillText && <Badge text={healthPillText} color={healthPillColor} />}
+            {healthPillText && (
+              <span title="Docker runs a health check command inside the container. This is a probe signal — the service may still be responding.">
+                <Badge text={healthPillText} color={healthPillColor} />
+              </span>
+            )}
           </div>
-          <span className="text-sm">
+          <span
+            className="text-sm"
+            title="Percentage of recent history where the container process was running. Not the same as service health."
+          >
             <span className="text-muted">Process uptime</span>{' '}
             <span className={`font-semibold ${
               uptimePct == null ? 'text-muted'
@@ -217,7 +275,7 @@ export function ContainerDetailPage() {
               {uptimePct != null ? `${uptimePct}%` : '-'}
             </span>
           </span>
-          <span className="text-sm">
+          <span className="text-sm" title="Total restarts observed in the recent history window.">
             <span className="text-muted">Restarts</span>{' '}
             <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
           </span>
@@ -282,6 +340,9 @@ export function ContainerDetailPage() {
             {availability && (
               <Card title="Process availability (7 days)">
                 <div className="space-y-4">
+                  <p className="-mt-1 text-[11px] text-muted">
+                    Tracks whether the container process was running, not whether its health probe passed.
+                  </p>
                   <div className="flex items-center gap-4">
                     <span className={`text-3xl font-bold ${
                       availability.summary.uptimePercent == null ? 'text-muted'
@@ -395,8 +456,6 @@ export function ContainerDetailPage() {
         <ContainerHistoryTab
           alerts={data.alerts}
           history={history}
-          showSnapshots={showSnapshots}
-          setShowSnapshots={setShowSnapshots}
         />
       )}
 

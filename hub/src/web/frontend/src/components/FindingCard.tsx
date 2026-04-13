@@ -74,10 +74,16 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
 
   const pills = (
     <>
-      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${styles.bg} ${styles.text}`}>
+      <span
+        className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${styles.bg} ${styles.text}`}
+        title="critical = act now · warning = investigate · info = heads-up"
+      >
         {finding.severity}
       </span>
-      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${CONFIDENCE_STYLES[finding.confidence]}`}>
+      <span
+        className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${CONFIDENCE_STYLES[finding.confidence]}`}
+        title="How sure we are based on signal strength and coincident failures."
+      >
         {finding.confidence} confidence
       </span>
     </>
