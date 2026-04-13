@@ -12,7 +12,7 @@ import { Badge } from '@/components/Badge';
 import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
-import { fmtBytes, fmtDurationMs } from '@/lib/formatters';
+import { fmtDurationMs } from '@/lib/formatters';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
 import { CardSkeleton } from '@/components/Skeleton';
@@ -97,11 +97,18 @@ export function ContainerDetailPage() {
   const lastRestart = history.length > 0 ? history[history.length - 1]!.restart_count : 0;
   const restartDelta = Math.max(0, lastRestart - firstRestart);
 
-  const healthBadge = data.health_status
-    ? <Badge text={data.health_status} color={data.health_status === 'healthy' ? 'green' : data.health_status === 'unhealthy' ? 'red' : 'yellow'} />
-    : '-';
-
   const showHealthFailure = data.health_status === 'unhealthy';
+
+  const healthPillText = data.health_status === 'healthy'
+    ? 'health probe ok'
+    : data.health_status === 'unhealthy'
+    ? 'health probe failing'
+    : data.health_status ?? null;
+  const healthPillColor: 'green' | 'red' | 'yellow' = data.health_status === 'healthy'
+    ? 'green'
+    : data.health_status === 'unhealthy'
+    ? 'red'
+    : 'yellow';
 
   const tabs = [
     { id: 'overview', label: 'Overview' },
@@ -150,36 +157,24 @@ export function ContainerDetailPage() {
       {/* Overview Tab */}
       {activeTab === 'overview' && (
         <div className="space-y-6">
-          {/* Compact status line + I/O */}
-          <div className="rounded-xl border border-border bg-surface px-4 py-3 space-y-2">
+          {/* Status + key stats */}
+          <div className="rounded-xl border border-border bg-surface px-4 py-3">
             <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <span className="flex items-center gap-2 text-sm">
-                <StatusDot status={data.status} />
-                <span className={`font-semibold ${data.status === 'running' ? 'text-success' : 'text-danger'}`}>{data.status}</span>
-              </span>
-              <span className="text-muted">&middot;</span>
-              <span className="text-sm">{healthBadge}</span>
-              <span className="text-muted">&middot;</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />
+                {healthPillText && <Badge text={healthPillText} color={healthPillColor} />}
+              </div>
               <span className="text-sm">
-                <span className="text-muted">Uptime</span>{' '}
+                <span className="text-muted">Process uptime</span>{' '}
                 <span className={`font-semibold ${uptimePct != null && uptimePct >= 99 ? 'text-success' : uptimePct != null && uptimePct >= 95 ? 'text-warning' : 'text-danger'}`}>
                   {uptimePct != null ? `${uptimePct}%` : '-'}
                 </span>
               </span>
-              <span className="text-muted">&middot;</span>
               <span className="text-sm">
                 <span className="text-muted">Restarts</span>{' '}
                 <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
               </span>
             </div>
-            {(data.network_rx_bytes != null || data.blkio_read_bytes != null) && (
-              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 border-t border-border-light pt-2 text-xs text-muted">
-                {data.network_rx_bytes != null && <span>Net RX <span className="font-semibold text-fg">{fmtBytes(data.network_rx_bytes)}</span></span>}
-                {data.network_tx_bytes != null && <span>Net TX <span className="font-semibold text-fg">{fmtBytes(data.network_tx_bytes)}</span></span>}
-                {data.blkio_read_bytes != null && <span>Disk Read <span className="font-semibold text-fg">{fmtBytes(data.blkio_read_bytes)}</span></span>}
-                {data.blkio_write_bytes != null && <span>Disk Write <span className="font-semibold text-fg">{fmtBytes(data.blkio_write_bytes)}</span></span>}
-              </div>
-            )}
           </div>
 
           {/* Health check diagnosis (rich finding card) */}
@@ -201,21 +196,6 @@ export function ContainerDetailPage() {
               ))}
             </div>
           )}
-          {/* Fallback: unhealthy but no structured findings yet (e.g. right after schema migration) */}
-          {showHealthFailure && (!data.findings || data.findings.length === 0) && (
-            <div className="rounded-lg border border-border border-l-[3px] border-l-danger bg-danger/10 p-4">
-              <div className="text-sm font-semibold text-danger">🩺 {data.container_name} is reporting unhealthy</div>
-              {data.health_diagnosis && (
-                <p className="mt-2 text-xs text-fg">{data.health_diagnosis}</p>
-              )}
-              {data.health_check_output && (
-                <pre className="mt-2 rounded bg-bg-secondary p-2 font-mono text-[11px] text-muted whitespace-pre-wrap break-all">
-                  {data.health_check_output}
-                </pre>
-              )}
-            </div>
-          )}
-
           {/* AI diagnosis — available any time, especially useful when findings are sparse */}
           <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />
 
