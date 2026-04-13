@@ -179,20 +179,34 @@ export function ContainerDetailPage() {
             "urgent when needed" inversion of the calm-by-default layout. */}
         {showHealthFailure && data.findings && data.findings.length > 0 && (
           <div className="space-y-3">
-            {data.findings.map((finding, i) => (
-              <FindingCard
-                key={i}
-                finding={finding}
-                technicalDetails={data.health_check_output}
-                liveSnapshot={{
-                  status: data.status,
-                  healthStatus: data.health_status,
-                  cpuPercent: data.cpu_percent,
-                  memoryMb: data.memory_mb,
-                  restartCount: data.restart_count,
-                }}
-              />
-            ))}
+            {data.findings.map((finding, i) => {
+              // When the suggested action tells the user to restart, wire a
+              // primary button directly into the finding so the advice and
+              // the fix live in the same block — no scroll hunt required.
+              const wantsRestart = /restart|reboot|bounce/i.test(finding.suggestedAction ?? '');
+              const canRestart = wantsRestart && data.status === 'running' && isAuthenticated;
+              const isRestarting = actionLoading === `${containerName}:restart`;
+              const primaryAction = canRestart ? {
+                label: isRestarting ? 'Restarting…' : 'Restart container',
+                onClick: () => runAction(containerName!, 'restart'),
+                disabled: actionLoading != null,
+              } : undefined;
+              return (
+                <FindingCard
+                  key={i}
+                  finding={finding}
+                  technicalDetails={data.health_check_output}
+                  liveSnapshot={{
+                    status: data.status,
+                    healthStatus: data.health_status,
+                    cpuPercent: data.cpu_percent,
+                    memoryMb: data.memory_mb,
+                    restartCount: data.restart_count,
+                  }}
+                  primaryAction={primaryAction}
+                />
+              );
+            })}
           </div>
         )}
         {/* AI diagnosis — secondary opinion, only surfaced alongside the rule-based finding */}

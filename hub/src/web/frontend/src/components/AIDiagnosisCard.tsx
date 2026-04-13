@@ -4,6 +4,7 @@ import { api, apiAuth, ApiError } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/FormField';
+import { DiagnosisCard } from '@/components/DiagnosisCard';
 
 export interface AIDiagnosis {
   rootCause: string;
@@ -88,10 +89,7 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
       try {
         return await apiAuth<AIDiagnosis>('POST', `/hosts/${hid}/containers/${cname}/ai-diagnose`, undefined, token);
       } catch (err) {
-        // apiAuth throws ApiError with .status 429 for rate limits
         if (err instanceof ApiError && err.status === 429) {
-          // The message from the backend is the error text; we can't easily read
-          // retryAfterSeconds without reworking apiAuth, so default to 60s.
           setCooldownUntil(Date.now() + 60 * 1000);
         }
         throw err;
@@ -126,35 +124,46 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
     ? `Rate limited by Gemini. Try again in ${cooldownRemaining}s.`
     : mutation.error?.message ?? null;
 
-  return (
-    <div className="rounded-lg border border-border border-l-[3px] border-l-info bg-info/5 p-4 space-y-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-2 min-w-0">
-          <span className="mt-0.5 text-base" aria-hidden>✨</span>
-          <div className="min-w-0">
-            <div className="text-sm font-semibold text-fg">AI diagnosis</div>
-            <div className="text-[11px] text-muted">
-              {status.model ? `Powered by ${status.model}` : 'Powered by Gemini'} — verify before acting.
-            </div>
-          </div>
-        </div>
-        <Button
-          variant="primary"
-          size="sm"
-          onClick={() => mutation.mutate()}
-          disabled={loading || authMissing || rateLimited}
-          title={authMissing ? 'Log in to run AI diagnosis' : rateLimited ? `Retry available in ${cooldownRemaining}s` : undefined}
-        >
-          {loading
-            ? 'Asking…'
-            : rateLimited
-            ? `Retry in ${cooldownRemaining}s`
-            : diagnosis
-            ? 'Re-run'
-            : 'Diagnose with AI'}
-        </Button>
-      </div>
+  const headerAction = (
+    <Button
+      variant="primary"
+      size="sm"
+      onClick={() => mutation.mutate()}
+      disabled={loading || authMissing || rateLimited}
+      title={authMissing ? 'Log in to run AI diagnosis' : rateLimited ? `Retry available in ${cooldownRemaining}s` : undefined}
+    >
+      {loading
+        ? 'Asking…'
+        : rateLimited
+        ? `Retry in ${cooldownRemaining}s`
+        : diagnosis
+        ? 'Re-run'
+        : 'Diagnose with AI'}
+    </Button>
+  );
 
+  const footer = diagnosis ? (
+    <div className="flex flex-wrap items-center gap-2">
+      {diagnosis.confidence != null && (
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${confidenceColor(diagnosis.confidence)}`}>
+          {Math.round(diagnosis.confidence * 100)}% confidence
+        </span>
+      )}
+      <span>Generated {formatTimestamp(diagnosis.createdAt)}</span>
+      {diagnosis.cached && <span className="rounded bg-border/60 px-1.5 py-0.5 text-[10px]">cached</span>}
+      {diagnosis.latencyMs != null && !diagnosis.cached && <span>&middot; {diagnosis.latencyMs}ms</span>}
+    </div>
+  ) : undefined;
+
+  return (
+    <DiagnosisCard
+      icon="✨"
+      severity="info"
+      title="AI diagnosis"
+      subtitle={`${status.model ? `Powered by ${status.model}` : 'Powered by Gemini'} — verify before acting.`}
+      headerAction={headerAction}
+      footer={footer}
+    >
       {authMissing && !diagnosis && (
         <div className="text-xs text-muted">Log in to run a new AI diagnosis.</div>
       )}
@@ -208,19 +217,8 @@ export function AIDiagnosisCard({ hostId, containerName }: Props) {
               </ul>
             </div>
           )}
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-border-light pt-2 text-[11px] text-muted">
-            {diagnosis.confidence != null && (
-              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${confidenceColor(diagnosis.confidence)}`}>
-                {Math.round(diagnosis.confidence * 100)}% confidence
-              </span>
-            )}
-            <span>Generated {formatTimestamp(diagnosis.createdAt)}</span>
-            {diagnosis.cached && <span className="rounded bg-border/60 px-1.5 py-0.5 text-[10px]">cached</span>}
-            {diagnosis.latencyMs != null && !diagnosis.cached && <span>&middot; {diagnosis.latencyMs}ms</span>}
-          </div>
         </div>
       )}
-    </div>
+    </DiagnosisCard>
   );
 }
