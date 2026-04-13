@@ -7,6 +7,7 @@ import { HealthBadge } from '@/components/HealthBadge';
 import { useShowInternal } from '@/hooks/useShowInternal';
 import { StatsGridSkeleton, CardSkeleton } from '@/components/Skeleton';
 import { useFeedItems } from '@/hooks/useFeedItems';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { queryKeys } from '@/lib/queryKeys';
 import { getAnalogy, type MetricType } from '@/lib/analogies';
 import { StatusRow } from './StatusRow';
@@ -32,6 +33,13 @@ export function DashboardPage() {
   const acuteItems = feedItems.filter(i => i.kind !== 'insight');
   const insightItems = feedItems.filter(i => i.kind === 'insight');
   const concernCount = acuteItems.length;
+
+  useKeyboardShortcut({
+    keys: 'r',
+    description: 'Refresh dashboard',
+    scope: 'Dashboard',
+    onTrigger: () => { refetch(); },
+  });
 
   if (error && !data) return <DashboardError error={error} onRetry={() => refetch()} isRetrying={isFetching} />;
 
