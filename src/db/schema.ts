@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -255,6 +255,22 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_ai_diagnoses_container
       ON ai_diagnoses (host_id, container_name, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS log_templates (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      image            TEXT NOT NULL,
+      template_hash    TEXT NOT NULL,
+      template         TEXT NOT NULL,
+      token_count      INTEGER NOT NULL,
+      semantic_tag     TEXT,
+      first_seen       TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen        TEXT NOT NULL DEFAULT (datetime('now')),
+      occurrence_count INTEGER NOT NULL DEFAULT 1,
+      UNIQUE(image, template_hash)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_log_templates_image
+      ON log_templates (image, last_seen);
 
     CREATE TABLE IF NOT EXISTS webhooks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -511,6 +527,9 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE alert_state ADD COLUMN silenced_until TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE alert_state ADD COLUMN silenced_by TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE alert_state ADD COLUMN silenced_at TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 23) {
+    // log_templates table + index created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 

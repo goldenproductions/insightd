@@ -253,12 +253,17 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
 
     // Fire background log fetches for containers that just went unhealthy
     if (unhealthyTransitions.length > 0) {
-      const { fetchLogsBackground } = require('./insights/diagnosis/logCache');
+      const { fetchLogsBackground, resolveImageKey } = require('./insights/diagnosis/logCache');
       for (const { name, id } of unhealthyTransitions) {
         logger.info('diagnosis', `Pre-warming logs for ${hostId}/${name} (health transitioned to unhealthy)`);
-        fetchLogsBackground(hostId, name, id, async (h: string, cid: string, opts: any) => {
-          return await requestContainerLogs(h, cid, opts);
-        });
+        const image = resolveImageKey(db, hostId, name);
+        fetchLogsBackground(
+          hostId,
+          name,
+          id,
+          async (h: string, cid: string, opts: any) => requestContainerLogs(h, cid, opts),
+          { db, image },
+        );
       }
     }
   }

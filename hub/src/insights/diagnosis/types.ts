@@ -85,10 +85,43 @@ export interface DiagnosisLogEntry {
   message: string;
 }
 
+/**
+ * A log template hit in the current batch — one entry per distinct template
+ * that appeared, with its count and semantic tag (if Drain's overlay classified
+ * it). `isNew` is true when this template was created by the current batch
+ * (i.e. not seen in DB before).
+ */
+export interface TemplateHit {
+  templateHash: string;
+  template: string;
+  count: number;
+  semanticTag: string | null;
+  isNew: boolean;
+}
+
+/**
+ * A template that is appearing far more frequently than its historical rate.
+ * Computed from comparing batch count to the stored occurrence_count delta.
+ */
+export interface TemplateBurst {
+  templateHash: string;
+  template: string;
+  burstCount: number;
+  semanticTag: string | null;
+}
+
 export interface DiagnosisLogs {
   available: boolean;
   lines: DiagnosisLogEntry[];
+  /**
+   * Deprecated — retained for back-compat with older diagnosers that read
+   * string labels. New code should read `templates` instead. Phase 1 of the
+   * diagnosis upgrade populates this from the Drain semantic overlay.
+   */
   errorPatterns: string[];
+  templates: TemplateHit[];
+  unseenTemplates: number;
+  templateBursts: TemplateBurst[];
   fetchedAt: string | null;
 }
 
