@@ -1,6 +1,14 @@
 export function timeAgo(dateStr: string | null | undefined): string {
   if (!dateStr) return 'never';
-  const diff = Date.now() - new Date(dateStr + 'Z').getTime();
+  // Two timestamp shapes show up in API payloads:
+  //   1. SQLite datetime('now'):       "2026-04-13 19:14:06"  (no tz — UTC implicit)
+  //   2. JavaScript Date#toISOString:  "2026-04-13T19:14:06.000Z" (already UTC)
+  // Treat anything with a T or Z as already-parsed-correctly; only the plain
+  // SQLite shape needs the explicit `Z` appended to force UTC interpretation.
+  const normalized = /[TZ]/.test(dateStr) ? dateStr : dateStr + 'Z';
+  const t = new Date(normalized).getTime();
+  if (Number.isNaN(t)) return 'never';
+  const diff = Date.now() - t;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
