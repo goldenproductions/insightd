@@ -204,7 +204,11 @@ function handleDashboard(req: HandlerReq, res: ServerResponse, db: Database.Data
 
 function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  const activeOnly = url.searchParams.get('active') !== 'false';
+  // Default: return all alerts (active + resolved). Pass ?activeOnly=true to
+  // filter to currently-active. The legacy `?active=false` form is still
+  // accepted as an alias for "all" so cached frontend bundles keep working.
+  const activeOnly = url.searchParams.get('activeOnly') === 'true'
+    || (url.searchParams.has('active') && url.searchParams.get('active') === 'true');
   return queries.getAlerts(db, activeOnly);
 }
 

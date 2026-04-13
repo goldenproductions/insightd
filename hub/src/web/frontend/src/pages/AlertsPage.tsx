@@ -12,6 +12,7 @@ import { AlertSilenceControls } from '@/components/AlertSilenceControls';
 import { AlertsFilterToolbar, type TimeRange } from '@/components/AlertsFilterToolbar';
 import { AlertBulkToolbar } from '@/components/AlertBulkToolbar';
 import { useConfirm } from '@/hooks/useConfirm';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { timeAgo, fmtDurationMs, formatAlertType } from '@/lib/formatters';
 import { PageTitle } from '@/components/PageTitle';
@@ -145,7 +146,14 @@ export function AlertsPage() {
   const { token, isAuthenticated, authEnabled } = useAuth();
   const queryClient = useQueryClient();
   const { confirm, dialogProps } = useConfirm();
-  const { data: alerts } = useQuery({ queryKey: queryKeys.alerts(), queryFn: () => api<Alert[]>('/alerts?active=false'), refetchInterval: 30_000 });
+  const { data: alerts, refetch } = useQuery({ queryKey: queryKeys.alerts(), queryFn: () => api<Alert[]>('/alerts'), refetchInterval: 30_000 });
+
+  useKeyboardShortcut({
+    keys: 'r',
+    description: 'Refresh alerts',
+    scope: 'Alerts',
+    onTrigger: () => { refetch(); },
+  });
 
   const [activeSelected, setActiveSelected] = useState<Set<number>>(new Set());
   const [resolvedSelected, setResolvedSelected] = useState<Set<number>>(new Set());
