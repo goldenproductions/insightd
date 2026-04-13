@@ -268,11 +268,13 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     }
   }
 
-  // v26 observability surfaces: S-H-ESD anomalies, PPR neighbors, Drain templates.
-  // Best-effort lookups — any failure degrades to empty arrays so the detail
-  // page still renders.
+  // v26 observability surfaces: S-H-ESD anomalies, Drain templates.
+  // PPR neighbors are NOT queried here — they come through the Finding
+  // object via the unified diagnoser (Finding.neighbors), which already
+  // uses the correct camelCase shape that FindingCard expects.
+  // Best-effort lookups — any failure degrades to empty arrays so the
+  // detail page still renders.
   let anomalies: any[] = [];
-  let neighbors: any[] = [];
   let logTemplates: any[] = [];
   try {
     const entityId = `${params.hostId}/${params.containerName}`;
@@ -282,14 +284,6 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
        WHERE entity_type = 'container' AND entity_id = ?
        ORDER BY detected_at DESC LIMIT 10`,
     ).all(entityId);
-    neighbors = db.prepare(
-      `SELECT to_entity AS entity_id, edge_type, weight
-       FROM rca_edges WHERE from_entity = ?
-       UNION ALL
-       SELECT from_entity AS entity_id, edge_type, weight
-       FROM rca_edges WHERE to_entity = ?
-       ORDER BY weight DESC LIMIT 10`,
-    ).all(entityId, entityId);
     const { resolveImageKey } = require('../insights/diagnosis/logCache') as {
       resolveImageKey: (db: Database.Database, hostId: string, containerName: string) => string;
     };
@@ -312,7 +306,6 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     history: queries.getContainerHistory(db, params.hostId, params.containerName, hours),
     alerts: queries.getContainerAlerts(db, params.hostId, params.containerName),
     anomalies,
-    neighbors,
     logTemplates,
   };
 }

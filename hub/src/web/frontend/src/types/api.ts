@@ -151,9 +151,12 @@ export interface RankedEvidence {
 }
 
 export interface Neighbor {
-  entity_id: string;
-  edge_type: string;
-  weight: number;
+  /** camelCase fields mirror the backend Neighbor interface from
+   *  hub/src/insights/diagnosis/types.ts — populated by the unified
+   *  diagnoser from the PPR result, not from raw rca_edges rows. */
+  entityId: string;
+  score: number;
+  edgeTypes: string[];
 }
 
 export interface RollupAnomaly {
@@ -197,10 +200,11 @@ export interface ContainerDetail extends ContainerSnapshot {
   alerts: Alert[];
   /** v26 — recent S-H-ESD rollup anomalies for this container. */
   anomalies?: RollupAnomaly[];
-  /** v26 — top-K PPR neighbors pulled from `rca_edges`. */
-  neighbors?: Neighbor[];
   /** v26 — Drain log templates mined for this container's image. */
   logTemplates?: LogTemplate[];
+  // NOTE: per-finding PPR neighbors live on `Finding.neighbors` (camelCase).
+  // The top-level `neighbors` field used to hold raw rca_edges rows, which
+  // caused a shape clash — removed in fix/neighbor-type-mismatch.
 }
 
 export interface HostDetail extends Host {
