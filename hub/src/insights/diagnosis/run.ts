@@ -15,14 +15,12 @@ const { buildContext } = require('./context') as {
 const { getCachedLogs } = require('./logCache') as {
   getCachedLogs: (hostId: string, containerName: string) => any;
 };
-const { diagnoseUnhealthy } = require('./diagnosers/unhealthy') as {
-  diagnoseUnhealthy: (ctx: any) => Finding[];
+const { diagnoseUnified } = require('./diagnosers/unified') as {
+  diagnoseUnified: (ctx: any, options?: { db?: Database.Database; correlationEnabled?: boolean }) => Finding[];
 };
 const { stickyFindings } = require('./sticky') as {
   stickyFindings: (hostId: string, containerName: string, fresh: Finding[]) => Finding[];
 };
-
-const DIAGNOSERS = [diagnoseUnhealthy];
 
 export interface RunDiagnosisOptions {
   /** If set, persist findings to the insights table under this category. */
@@ -47,10 +45,7 @@ export function runDiagnosis(
     return []; // no snapshots yet, nothing to diagnose
   }
 
-  const fresh: Finding[] = [];
-  for (const diagnoser of DIAGNOSERS) {
-    fresh.push(...diagnoser(ctx));
-  }
+  const fresh: Finding[] = diagnoseUnified(ctx, { db });
 
   // Run through the sticky layer so evidence + diagnosedAt stay stable
   // across re-runs when the conclusion hasn't actually changed. This is

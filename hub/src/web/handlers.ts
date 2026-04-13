@@ -734,8 +734,8 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
     fetchLogsBackground: (hostId: string, containerName: string, containerId: string, fetcher: any, miningCtx?: { db: Database.Database; image: string | null }) => void;
     resolveImageKey: (db: Database.Database, hostId: string, containerName: string) => string;
   };
-  const { diagnoseUnhealthy } = require('../insights/diagnosis/diagnosers/unhealthy') as {
-    diagnoseUnhealthy: (ctx: any) => any[];
+  const { diagnoseUnified } = require('../insights/diagnosis/diagnosers/unified') as {
+    diagnoseUnified: (ctx: any, options?: { db?: Database.Database; correlationEnabled?: boolean }) => any[];
   };
   const service = require('../insights/ai-diagnose/service') as {
     hashDiagnosisInput: (ctx: any, findings: any[]) => string;
@@ -751,7 +751,7 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
     res.statusCode = 409;
     return { error: 'No snapshots available to diagnose yet' };
   }
-  const findings = diagnoseUnhealthy(diagnosisCtx);
+  const findings = diagnoseUnified(diagnosisCtx, { db });
 
   const contextHash = service.hashDiagnosisInput(diagnosisCtx, findings);
 
