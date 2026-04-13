@@ -117,95 +117,101 @@ export function ContainerDetailPage() {
   ];
 
   return (
-    <div className="animate-fade-in space-y-6">
+    <div className="animate-fade-in space-y-8">
       <BackLink to={`/hosts/${hid}`} label={`Back to ${hostId}`} />
 
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <StatusDot status={data.status} size="lg" />
-          <h1 className="text-xl font-bold text-fg">{data.container_name}</h1>
+      {/* ═══ HERO LAYER ═══
+          Identity, live status, and (when things are wrong) the diagnosis that
+          demands attention. Always visible, regardless of active tab. */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <StatusDot status={data.status} size="lg" />
+            <h1 className="truncate text-xl font-bold text-fg">{data.container_name}</h1>
+          </div>
+          {isAuthenticated && (
+            <div className="flex shrink-0 items-center gap-2">
+              {data.status !== 'running' && (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}>
+                    {actionLoading === `${containerName}:start` ? 'Starting...' : 'Start'}
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}>
+                    {actionLoading === `${containerName}:remove` ? 'Removing...' : 'Remove'}
+                  </Button>
+                </>
+              )}
+              {data.status === 'running' && (
+                <>
+                  <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
+                    {actionLoading === `${containerName}:restart` ? 'Restarting...' : 'Restart'}
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
+                    {actionLoading === `${containerName}:stop` ? 'Stopping...' : 'Stop'}
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
         </div>
-        {isAuthenticated && (
-          <div className="flex items-center gap-2">
-            {data.status !== 'running' && (
-              <>
-                <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}>
-                  {actionLoading === `${containerName}:start` ? 'Starting...' : 'Start'}
-                </Button>
-                <Button variant="danger" size="sm" onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}>
-                  {actionLoading === `${containerName}:remove` ? 'Removing...' : 'Remove'}
-                </Button>
-              </>
-            )}
-            {data.status === 'running' && (
-              <>
-                <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
-                  {actionLoading === `${containerName}:restart` ? 'Restarting...' : 'Restart'}
-                </Button>
-                <Button variant="danger" size="sm" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
-                  {actionLoading === `${containerName}:stop` ? 'Stopping...' : 'Stop'}
-                </Button>
-              </>
-            )}
+
+        {/* Status pills + compact stats — flat row, no card wrapper */}
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />
+            {healthPillText && <Badge text={healthPillText} color={healthPillColor} />}
+          </div>
+          <span className="text-sm">
+            <span className="text-muted">Process uptime</span>{' '}
+            <span className={`font-semibold ${uptimePct != null && uptimePct >= 99 ? 'text-success' : uptimePct != null && uptimePct >= 95 ? 'text-warning' : 'text-danger'}`}>
+              {uptimePct != null ? `${uptimePct}%` : '-'}
+            </span>
+          </span>
+          <span className="text-sm">
+            <span className="text-muted">Restarts</span>{' '}
+            <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
+          </span>
+        </div>
+
+        <ActionResult result={actionResult} />
+
+        {/* Diagnosis lives in the hero when something is wrong — this is the
+            "urgent when needed" inversion of the calm-by-default layout. */}
+        {showHealthFailure && data.findings && data.findings.length > 0 && (
+          <div className="space-y-3">
+            {data.findings.map((finding, i) => (
+              <FindingCard
+                key={i}
+                finding={finding}
+                technicalDetails={data.health_check_output}
+                liveSnapshot={{
+                  status: data.status,
+                  healthStatus: data.health_status,
+                  cpuPercent: data.cpu_percent,
+                  memoryMb: data.memory_mb,
+                  restartCount: data.restart_count,
+                }}
+              />
+            ))}
           </div>
         )}
-      </div>
-      <ActionResult result={actionResult} />
+        {/* AI diagnosis — secondary opinion, only surfaced alongside the rule-based finding */}
+        {showHealthFailure && <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />}
+      </section>
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
-      {/* Overview Tab */}
+      {/* Overview Tab — Status + Detail layers below the hero */}
       {activeTab === 'overview' && (
-        <div className="space-y-6">
-          {/* Status + key stats */}
-          <div className="rounded-xl border border-border bg-surface px-4 py-3">
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />
-                {healthPillText && <Badge text={healthPillText} color={healthPillColor} />}
-              </div>
-              <span className="text-sm">
-                <span className="text-muted">Process uptime</span>{' '}
-                <span className={`font-semibold ${uptimePct != null && uptimePct >= 99 ? 'text-success' : uptimePct != null && uptimePct >= 95 ? 'text-warning' : 'text-danger'}`}>
-                  {uptimePct != null ? `${uptimePct}%` : '-'}
-                </span>
-              </span>
-              <span className="text-sm">
-                <span className="text-muted">Restarts</span>{' '}
-                <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
-              </span>
+        <div className="space-y-8">
+          {/* ═══ STATUS LAYER ═══ objective performance signals */}
+          <section className="space-y-4">
+            <div className="grid gap-4 md:grid-cols-2">
+              <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={baselinesReady ? getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent')) : null} />
+              <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={baselinesReady ? getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb')) : null} />
             </div>
-          </div>
 
-          {/* Health check diagnosis (rich finding card) */}
-          {showHealthFailure && data.findings && data.findings.length > 0 && (
-            <div className="space-y-3">
-              {data.findings.map((finding, i) => (
-                <FindingCard
-                  key={i}
-                  finding={finding}
-                  technicalDetails={data.health_check_output}
-                  liveSnapshot={{
-                    status: data.status,
-                    healthStatus: data.health_status,
-                    cpuPercent: data.cpu_percent,
-                    memoryMb: data.memory_mb,
-                    restartCount: data.restart_count,
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          {/* AI diagnosis — available any time, especially useful when findings are sparse */}
-          <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />
-
-          {/* CPU & Memory gauges */}
-          <div className="grid gap-4 md:grid-cols-2">
-            <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={baselinesReady ? getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent')) : null} />
-            <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={baselinesReady ? getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb')) : null} />
-          </div>
-
-          {availability && (
+            {availability && (
             <Card title="Availability (7 days)">
               <div className="space-y-4">
                 <div className="flex items-center gap-4">
@@ -263,10 +269,12 @@ export function ContainerDetailPage() {
                 )}
               </div>
             </Card>
-          )}
+            )}
+          </section>
 
+          {/* ═══ DETAIL LAYER ═══ historical depth, on demand */}
           {(cpuValues.length > 1 || memValues.length > 1) && (
-            <div>
+            <section>
               <button
                 onClick={() => setShowCharts(!showCharts)}
                 className="mb-3 text-xs font-medium text-muted hover:text-fg"
@@ -287,7 +295,7 @@ export function ContainerDetailPage() {
                   )}
                 </div>
               )}
-            </div>
+            </section>
           )}
         </div>
       )}
