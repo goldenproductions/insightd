@@ -141,6 +141,54 @@ export interface DiagnosisContext {
   logs: DiagnosisLogs;
 }
 
+/**
+ * A structured fact detected about an entity. Phase 3 replaces the old
+ * decision tree with per-signal detectors that each return one of these;
+ * the unified diagnoser fuses them into a single Finding. The `kind` field
+ * is consumed by Phase 4's evidence ranking to compute surprise scores.
+ */
+export interface FindingSignal {
+  kind:
+    | 'oom_risk'
+    | 'oom_confirmed'
+    | 'crash_loop'
+    | 'cascade'
+    | 'host_pressure'
+    | 'app_errors'
+    | 'zombie_listener'
+    | 'hung_service'
+    | 'ppr_root'
+    | 'fallback';
+  severity: 'critical' | 'warning' | 'info';
+  confidence: 'high' | 'medium' | 'low';
+  /** Short headline for this signal (used as finding conclusion when primary). */
+  conclusion: string;
+  /** Suggested action if this signal is the primary explanation. */
+  action: string;
+  /** Supporting evidence lines to show the user. */
+  evidence: string[];
+  /**
+   * Decision-tree priority: lower = more specific, wins when multiple
+   * signals fire. Mirrors the ordering of the old 9-branch tree.
+   */
+  priority: number;
+}
+
+/**
+ * One neighbor returned by the personalized-PageRank RCA pass — an upstream
+ * or sideways entity that correlates with the symptom container.
+ */
+export interface Neighbor {
+  entityId: string;
+  score: number;
+  edgeTypes: string[];
+}
+
+export interface PPRResult {
+  seed: string;
+  neighbors: Neighbor[];
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
@@ -155,6 +203,13 @@ export interface Finding {
    * "Analysis updated Xm ago" instead of looking like it re-ran every view.
    */
   diagnosedAt?: string;
+  /**
+   * Structured signals that contributed to this finding. Optional so older
+   * persisted findings remain compatible; new diagnosers populate it so
+   * Phase 4 evidence ranking + confidence calibration can consume typed
+   * data instead of parsing evidence strings.
+   */
+  signals?: FindingSignal[];
 }
 
 export type Diagnoser = (ctx: DiagnosisContext) => Finding[];

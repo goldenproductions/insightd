@@ -89,9 +89,12 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
     const { computeHealthScores } = require('./insights/health');
     const { generateInsights } = require('./insights/detector');
     const { runAnomalyDetection } = require('./insights/anomaly/shesd');
+    const { buildGraph } = require('./insights/rca/graph');
     // Compute baselines once and pass the cache to downstream functions
     const baselineCache = await safeCollect('baselines', () => computeBaselines(db));
     await safeCollect('health-scores', () => computeHealthScores(db, baselineCache));
+    // Build the RCA graph before running diagnoses — diagnosers read edges.
+    await safeCollect('rca-graph', () => buildGraph(db));
     await safeCollect('insights', () => generateInsights(db, baselineCache));
     await safeCollect('anomaly-detection', () => runAnomalyDetection(db));
   }, { timezone: config.timezone }));

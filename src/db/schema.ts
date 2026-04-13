@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 24;
+const SCHEMA_VERSION = 25;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -366,6 +366,17 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_rollup_anomalies_entity
       ON rollup_anomalies (entity_type, entity_id, detected_at);
+
+    CREATE TABLE IF NOT EXISTS rca_edges (
+      from_entity  TEXT NOT NULL,
+      to_entity    TEXT NOT NULL,
+      edge_type    TEXT NOT NULL,
+      weight       REAL NOT NULL,
+      computed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (from_entity, to_entity, edge_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rca_edges_from ON rca_edges(from_entity);
   `);
 
   // Track schema version and run migrations
@@ -553,6 +564,9 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE baselines ADD COLUMN mad REAL'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE baselines ADD COLUMN mad_sample_count INTEGER'); } catch { /* already exists */ }
     // rollup_anomalies table + index created via CREATE TABLE IF NOT EXISTS in bootstrap
+  }
+  if (fromVersion < 25) {
+    // rca_edges table + index created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
 }
 
