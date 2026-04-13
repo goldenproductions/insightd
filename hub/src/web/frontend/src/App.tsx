@@ -1,10 +1,13 @@
-import { HashRouter, Routes, Route, Navigate, useParams } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate, useParams, useNavigate } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
+import { ShortcutsProvider, useShortcutsContext } from '@/context/ShortcutsContext';
 import { ShowInternalProvider } from '@/hooks/useShowInternal';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { Layout } from '@/components/Layout';
+import { ShortcutHelpModal } from '@/components/ShortcutHelpModal';
 import { api } from '@/lib/api';
 import { useState, useEffect, lazy, Suspense } from 'react';
 
@@ -49,6 +52,32 @@ function PageLoading() {
   );
 }
 
+/**
+ * Registers the app-wide keyboard shortcuts. Must live inside both HashRouter
+ * (so it can useNavigate) and ShortcutsProvider (so it can register).
+ */
+function GlobalShortcuts() {
+  const navigate = useNavigate();
+  const { setHelpOpen, helpOpen } = useShortcutsContext();
+
+  useKeyboardShortcut({
+    keys: '?',
+    description: 'Show keyboard shortcuts',
+    scope: 'Global',
+    onTrigger: () => setHelpOpen(!helpOpen),
+  });
+  useKeyboardShortcut({ keys: 'g d', description: 'Go to dashboard', scope: 'Global', onTrigger: () => navigate('/') });
+  useKeyboardShortcut({ keys: 'g h', description: 'Go to hosts', scope: 'Global', onTrigger: () => navigate('/hosts') });
+  useKeyboardShortcut({ keys: 'g s', description: 'Go to stacks', scope: 'Global', onTrigger: () => navigate('/stacks') });
+  useKeyboardShortcut({ keys: 'g e', description: 'Go to endpoints', scope: 'Global', onTrigger: () => navigate('/endpoints') });
+  useKeyboardShortcut({ keys: 'g i', description: 'Go to insights', scope: 'Global', onTrigger: () => navigate('/insights') });
+  useKeyboardShortcut({ keys: 'g a', description: 'Go to alerts', scope: 'Global', onTrigger: () => navigate('/alerts') });
+  useKeyboardShortcut({ keys: 'g u', description: 'Go to updates', scope: 'Global', onTrigger: () => navigate('/updates') });
+  useKeyboardShortcut({ keys: 'g ,', description: 'Go to settings', scope: 'Global', onTrigger: () => navigate('/settings') });
+
+  return null;
+}
+
 export function App() {
   const [setupComplete, setSetupComplete] = useState<boolean | null>(null);
   const [mode, setMode] = useState('hub');
@@ -80,6 +109,9 @@ export function App() {
         <ThemeProvider>
           <ShowInternalProvider>
           <HashRouter>
+            <ShortcutsProvider>
+            <GlobalShortcuts />
+            <ShortcutHelpModal />
             <Suspense fallback={<PageLoading />}>
             <Routes>
               <Route path="/status" element={<StatusPage />} />
@@ -115,6 +147,7 @@ export function App() {
               </Route>
             </Routes>
             </Suspense>
+            </ShortcutsProvider>
           </HashRouter>
           </ShowInternalProvider>
         </ThemeProvider>

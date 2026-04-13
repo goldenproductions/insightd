@@ -16,6 +16,8 @@ export interface FindingPrimaryAction {
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  /** Optional native title attribute — typically used for a shortcut hint. */
+  title?: string;
 }
 
 interface Props {
@@ -126,6 +128,7 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
               <Button
                 variant="primary"
                 size="sm"
+                title={primaryAction.title}
                 onClick={primaryAction.onClick}
                 disabled={primaryAction.disabled}
               >

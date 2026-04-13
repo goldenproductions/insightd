@@ -19,6 +19,7 @@ import { CardSkeleton } from '@/components/Skeleton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { MetricGauge } from './MetricGauge';
 import { getAnalogy, findBaseline } from '@/lib/analogies';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
@@ -52,6 +53,49 @@ export function ContainerDetailPage() {
     queryKey: queryKeys.containerBaselines(hostId, containerName),
     queryFn: () => api<BaselineRow[]>(`/baselines/container/${entityId}`).catch(() => []),
     refetchInterval: false,
+  });
+
+  // Keyboard shortcuts — registered unconditionally (Rules of Hooks); callbacks
+  // read the latest `data` via the ref-wrapped trigger inside useKeyboardShortcut.
+  const isRunning = data?.status === 'running';
+  const canControl = isAuthenticated && isRunning;
+  useKeyboardShortcut({
+    keys: 'r',
+    description: 'Restart container',
+    scope: 'Container detail',
+    disabled: !canControl,
+    onTrigger: () => { if (containerName) runAction(containerName, 'restart'); },
+  });
+  useKeyboardShortcut({
+    keys: 's',
+    description: 'Stop container',
+    scope: 'Container detail',
+    disabled: !canControl,
+    onTrigger: () => { if (containerName) runAction(containerName, 'stop'); },
+  });
+  useKeyboardShortcut({
+    keys: '1',
+    description: 'Overview tab',
+    scope: 'Container detail',
+    onTrigger: () => setActiveTab('overview'),
+  });
+  useKeyboardShortcut({
+    keys: '2',
+    description: 'Logs tab',
+    scope: 'Container detail',
+    onTrigger: () => setActiveTab('logs'),
+  });
+  useKeyboardShortcut({
+    keys: '3',
+    description: 'Alerts & history tab',
+    scope: 'Container detail',
+    onTrigger: () => setActiveTab('history'),
+  });
+  useKeyboardShortcut({
+    keys: 'b',
+    description: 'Back to host',
+    scope: 'Container detail',
+    onTrigger: () => navigate(`/hosts/${hid}`),
   });
 
   if (error) return (
@@ -111,9 +155,9 @@ export function ContainerDetailPage() {
     : 'yellow';
 
   const tabs = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'logs', label: 'Logs' },
-    { id: 'history', label: 'Alerts & history', count: data.alerts.length },
+    { id: 'overview', label: 'Overview', shortcut: '1' },
+    { id: 'logs', label: 'Logs', shortcut: '2' },
+    { id: 'history', label: 'Alerts & history', count: data.alerts.length, shortcut: '3' },
   ];
 
   return (
@@ -143,10 +187,10 @@ export function ContainerDetailPage() {
               )}
               {data.status === 'running' && (
                 <>
-                  <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
+                  <Button variant="ghost" size="sm" title="Restart (r)" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
                     {actionLoading === `${containerName}:restart` ? 'Restarting…' : 'Restart'}
                   </Button>
-                  <Button variant="danger" size="sm" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
+                  <Button variant="danger" size="sm" title="Stop (s)" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
                     {actionLoading === `${containerName}:stop` ? 'Stopping…' : 'Stop'}
                   </Button>
                 </>
@@ -196,6 +240,7 @@ export function ContainerDetailPage() {
                 label: isRestarting ? 'Restarting…' : 'Restart container',
                 onClick: () => runAction(containerName!, 'restart'),
                 disabled: actionLoading != null,
+                title: 'Restart (r)',
               } : undefined;
               return (
                 <FindingCard
