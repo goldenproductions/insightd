@@ -32,7 +32,7 @@ ENV INSIGHTD_VERSION=$INSIGHTD_VERSION
 
 RUN mkdir -p /data
 
-ENV NODE_OPTIONS="--max-old-space-size=40"
+ENV NODE_OPTIONS="--max-old-space-size=256"
 
 VOLUME ["/data"]
 EXPOSE 3000
