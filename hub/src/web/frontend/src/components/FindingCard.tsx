@@ -101,8 +101,41 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
       pills={pills}
       footer={footer}
     >
-      {/* Evidence list */}
-      {finding.evidence.length > 0 && (
+      {/* Evidence list: when the diagnoser shipped `evidenceRanked`, show the
+          top 3 most-explanatory signals first with their headlines, then
+          a "show details" expander that reveals the full evidence text. */}
+      {finding.evidenceRanked && finding.evidenceRanked.length > 0 ? (
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Top signals</div>
+          <ul className="space-y-1 text-xs text-fg">
+            {finding.evidenceRanked.map((e, i) => (
+              <li key={i} className="flex gap-2" title={`surprise ${e.surprise}, explains ${Math.round(e.explanatoryPower * 100)}% of total`}>
+                <span className="text-muted mt-0.5">•</span>
+                <span className="flex-1">{e.label}</span>
+                <span className="text-muted text-[10px] tabular-nums">{Math.round(e.explanatoryPower * 100)}%</span>
+              </li>
+            ))}
+          </ul>
+          {finding.evidence.length > 0 && (
+            <button
+              onClick={() => setShowAllEvidence(v => !v)}
+              className="mt-1 text-[11px] text-muted hover:text-fg transition-colors"
+            >
+              {showAllEvidence ? 'Hide details' : `Show ${finding.evidence.length} evidence item${finding.evidence.length === 1 ? '' : 's'}`}
+            </button>
+          )}
+          {showAllEvidence && finding.evidence.length > 0 && (
+            <ul className="mt-2 space-y-1 border-t border-muted/20 pt-2 text-xs text-fg">
+              {finding.evidence.map((e, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="text-muted mt-0.5">•</span>
+                  <span className="flex-1">{e}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : finding.evidence.length > 0 && (
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">What we observed</div>
           <ul className="space-y-1 text-xs text-fg">

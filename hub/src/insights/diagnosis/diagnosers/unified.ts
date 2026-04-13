@@ -27,6 +27,7 @@ import type Database from 'better-sqlite3';
 import type { DiagnosisContext, Finding, FindingSignal, Neighbor } from '../types';
 import { bucket, formatDuration } from '../signals/formatters';
 import { labelForTag } from '../templateClassifier';
+import { rankEvidence } from '../rank';
 
 import { detectOom } from '../signals/oom';
 import { detectCrashLoop } from '../signals/crashLoop';
@@ -93,6 +94,15 @@ export function diagnoseUnified(
 
   // 3. No signals fired → fallback finding.
   if (signals.length === 0 || signals.every((s) => s.kind === 'ppr_root')) {
+    const fallbackSignals: FindingSignal[] = [{
+      kind: 'fallback',
+      severity: 'warning',
+      confidence: 'low',
+      conclusion: `${containerName} is reporting unhealthy`,
+      action: '',
+      evidence: [],
+      priority: 999,
+    }, ...signals];
     return [{
       diagnoser: 'unified',
       severity: 'warning',
@@ -109,7 +119,8 @@ export function diagnoseUnified(
         ...neighborEvidence,
       ],
       suggestedAction: `Nothing obvious stands out in metrics or logs. Check the full container logs for application errors. If the issue persists after a restart, investigate config or upstream dependencies.`,
-      signals,
+      signals: fallbackSignals,
+      evidenceRanked: rankEvidence(fallbackSignals),
     }];
   }
 
@@ -141,6 +152,7 @@ export function diagnoseUnified(
     evidence,
     suggestedAction: primary.action,
     signals,
+    evidenceRanked: rankEvidence(signals),
   }];
 }
 

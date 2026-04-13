@@ -21,6 +21,9 @@ const { diagnoseUnified } = require('./diagnosers/unified') as {
 const { stickyFindings } = require('./sticky') as {
   stickyFindings: (hostId: string, containerName: string, fresh: Finding[]) => Finding[];
 };
+const { calibrateFindings } = require('./calibration') as {
+  calibrateFindings: (db: Database.Database, findings: Finding[]) => Finding[];
+};
 
 export interface RunDiagnosisOptions {
   /** If set, persist findings to the insights table under this category. */
@@ -45,7 +48,12 @@ export function runDiagnosis(
     return []; // no snapshots yet, nothing to diagnose
   }
 
-  const fresh: Finding[] = diagnoseUnified(ctx, { db });
+  const raw: Finding[] = diagnoseUnified(ctx, { db });
+  // Recalibrate confidence from historical feedback before sticky-cacheing
+  // so the cache entry reflects the posterior estimate, not the diagnoser's
+  // self-assigned prior. Calibration is a pure function over DB state —
+  // safe to run on every diagnosis pass.
+  const fresh = calibrateFindings(db, raw);
 
   // Run through the sticky layer so evidence + diagnosedAt stay stable
   // across re-runs when the conclusion hasn't actually changed. This is
