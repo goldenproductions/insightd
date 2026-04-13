@@ -71,7 +71,7 @@ export function diagnoseUnified(
   }
   signals.sort((a, b) => a.priority - b.priority);
 
-  const { containerName, hostId } = ctx.entity;
+  const { containerName } = ctx.entity;
   const baseEvidence = buildBaseEvidence(ctx);
 
   // 2. PPR neighbors (best-effort — never throws).
