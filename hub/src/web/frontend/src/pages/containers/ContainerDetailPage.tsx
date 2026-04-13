@@ -456,6 +456,8 @@ export function ContainerDetailPage() {
         <ContainerHistoryTab
           alerts={data.alerts}
           history={history}
+          hostId={hostId}
+          containerName={containerName}
         />
       )}
 
