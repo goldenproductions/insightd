@@ -30,7 +30,7 @@ interface ContainerHistoryTabProps {
 
 export function ContainerHistoryTab({ alerts, history, showSnapshots, setShowSnapshots }: ContainerHistoryTabProps) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {alerts.length > 0 && (
         <Card title="Alerts">
           <DataTable
@@ -45,17 +45,14 @@ export function ContainerHistoryTab({ alerts, history, showSnapshots, setShowSna
       <div>
         <button
           onClick={() => setShowSnapshots(!showSnapshots)}
-          className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium hover-surface text-secondary bg-surface border border-border"
+          className="mb-3 text-xs font-medium text-muted hover:text-fg transition-colors"
         >
-          <span className="text-[0.6rem]">{showSnapshots ? '\u25BC' : '\u25B6'}</span>
-          {showSnapshots ? 'Hide' : 'Show'} all snapshots ({history.length})
+          {showSnapshots ? '▲' : '▼'} {showSnapshots ? 'Hide' : 'Show'} all snapshots ({history.length})
         </button>
         {showSnapshots && (
-          <div className="mt-3">
-            <Card>
-              <DataTable columns={historyCols} data={[...history].reverse()} emptyText="No history data" />
-            </Card>
-          </div>
+          <Card>
+            <DataTable columns={historyCols} data={[...history].reverse()} emptyText="No history data" />
+          </Card>
         )}
       </div>
     </div>

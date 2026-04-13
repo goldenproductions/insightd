@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import type { Finding } from '@/types/api';
 import { timeAgo } from '@/lib/formatters';
+import { DiagnosisCard, severityStyles } from '@/components/DiagnosisCard';
+import { Button } from '@/components/FormField';
 
 export interface LiveSnapshot {
   status?: string | null;
@@ -8,6 +10,12 @@ export interface LiveSnapshot {
   cpuPercent?: number | null;
   memoryMb?: number | null;
   restartCount?: number | null;
+}
+
+export interface FindingPrimaryAction {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
 }
 
 interface Props {
@@ -20,13 +28,13 @@ interface Props {
    * stable diagnosis text above.
    */
   liveSnapshot?: LiveSnapshot;
+  /**
+   * Optional inline CTA rendered directly under the suggested action text.
+   * Lets the page bind a concrete action (e.g. "Restart container") to the
+   * diagnosis so the user doesn't have to hunt for the button elsewhere.
+   */
+  primaryAction?: FindingPrimaryAction;
 }
-
-const SEVERITY_STYLES: Record<Finding['severity'], { border: string; bg: string; text: string }> = {
-  critical: { border: 'border-l-danger', bg: 'bg-danger/10', text: 'text-danger' },
-  warning: { border: 'border-l-warning', bg: 'bg-warning/10', text: 'text-warning' },
-  info: { border: 'border-l-info', bg: 'bg-info/10', text: 'text-info' },
-};
 
 const CONFIDENCE_STYLES: Record<Finding['confidence'], string> = {
   high: 'bg-success/10 text-success',
@@ -44,11 +52,11 @@ function formatMem(v: number | null | undefined): string {
   return `${Math.round(v)} MB`;
 }
 
-export function FindingCard({ finding, technicalDetails, liveSnapshot }: Props) {
+export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAction }: Props) {
   const [showAllEvidence, setShowAllEvidence] = useState(false);
   const [showTechnical, setShowTechnical] = useState(false);
   const [showLive, setShowLive] = useState(false);
-  const styles = SEVERITY_STYLES[finding.severity];
+  const styles = severityStyles(finding.severity);
 
   const TOP_EVIDENCE = 4;
   const visibleEvidence = showAllEvidence ? finding.evidence : finding.evidence.slice(0, TOP_EVIDENCE);
@@ -62,24 +70,29 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot }: Props) 
     liveSnapshot.restartCount != null
   );
 
-  return (
-    <div className={`rounded-lg border border-border border-l-[3px] ${styles.border} ${styles.bg} p-4 space-y-3`}>
-      {/* Header: icon + conclusion + pills */}
-      <div className="flex items-start gap-2">
-        <span className="mt-0.5 text-base leading-none" aria-hidden>🩺</span>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-start gap-2">
-            <span className={`text-sm font-semibold ${styles.text}`}>{finding.conclusion}</span>
-            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${styles.bg} ${styles.text}`}>
-              {finding.severity}
-            </span>
-            <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${CONFIDENCE_STYLES[finding.confidence]}`}>
-              {finding.confidence} confidence
-            </span>
-          </div>
-        </div>
-      </div>
+  const pills = (
+    <>
+      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${styles.bg} ${styles.text}`}>
+        {finding.severity}
+      </span>
+      <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase ${CONFIDENCE_STYLES[finding.confidence]}`}>
+        {finding.confidence} confidence
+      </span>
+    </>
+  );
 
+  const footer = finding.diagnosedAt ? (
+    <span title={finding.diagnosedAt}>Analysis updated {timeAgo(finding.diagnosedAt)}</span>
+  ) : undefined;
+
+  return (
+    <DiagnosisCard
+      icon="🩺"
+      severity={finding.severity}
+      title={finding.conclusion}
+      pills={pills}
+      footer={footer}
+    >
       {/* Evidence list */}
       {finding.evidence.length > 0 && (
         <div>
@@ -103,11 +116,23 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot }: Props) 
         </div>
       )}
 
-      {/* Suggested action */}
+      {/* Suggested action + inline primary CTA */}
       {finding.suggestedAction && (
         <div>
           <div className="text-[10px] font-semibold uppercase tracking-wide text-muted mb-1">Suggested action</div>
           <p className="text-xs leading-relaxed text-fg">{finding.suggestedAction}</p>
+          {primaryAction && (
+            <div className="mt-2">
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={primaryAction.onClick}
+                disabled={primaryAction.disabled}
+              >
+                {primaryAction.label}
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -159,14 +184,6 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot }: Props) 
           )}
         </div>
       )}
-
-      {/* Footer: when this analysis was last updated. Lets the user see at
-          a glance that the reasoning is stable, even if the page refreshed. */}
-      {finding.diagnosedAt && (
-        <div className="border-t border-border-light pt-2 text-[11px] text-muted">
-          Analysis updated {timeAgo(finding.diagnosedAt)}
-        </div>
-      )}
-    </div>
+    </DiagnosisCard>
   );
 }
