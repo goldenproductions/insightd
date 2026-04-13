@@ -58,9 +58,9 @@ function checkboxColumn(selected: Set<number>, toggle: (id: number) => void): Co
   };
 }
 
-function buildActiveColumns(selected: Set<number>, toggle: (id: number) => void): Column<Alert>[] {
+function buildActiveColumns(selected: Set<number>, toggle: (id: number) => void, bulkMode: boolean): Column<Alert>[] {
   return [
-    checkboxColumn(selected, toggle),
+    ...(bulkMode ? [checkboxColumn(selected, toggle)] : []),
     { header: 'Type', accessor: r => <span className="flex items-center gap-2"><StatusDot status="red" /> {formatAlertType(r.alert_type)}</span> },
     { header: 'Reason', accessor: r => <span className="text-xs text-secondary">{r.message || `${formatAlertType(r.alert_type)} on ${r.target}`}</span>, hideOnMobile: true },
     { header: 'Host', accessor: r => <span className="text-info">{r.host_id}</span> },
@@ -88,9 +88,9 @@ function buildActiveColumns(selected: Set<number>, toggle: (id: number) => void)
   ];
 }
 
-function buildResolvedColumns(selected: Set<number>, toggle: (id: number) => void): Column<Alert>[] {
+function buildResolvedColumns(selected: Set<number>, toggle: (id: number) => void, bulkMode: boolean): Column<Alert>[] {
   return [
-    checkboxColumn(selected, toggle),
+    ...(bulkMode ? [checkboxColumn(selected, toggle)] : []),
     { header: 'Type', accessor: r => <span className="flex items-center gap-2 text-muted"><StatusDot status="green" /> {formatAlertType(r.alert_type)}</span> },
     { header: 'Host', accessor: r => <span className="text-secondary">{r.host_id}</span> },
     { header: 'Triggered', accessor: r => <span className="text-muted" title={r.triggered_at}>{timeAgo(r.triggered_at)}</span> },
@@ -149,9 +149,20 @@ export function AlertsPage() {
 
   const [activeSelected, setActiveSelected] = useState<Set<number>>(new Set());
   const [resolvedSelected, setResolvedSelected] = useState<Set<number>>(new Set());
+  const [activeBulkMode, setActiveBulkMode] = useState(false);
+  const [resolvedBulkMode, setResolvedBulkMode] = useState(false);
   const [bulkPending, setBulkPending] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
   const canBulkAct = !authEnabled || isAuthenticated;
+
+  const exitActiveBulk = () => {
+    setActiveBulkMode(false);
+    setActiveSelected(new Set());
+  };
+  const exitResolvedBulk = () => {
+    setResolvedBulkMode(false);
+    setResolvedSelected(new Set());
+  };
 
   // URL-driven filter state. Default range = 7d to limit noise on first load.
   const selectedHost = searchParams.get('host');
@@ -261,6 +272,8 @@ export function AlertsPage() {
     await queryClient.invalidateQueries({ queryKey: queryKeys.alerts() });
     setActiveSelected(new Set());
     setResolvedSelected(new Set());
+    setActiveBulkMode(false);
+    setResolvedBulkMode(false);
   };
 
   const bulkSilence = async (duration: SilenceDuration) => {
@@ -325,8 +338,8 @@ export function AlertsPage() {
     }
   };
 
-  const activeColumns = useMemo(() => buildActiveColumns(activeSelected, toggleActive), [activeSelected]);
-  const resolvedColumns = useMemo(() => buildResolvedColumns(resolvedSelected, toggleResolved), [resolvedSelected]);
+  const activeColumns = useMemo(() => buildActiveColumns(activeSelected, toggleActive, activeBulkMode), [activeSelected, activeBulkMode]);
+  const resolvedColumns = useMemo(() => buildResolvedColumns(resolvedSelected, toggleResolved, resolvedBulkMode), [resolvedSelected, resolvedBulkMode]);
 
   const activeAllSelected = activeFiltered.length > 0 && activeSelected.size === activeFiltered.length;
   const resolvedAllSelected = resolvedFiltered.length > 0 && resolvedSelected.size === resolvedFiltered.length;
@@ -355,12 +368,23 @@ export function AlertsPage() {
       {/* ═══ ACTIVE LAYER ═══ what needs attention right now */}
       <section className="space-y-3">
         {activeFiltered.length > 0 ? (
-          <Card title={
-            filterActive && activeFiltered.length !== activeAll.length
-              ? `Active · ${activeFiltered.length} of ${activeAll.length} shown`
-              : 'Active'
-          }>
-            {canBulkAct && (
+          <Card
+            title={
+              filterActive && activeFiltered.length !== activeAll.length
+                ? `Active · ${activeFiltered.length} of ${activeAll.length} shown`
+                : 'Active'
+            }
+            actions={canBulkAct && (
+              <button
+                type="button"
+                onClick={() => activeBulkMode ? exitActiveBulk() : setActiveBulkMode(true)}
+                className="rounded px-2 py-0.5 text-xs font-medium text-muted transition-colors hover:bg-bg-secondary hover:text-fg"
+              >
+                {activeBulkMode ? 'Done' : 'Select'}
+              </button>
+            )}
+          >
+            {canBulkAct && activeBulkMode && (
               <AlertBulkToolbar
                 selectedCount={activeSelected.size}
                 totalInView={activeFiltered.length}
@@ -420,12 +444,23 @@ export function AlertsPage() {
       {/* ═══ RESOLVED LAYER ═══ history, secondary */}
       {resolvedAll.length > 0 && (
         <section className="space-y-3">
-          <Card title={
-            resolvedFiltered.length === resolvedAll.length
-              ? `Recent · ${resolvedAll.length} resolved`
-              : `Recent · ${resolvedFiltered.length} of ${resolvedAll.length} resolved shown`
-          }>
-            {canBulkAct && resolvedFiltered.length > 0 && (
+          <Card
+            title={
+              resolvedFiltered.length === resolvedAll.length
+                ? `Recent · ${resolvedAll.length} resolved`
+                : `Recent · ${resolvedFiltered.length} of ${resolvedAll.length} resolved shown`
+            }
+            actions={canBulkAct && resolvedFiltered.length > 0 && (
+              <button
+                type="button"
+                onClick={() => resolvedBulkMode ? exitResolvedBulk() : setResolvedBulkMode(true)}
+                className="rounded px-2 py-0.5 text-xs font-medium text-muted transition-colors hover:bg-bg-secondary hover:text-fg"
+              >
+                {resolvedBulkMode ? 'Done' : 'Select'}
+              </button>
+            )}
+          >
+            {canBulkAct && resolvedBulkMode && resolvedFiltered.length > 0 && (
               <AlertBulkToolbar
                 selectedCount={resolvedSelected.size}
                 totalInView={resolvedFiltered.length}
