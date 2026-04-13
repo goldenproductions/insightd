@@ -55,8 +55,14 @@ const MASK_RULES: Array<{ re: RegExp; mask: string }> = [
   { re: /^[0-9a-f]{8,}$/i, mask: WILDCARD },
   // Pure number (int or float), optionally with a unit suffix like `32ms` / `1.5s`
   { re: /^-?\d+(\.\d+)?(ms|s|us|ns|kb|mb|gb|tb|b|%)?$/i, mask: WILDCARD },
-  // ISO timestamps (e.g. 2026-04-13T10:21:00Z)
-  { re: /^\d{4}-\d{2}-\d{2}t?\d{0,2}:?\d{0,2}:?\d{0,2}(\.\d+)?z?$/i, mask: WILDCARD },
+  // ISO timestamps joined with T (e.g. 2026-04-13T10:21:00Z)
+  { re: /^\d{4}-\d{2}-\d{2}t\d{0,2}:?\d{0,2}:?\d{0,2}(\.\d+)?z?$/i, mask: WILDCARD },
+  // Dashed date (e.g. 2026-04-13)
+  { re: /^\d{4}-\d{1,2}-\d{1,2}$/, mask: WILDCARD },
+  // Slashed date (e.g. 2026/04/13) — common in syslog-style loggers
+  { re: /^\d{4}\/\d{1,2}\/\d{1,2}$/, mask: WILDCARD },
+  // Clock time (e.g. 14:47:54, 14:47:54.325239) — optional fractional seconds
+  { re: /^\d{1,2}:\d{2}:\d{2}(\.\d+)?$/, mask: WILDCARD },
 ];
 
 /**

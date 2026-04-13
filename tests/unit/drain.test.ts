@@ -45,6 +45,28 @@ describe('drain tokenizer', () => {
       ['Fatal', 'error', 'cannot', 'bind'],
     );
   });
+
+  it('masks slashed dates common in syslog-style loggers', () => {
+    assert.deepEqual(tokenize('2026/04/13 request received'), ['<*>', 'request', 'received']);
+  });
+
+  it('masks clock times with optional fractional seconds', () => {
+    assert.deepEqual(tokenize('started at 14:47:54'), ['started', 'at', '<*>']);
+    assert.deepEqual(tokenize('started at 14:47:54.325239'), ['started', 'at', '<*>']);
+  });
+
+  it('collapses AdGuard-style timestamped logs to a single template', () => {
+    const tree = new DrainTree([]);
+    // Real log format from adguard/adguardhome.
+    const a = tree.match(tokenize('2026/04/13 14:47:54.325239 [error] dnsproxy exchange failed'));
+    const b = tree.match(tokenize('2026/04/13 14:52:53.196989 [error] dnsproxy exchange failed'));
+    const c = tree.match(tokenize('2026/04/13 15:00:06.699472 [error] dnsproxy exchange failed'));
+    assert.equal(a.templateHash, b.templateHash);
+    assert.equal(b.templateHash, c.templateHash);
+    assert.equal(a.isNew, true);
+    assert.equal(b.isNew, false);
+    assert.equal(c.isNew, false);
+  });
 });
 
 describe('drain hashTemplate', () => {
