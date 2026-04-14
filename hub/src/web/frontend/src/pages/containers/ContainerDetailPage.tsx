@@ -3,10 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, BaselineRow, ContainerSnapshot, Finding } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, Finding } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
-import { BarChart } from '@/components/BarChart';
+import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { LogViewer } from '@/components/LogViewer';
@@ -20,14 +20,102 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
-import { MetricGauge } from './MetricGauge';
-import { getAnalogy, findBaseline } from '@/lib/analogies';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
 import { FindingCard } from '@/components/FindingCard';
 import { AnomaliesList } from '@/components/AnomaliesList';
 import { LogTemplatesList } from '@/components/LogTemplatesList';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
+
+interface HistoryRow {
+  collected_at: string;
+  cpu_percent: number | null;
+  memory_mb: number | null;
+  network_rx_bytes: number | null;
+  network_tx_bytes: number | null;
+  blkio_read_bytes: number | null;
+  blkio_write_bytes: number | null;
+}
+
+interface ChartDataset {
+  timestamps: number[];
+  cpu: (number | null)[];
+  memory: (number | null)[];
+  netRx: (number | null)[];
+  netTx: (number | null)[];
+  diskRead: (number | null)[];
+  diskWrite: (number | null)[];
+  hasCpu: boolean;
+  hasMemory: boolean;
+  hasNetwork: boolean;
+  hasDisk: boolean;
+}
+
+/**
+ * Derive per-second rate values from cumulative byte counters. A counter reset
+ * (current < previous) produces null at that index — typically a container
+ * restart. Gaps between samples produce null when dt is 0 or suspiciously
+ * large (> 10 minutes).
+ */
+function rateFromCumulative(values: (number | null)[], timestamps: number[]): (number | null)[] {
+  const out: (number | null)[] = new Array(values.length).fill(null);
+  for (let i = 1; i < values.length; i++) {
+    const curr = values[i];
+    const prev = values[i - 1];
+    if (curr == null || prev == null) continue;
+    const dt = timestamps[i]! - timestamps[i - 1]!;
+    if (dt <= 0 || dt > 600) continue;
+    const delta = curr - prev;
+    if (delta < 0) continue; // counter reset
+    out[i] = delta / dt;
+  }
+  return out;
+}
+
+function buildChartData(history: HistoryRow[]): ChartDataset {
+  if (history.length === 0) {
+    return {
+      timestamps: [],
+      cpu: [], memory: [], netRx: [], netTx: [], diskRead: [], diskWrite: [],
+      hasCpu: false, hasMemory: false, hasNetwork: false, hasDisk: false,
+    };
+  }
+  const timestamps = history.map((h) => Math.floor(new Date(h.collected_at.includes('T') ? h.collected_at : h.collected_at.replace(' ', 'T') + 'Z').getTime() / 1000));
+  const cpu = history.map((h) => h.cpu_percent);
+  const memory = history.map((h) => h.memory_mb);
+  const rxCum = history.map((h) => h.network_rx_bytes);
+  const txCum = history.map((h) => h.network_tx_bytes);
+  const readCum = history.map((h) => h.blkio_read_bytes);
+  const writeCum = history.map((h) => h.blkio_write_bytes);
+
+  const netRx = rateFromCumulative(rxCum, timestamps);
+  const netTx = rateFromCumulative(txCum, timestamps);
+  const diskRead = rateFromCumulative(readCum, timestamps);
+  const diskWrite = rateFromCumulative(writeCum, timestamps);
+
+  const anyNonNull = (xs: (number | null)[]) => xs.some((v) => v != null);
+
+  return {
+    timestamps,
+    cpu,
+    memory,
+    netRx,
+    netTx,
+    diskRead,
+    diskWrite,
+    hasCpu: anyNonNull(cpu),
+    hasMemory: anyNonNull(memory),
+    hasNetwork: anyNonNull(netRx) || anyNonNull(netTx),
+    hasDisk: anyNonNull(diskRead) || anyNonNull(diskWrite),
+  };
+}
+
+function formatBytesPerSec(v: number): string {
+  if (v < 1024) return `${v.toFixed(0)} B/s`;
+  if (v < 1024 * 1024) return `${(v / 1024).toFixed(1)} KB/s`;
+  if (v < 1024 * 1024 * 1024) return `${(v / 1024 / 1024).toFixed(1)} MB/s`;
+  return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB/s`;
+}
 
 function findingConclusionTag(finding: Finding): string {
   // Mirror conclusionTag() in hub/src/insights/diagnosis/calibration.ts:
@@ -44,7 +132,6 @@ export function ContainerDetailPage() {
   const cname = encodeURIComponent(containerName!);
   const { isAuthenticated, token } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
-  const [showCharts, setShowCharts] = useState(true);
   // Per-tag feedback state so the thumbs buttons reflect the user's vote
   // immediately. Submitted votes also go to the calibration table via the
   // mutation below.
@@ -73,12 +160,6 @@ export function ContainerDetailPage() {
   const { data: availability } = useQuery({
     queryKey: queryKeys.containerAvailability(hostId, containerName),
     queryFn: () => api<ContainerAvailability>(`/hosts/${hid}/containers/${cname}/availability?days=7`),
-  });
-  const entityId = encodeURIComponent(`${hostId}/${containerName}`);
-  const { data: baselines, isFetched: baselinesReady } = useQuery({
-    queryKey: queryKeys.containerBaselines(hostId, containerName),
-    queryFn: () => api<BaselineRow[]>(`/baselines/container/${entityId}`).catch(() => []),
-    refetchInterval: false,
   });
   const { data: siblings } = useQuery({
     queryKey: queryKeys.hostContainers(hostId),
@@ -175,20 +256,14 @@ export function ContainerDetailPage() {
     </div>
   );
 
-  const findBl = (metric: string) => findBaseline(baselines, metric);
-
   const history = data.history || [];
 
   const runningCount = history.filter(h => h.status === 'running').length;
   const uptimePct = history.length > 0 ? Math.round((runningCount / history.length) * 1000) / 10 : null;
 
-  const cpuValues = history.filter(h => h.cpu_percent != null).map(h => h.cpu_percent!);
-  const memValues = history.filter(h => h.memory_mb != null).map(h => h.memory_mb!);
-
-  const avgCpu = cpuValues.length > 0 ? Math.round(cpuValues.reduce((a, b) => a + b, 0) / cpuValues.length * 10) / 10 : null;
-  const maxCpu = cpuValues.length > 0 ? Math.round(Math.max(...cpuValues) * 10) / 10 : null;
-  const avgMem = memValues.length > 0 ? Math.round(memValues.reduce((a, b) => a + b, 0) / memValues.length) : null;
-  const maxMem = memValues.length > 0 ? Math.round(Math.max(...memValues)) : null;
+  // Build uPlot-ready series. Timestamps are unix seconds. Network + disk
+  // fields are *cumulative* bytes, so we derive per-second rates from deltas.
+  const chartData = buildChartData(history);
 
   const firstRestart = history.length > 0 ? history[0]!.restart_count : 0;
   const lastRestart = history.length > 0 ? history[history.length - 1]!.restart_count : 0;
@@ -376,13 +451,11 @@ export function ContainerDetailPage() {
       {/* Overview Tab — Status + Detail layers below the hero */}
       {activeTab === 'overview' && (
         <div className="space-y-8">
-          {/* ═══ STATUS LAYER ═══ objective performance signals */}
+          {/* ═══ STATUS LAYER ═══ process availability over the last 7 days.
+              Live CPU/memory gauges used to live here but they duplicated the
+              time-series charts below — the charts show the same values plus
+              24h of context, so the gauges were removed. */}
           <section className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={baselinesReady ? getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent')) : null} />
-              <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={baselinesReady ? getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb')) : null} />
-            </div>
-
             {availability && (
               <Card title="Process availability (7 days)">
                 <div className="space-y-4">
@@ -454,31 +527,59 @@ export function ContainerDetailPage() {
           </section>
 
           {/* ═══ DETAIL LAYER ═══ historical depth + power-user options */}
-          {(cpuValues.length > 1 || memValues.length > 1 || !showHealthFailure) && (
+          {(chartData.hasCpu || chartData.hasMemory || chartData.hasNetwork || chartData.hasDisk || !showHealthFailure) && (
             <section className="space-y-6">
-              {(cpuValues.length > 1 || memValues.length > 1) && (
-                <div>
-                  <button
-                    onClick={() => setShowCharts(!showCharts)}
-                    className="mb-3 text-xs font-medium text-muted hover:text-fg transition-colors"
-                  >
-                    {showCharts ? '▲ Hide charts' : '▼ Show charts'}
-                  </button>
-                  {showCharts && (
-                    <div className="space-y-6">
-                      {cpuValues.length > 1 && (
-                        <Card title="CPU (last 24h)">
-                          <BarChart values={cpuValues} minLabel="0%" maxLabel={`${Math.max(...cpuValues).toFixed(0)}%`} />
-                        </Card>
-                      )}
-                      {memValues.length > 1 && (
-                        <Card title="Memory (last 24h)">
-                          <BarChart values={memValues} colorFn={() => 'var(--color-info)'} minLabel="0 MB" maxLabel={`${Math.max(...memValues).toFixed(0)} MB`} />
-                        </Card>
-                      )}
-                    </div>
-                  )}
-                </div>
+              {(chartData.hasCpu || chartData.hasMemory || chartData.hasNetwork || chartData.hasDisk) && (
+                <Card title="Metrics (last 24h)">
+                  <div className="grid gap-5 lg:grid-cols-2">
+                    {chartData.hasCpu && (
+                      <TimeSeriesChart
+                        title="CPU"
+                        timestamps={chartData.timestamps}
+                        unit="%"
+                        series={[{
+                          label: 'cpu',
+                          color: 'var(--color-success)',
+                          values: chartData.cpu,
+                          formatValue: (v) => `${v.toFixed(1)}%`,
+                        }] satisfies ChartSeries[]}
+                      />
+                    )}
+                    {chartData.hasMemory && (
+                      <TimeSeriesChart
+                        title="Memory"
+                        timestamps={chartData.timestamps}
+                        unit=" MB"
+                        series={[{
+                          label: 'memory',
+                          color: 'var(--color-info)',
+                          values: chartData.memory,
+                          formatValue: (v) => `${Math.round(v)} MB`,
+                        }] satisfies ChartSeries[]}
+                      />
+                    )}
+                    {chartData.hasNetwork && (
+                      <TimeSeriesChart
+                        title="Network I/O"
+                        timestamps={chartData.timestamps}
+                        series={[
+                          { label: 'rx', color: '#0ea5e9', values: chartData.netRx, formatValue: formatBytesPerSec },
+                          { label: 'tx', color: '#f59e0b', values: chartData.netTx, formatValue: formatBytesPerSec },
+                        ] satisfies ChartSeries[]}
+                      />
+                    )}
+                    {chartData.hasDisk && (
+                      <TimeSeriesChart
+                        title="Disk I/O"
+                        timestamps={chartData.timestamps}
+                        series={[
+                          { label: 'read', color: '#a855f7', values: chartData.diskRead, formatValue: formatBytesPerSec },
+                          { label: 'write', color: '#ef4444', values: chartData.diskWrite, formatValue: formatBytesPerSec },
+                        ] satisfies ChartSeries[]}
+                      />
+                    )}
+                  </div>
+                </Card>
               )}
 
               {/* AI diagnosis on healthy containers — available as a quiet
