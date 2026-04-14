@@ -85,7 +85,13 @@ describe('alert sender', () => {
         { type: 'container_down', target: 'nginx', hostId: 'host-1', message: 'nginx is down' },
         { baseUrl: 'https://insightd.example.com' },
       );
-      assert.ok(body.includes('Open in Insightd: https://insightd.example.com/containers/host-1/nginx'));
+      // Validate the rendered link by parsing it out and checking the URL
+      // components explicitly rather than substring-matching the assembled URL.
+      const match = body.match(/Open in Insightd: (\S+)/);
+      assert.ok(match, 'body should contain an Open in Insightd link');
+      const url = new URL(match![1]);
+      assert.equal(url.hostname, 'insightd.example.com');
+      assert.equal(url.pathname, '/containers/host-1/nginx');
     });
   });
 
@@ -141,7 +147,12 @@ describe('alert sender', () => {
         { baseUrl: 'https://insightd.example.com' },
       );
       assert.match(html, /Open in Insightd/);
-      assert.ok(html.includes('https://insightd.example.com/containers/host-1/nginx'));
+      // Parse the button href and validate URL components explicitly.
+      const hrefMatch = html.match(/href="([^"]*\/containers\/[^"]*)"/);
+      assert.ok(hrefMatch, 'html should contain a container link');
+      const url = new URL(hrefMatch![1]);
+      assert.equal(url.hostname, 'insightd.example.com');
+      assert.equal(url.pathname, '/containers/host-1/nginx');
     });
 
     it('omits Open in Insightd button when baseUrl empty', () => {

@@ -137,7 +137,11 @@ describe('renderHtml', () => {
   it('renders Open dashboard button when baseUrl is provided', () => {
     const html = renderHtml(GREEN_DIGEST, 'https://insightd.example.com');
     assert.match(html, /Open Insightd dashboard/);
-    assert.ok(html.includes('https://insightd.example.com'));
+    // Parse the button href and validate URL components explicitly.
+    const hrefMatch = html.match(/href="([^"]*)"[^>]*>[^<]*Open Insightd dashboard/);
+    assert.ok(hrefMatch, 'html should contain an Open dashboard link');
+    const url = new URL(hrefMatch![1]);
+    assert.equal(url.hostname, 'insightd.example.com');
   });
 
   it('omits Open dashboard button when baseUrl is empty', () => {
@@ -196,6 +200,9 @@ describe('renderPlainText', () => {
 
   it('shows Open dashboard link when baseUrl is provided', () => {
     const text = renderPlainText(GREEN_DIGEST, 'https://insightd.example.com');
-    assert.ok(text.includes('Open dashboard: https://insightd.example.com'));
+    const match = text.match(/Open dashboard: (\S+)/);
+    assert.ok(match, 'text should contain an Open dashboard link');
+    const url = new URL(match![1]);
+    assert.equal(url.hostname, 'insightd.example.com');
   });
 });
