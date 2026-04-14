@@ -137,7 +137,7 @@ describe('renderHtml', () => {
   it('renders Open dashboard button when baseUrl is provided', () => {
     const html = renderHtml(GREEN_DIGEST, 'https://insightd.example.com');
     assert.match(html, /Open Insightd dashboard/);
-    assert.match(html, /insightd\.example\.com/);
+    assert.ok(html.includes('https://insightd.example.com'));
   });
 
   it('omits Open dashboard button when baseUrl is empty', () => {
@@ -196,6 +196,6 @@ describe('renderPlainText', () => {
 
   it('shows Open dashboard link when baseUrl is provided', () => {
     const text = renderPlainText(GREEN_DIGEST, 'https://insightd.example.com');
-    assert.match(text, /Open dashboard.*insightd\.example\.com/);
+    assert.ok(text.includes('Open dashboard: https://insightd.example.com'));
   });
 });

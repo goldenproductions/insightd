@@ -76,7 +76,7 @@ describe('mail components', () => {
     it('escapes unsafe title characters', () => {
       const html = hero({ severity: 'red', title: '<script>' });
       assert.match(html, /&lt;script&gt;/);
-      assert.ok(!/<script>/.test(html));
+      assert.ok(!html.includes('<script>'));
     });
   });
 

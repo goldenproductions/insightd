@@ -12,9 +12,7 @@ const {
   card,
   metricRow,
   mutedText,
-  calloutBox,
   button,
-  badge,
   linkTo,
   escapeHtml,
 } = require('./components');

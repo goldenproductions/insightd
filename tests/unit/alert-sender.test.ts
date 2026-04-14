@@ -85,7 +85,7 @@ describe('alert sender', () => {
         { type: 'container_down', target: 'nginx', hostId: 'host-1', message: 'nginx is down' },
         { baseUrl: 'https://insightd.example.com' },
       );
-      assert.match(body, /Open in Insightd: https:\/\/insightd\.example\.com\/containers\/host-1\/nginx/);
+      assert.ok(body.includes('Open in Insightd: https://insightd.example.com/containers/host-1/nginx'));
     });
   });
 
@@ -141,7 +141,7 @@ describe('alert sender', () => {
         { baseUrl: 'https://insightd.example.com' },
       );
       assert.match(html, /Open in Insightd/);
-      assert.match(html, /https:\/\/insightd\.example\.com\/containers\/host-1\/nginx/);
+      assert.ok(html.includes('https://insightd.example.com/containers/host-1/nginx'));
     });
 
     it('omits Open in Insightd button when baseUrl empty', () => {
