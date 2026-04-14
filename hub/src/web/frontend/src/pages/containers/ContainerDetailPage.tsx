@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, BaselineRow, ContainerSnapshot, Finding } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, Finding } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -20,8 +20,6 @@ import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
-import { MetricGauge } from './MetricGauge';
-import { getAnalogy, findBaseline } from '@/lib/analogies';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
 import { FindingCard } from '@/components/FindingCard';
 import { AnomaliesList } from '@/components/AnomaliesList';
@@ -163,12 +161,6 @@ export function ContainerDetailPage() {
     queryKey: queryKeys.containerAvailability(hostId, containerName),
     queryFn: () => api<ContainerAvailability>(`/hosts/${hid}/containers/${cname}/availability?days=7`),
   });
-  const entityId = encodeURIComponent(`${hostId}/${containerName}`);
-  const { data: baselines, isFetched: baselinesReady } = useQuery({
-    queryKey: queryKeys.containerBaselines(hostId, containerName),
-    queryFn: () => api<BaselineRow[]>(`/baselines/container/${entityId}`).catch(() => []),
-    refetchInterval: false,
-  });
   const { data: siblings } = useQuery({
     queryKey: queryKeys.hostContainers(hostId),
     queryFn: () => api<ContainerSnapshot[]>(`/hosts/${hid}/containers`),
@@ -264,20 +256,10 @@ export function ContainerDetailPage() {
     </div>
   );
 
-  const findBl = (metric: string) => findBaseline(baselines, metric);
-
   const history = data.history || [];
 
   const runningCount = history.filter(h => h.status === 'running').length;
   const uptimePct = history.length > 0 ? Math.round((runningCount / history.length) * 1000) / 10 : null;
-
-  const cpuValues = history.filter(h => h.cpu_percent != null).map(h => h.cpu_percent!);
-  const memValues = history.filter(h => h.memory_mb != null).map(h => h.memory_mb!);
-
-  const avgCpu = cpuValues.length > 0 ? Math.round(cpuValues.reduce((a, b) => a + b, 0) / cpuValues.length * 10) / 10 : null;
-  const maxCpu = cpuValues.length > 0 ? Math.round(Math.max(...cpuValues) * 10) / 10 : null;
-  const avgMem = memValues.length > 0 ? Math.round(memValues.reduce((a, b) => a + b, 0) / memValues.length) : null;
-  const maxMem = memValues.length > 0 ? Math.round(Math.max(...memValues)) : null;
 
   // Build uPlot-ready series. Timestamps are unix seconds. Network + disk
   // fields are *cumulative* bytes, so we derive per-second rates from deltas.
@@ -469,13 +451,11 @@ export function ContainerDetailPage() {
       {/* Overview Tab — Status + Detail layers below the hero */}
       {activeTab === 'overview' && (
         <div className="space-y-8">
-          {/* ═══ STATUS LAYER ═══ objective performance signals */}
+          {/* ═══ STATUS LAYER ═══ process availability over the last 7 days.
+              Live CPU/memory gauges used to live here but they duplicated the
+              time-series charts below — the charts show the same values plus
+              24h of context, so the gauges were removed. */}
           <section className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-2">
-              <MetricGauge label="CPU" current={data.cpu_percent} avg={avgCpu} peak={maxCpu} unit="%" max={100} analogy={baselinesReady ? getAnalogy('cpu', data.cpu_percent, null, findBl('cpu_percent')) : null} />
-              <MetricGauge label="Memory" current={data.memory_mb != null ? Math.round(data.memory_mb) : null} avg={avgMem} peak={maxMem} unit=" MB" max={maxMem != null ? Math.round(maxMem * 1.3) : 512} analogy={baselinesReady ? getAnalogy('memory', data.memory_mb, maxMem != null ? maxMem * 1.3 : 512, findBl('memory_mb')) : null} />
-            </div>
-
             {availability && (
               <Card title="Process availability (7 days)">
                 <div className="space-y-4">
