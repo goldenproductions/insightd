@@ -256,6 +256,35 @@ describe('queries', () => {
       assert.equal(hs.score, 97);
     });
 
+    it('excludes intentionally-stopped containers from downContainers', () => {
+      // Simulates proxmox-01 with nginx sitting 'exited' for days — the agent
+      // still reports it every 5 min (docker ps -a), and the 24h availability
+      // query would show 0% uptime, but we don't want it in the feed.
+      seedHost(db, 'h1', recent);
+      // Seed 20 snapshots of an exited container, all within the last 24h and
+      // the most recent one inside the 15-minute active-pair window.
+      const snapshots: any[] = [];
+      for (let i = 0; i < 20; i++) {
+        const minutesAgo = 5 + i * 5;
+        snapshots.push({ hostId: 'h1', name: 'nginx', status: 'exited', at: ts(new Date(NOW - minutesAgo * 60 * 1000)) });
+      }
+      // Also seed a currently-running container with some historical dips
+      // (10 running + 2 exited = 83.3% uptime) — this SHOULD appear.
+      for (let i = 0; i < 10; i++) {
+        snapshots.push({ hostId: 'h1', name: 'webapp', status: 'running', at: ts(new Date(NOW - (5 + i * 5) * 60 * 1000)) });
+      }
+      snapshots.push({ hostId: 'h1', name: 'webapp', status: 'exited', at: ts(new Date(NOW - 60 * 60 * 1000)) });
+      snapshots.push({ hostId: 'h1', name: 'webapp', status: 'exited', at: ts(new Date(NOW - 65 * 60 * 1000)) });
+      seedContainerSnapshots(db, snapshots);
+
+      const dash = getDashboard(db, 10);
+      const downNames = dash.availability.downContainers.map((c: any) => c.name);
+      assert.ok(!downNames.includes('nginx'),
+        'intentionally-stopped nginx should not be in downContainers');
+      assert.ok(downNames.includes('webapp'),
+        'currently-running webapp with historical downtime should be in downContainers');
+    });
+
     it('leaves alerts factor alone when live count matches stored value', () => {
       seedHost(db, 'h1', recent);
       seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
