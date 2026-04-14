@@ -66,7 +66,9 @@ export function DashboardPage() {
       </div>
 
       {/* Feed cards — 24px from summary unit, 16px between peer cards */}
-      <FeedCard className="mt-6" title="Needs Attention" items={acuteItems} />
+      <div id="needs-attention" className="scroll-mt-4">
+        <FeedCard className="mt-6" title="Needs Attention" items={acuteItems} />
+      </div>
       <FeedCard
         className={acuteItems.length > 0 ? 'mt-4' : 'mt-6'}
         title="Insights"
@@ -208,30 +210,44 @@ function HealthHero({ systemHealthScore, availability, concernCount }: { systemH
     : availability.overallPercent >= 95 ? 'text-warning'
     : 'text-danger';
 
+  const scrollToNeedsAttention = () => {
+    const el = document.getElementById('needs-attention');
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
   return (
     <div className="py-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-full items-center gap-5 rounded-lg p-2 -m-2 text-left transition-opacity hover:opacity-90"
-        aria-expanded={expanded}
-        aria-controls="health-breakdown"
-      >
+      <div className="flex items-start gap-5">
         {systemHealthScore && <HealthBadge score={systemHealthScore.score} size="lg" />}
         <div className="min-w-0 flex-1">
-          <div className={`text-xl font-semibold ${concernCount === 0 ? 'text-fg' : 'text-warning'}`}>
-            {stateLabel}
-          </div>
+          {concernCount > 0 ? (
+            <button
+              type="button"
+              onClick={scrollToNeedsAttention}
+              className="rounded text-left text-xl font-semibold text-warning transition-opacity hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+            >
+              {stateLabel}
+            </button>
+          ) : (
+            <div className="text-xl font-semibold text-fg">{stateLabel}</div>
+          )}
           <div className={`mt-0.5 text-sm ${availColor}`}>
             {availText}
           </div>
           {systemHealthScore && (
-            <div className="mt-1 flex items-center gap-1 text-xs text-muted">
-              <span>{expanded ? 'Hide details' : 'Why this score?'}</span>
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className="mt-1 flex items-center gap-1 rounded text-xs text-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-border"
+              aria-expanded={expanded}
+              aria-controls="health-breakdown"
+            >
+              <span>{expanded ? 'Hide score breakdown' : 'Show health score breakdown'}</span>
               <Chevron expanded={expanded} />
-            </div>
+            </button>
           )}
         </div>
-      </button>
+      </div>
 
       {expanded && systemHealthScore?.hostBreakdown && (
         <div id="health-breakdown" className="mt-4 rounded-xl border border-border bg-surface p-4">
