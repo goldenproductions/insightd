@@ -383,7 +383,7 @@ async function runAlerts(db: Database.Database, config: EvaluatorConfig): Promis
 
   for (const alert of toSend) {
     try {
-      await sendAlert(alert, config);
+      await sendAlert(alert, config, db);
       const label = alert.isResolution ? 'RESOLVED' : (alert.reminderNumber && alert.reminderNumber > 0) ? `REMINDER #${alert.reminderNumber}` : 'ALERT';
       logger.info('alerts', `${label}: ${alert.message}`);
     } catch (err) {

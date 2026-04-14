@@ -1,5 +1,7 @@
+import type Database from 'better-sqlite3';
 const nodemailer = require('nodemailer');
 import logger = require('../utils/logger');
+const { renderAlertHtml, renderAlertText, subjectFor } = require('../../shared/mail/alert-template');
 
 interface AlertItem {
   isResolution?: boolean;
@@ -7,6 +9,7 @@ interface AlertItem {
   message: string;
   type: string;
   target: string;
+  hostId?: string;
   value?: any;
   triggeredAt?: string;
 }
@@ -25,56 +28,12 @@ interface AlertSenderConfig {
     to: string;
     [key: string]: any;
   };
+  web?: {
+    baseUrl?: string;
+  };
 }
 
-function formatSubject(alert: AlertItem): string {
-  if (alert.isResolution) {
-    return `[OK] insightd: ${alert.message}`;
-  }
-  if (alert.reminderNumber && alert.reminderNumber > 0) {
-    return `[ALERT] insightd: ${alert.message} (reminder #${alert.reminderNumber})`;
-  }
-  return `[ALERT] insightd: ${alert.message}`;
-}
-
-function formatBody(alert: AlertItem): string {
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-  const lines: string[] = [];
-
-  if (alert.isResolution) {
-    lines.push(`RESOLVED: ${alert.message}`);
-    lines.push('');
-    if (alert.triggeredAt) {
-      lines.push(`Was alerting since: ${alert.triggeredAt} UTC`);
-    }
-    lines.push(`Resolved at:        ${now}`);
-  } else {
-    lines.push(`ALERT: ${alert.message}`);
-    lines.push('');
-    lines.push(`Type:      ${alert.type}`);
-    lines.push(`Target:    ${alert.target}`);
-    if (alert.value !== undefined) {
-      lines.push(`Value:     ${alert.value}`);
-    }
-    lines.push(`Time:      ${now}`);
-    if (alert.reminderNumber && alert.reminderNumber > 0) {
-      lines.push(`Reminder:  #${alert.reminderNumber}`);
-    }
-  }
-
-  lines.push('');
-  lines.push('---');
-  if (alert.isResolution) {
-    lines.push('Set INSIGHTD_ALERTS_ENABLED=false to disable alerts.');
-  } else {
-    lines.push('Reminders slow down as the alert persists, up to once per day until resolved.');
-    lines.push('Set INSIGHTD_ALERTS_ENABLED=false to disable alerts.');
-  }
-
-  return lines.join('\n');
-}
-
-async function sendAlert(alert: AlertItem, config: AlertSenderConfig): Promise<void> {
+async function sendAlert(alert: AlertItem, config: AlertSenderConfig, _db?: Database.Database): Promise<void> {
   if (!config.smtp.host || !config.alerts.to) {
     logger.warn('alert-sender', 'SMTP not configured \u2014 skipping alert');
     return;
@@ -90,14 +49,18 @@ async function sendAlert(alert: AlertItem, config: AlertSenderConfig): Promise<v
     },
   });
 
+  // Standalone mode does not run the diagnosis engine — diagnosis is always null here.
+  const ctx = { diagnosis: null, baseUrl: config.web?.baseUrl || '' };
+
   const info = await transporter.sendMail({
     from: config.smtp.from,
     to: config.alerts.to,
-    subject: formatSubject(alert),
-    text: formatBody(alert),
+    subject: subjectFor(alert),
+    text: renderAlertText(alert, ctx),
+    html: renderAlertHtml(alert, ctx),
   });
 
   logger.info('alert-sender', `Alert sent to ${config.alerts.to} (${info.messageId})`);
 }
 
-module.exports = { sendAlert, formatSubject, formatBody };
+module.exports = { sendAlert };

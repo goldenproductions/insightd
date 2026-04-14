@@ -41,6 +41,11 @@ const config = Object.freeze({
   // Update checks (daily by default)
   updateCheckCron: process.env.INSIGHTD_UPDATE_CHECK_CRON || '0 3 * * *',
 
+  // Web (public URL of this hub; used to link from emails back to the UI)
+  web: Object.freeze({
+    baseUrl: process.env.INSIGHTD_WEB_BASE_URL || '',
+  }),
+
   // Alerts
   alerts: Object.freeze({
     enabled: process.env.INSIGHTD_ALERTS_ENABLED === 'true',
