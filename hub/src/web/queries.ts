@@ -461,6 +461,24 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
   `).all() as Array<{ host_id: string; container_name: string }>;
   const availRows: AvailabilityRow[] = [];
   if (activePairs.length > 0) {
+    // Skip containers whose latest snapshot is not 'running'. Mirrors the
+    // filter in hub/src/insights/detector.ts (PR #125): a currently-stopped
+    // container falls into one of three buckets, none of which want a
+    // "downtime" item on the dashboard:
+    //   1. Intentionally stopped (nginx/postgres/redis sitting exited for
+    //      weeks on proxmox-01) — pure noise, inflates concernCount.
+    //   2. Actively crashed — the container_unhealthy/container_down alert
+    //      path surfaces it via activeAlertsList.
+    //   3. Stopped moments ago — the alert will fire on the next evaluator
+    //      tick. No need to double-report it here.
+    // Only "was down briefly, is running again" is a legitimate entry in
+    // the availability feed, and that requires the latest snapshot to be
+    // running.
+    const latestStatusStmt = db.prepare(`
+      SELECT status FROM container_snapshots
+      WHERE host_id = ? AND container_name = ?
+      ORDER BY collected_at DESC LIMIT 1
+    `);
     const availStmt = db.prepare(`
       SELECT labels,
         COUNT(*) as total,
@@ -470,6 +488,9 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
         AND collected_at >= datetime('now', '-1 day')
     `);
     for (const pair of activePairs) {
+      const latest = latestStatusStmt.get(pair.host_id, pair.container_name) as
+        { status: string } | undefined;
+      if (!latest || latest.status !== 'running') continue;
       const row = availStmt.get(pair.host_id, pair.container_name) as
         { labels: string | null; total: number; running: number } | undefined;
       if (row && row.total > 0) {
