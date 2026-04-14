@@ -1,1 +1,0 @@
-import{i as e}from"./api-BE-4kkW2.js";var t=e();function n({children:e,actions:n,subtitle:r}){return(0,t.jsxs)(`div`,{className:`flex items-start justify-between gap-4`,children:[(0,t.jsxs)(`div`,{children:[(0,t.jsx)(`h1`,{className:`text-xl font-bold text-fg`,children:e}),r&&(0,t.jsx)(`p`,{className:`mt-1 text-sm text-muted`,children:r})]}),n]})}export{n as t};

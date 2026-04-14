@@ -1,1 +1,0 @@
-import{i as e}from"./api-BE-4kkW2.js";var t=e();function n({message:e=`Loading...`}){return(0,t.jsxs)(`div`,{className:`flex items-center justify-center gap-2 py-12 text-sm text-muted`,children:[(0,t.jsx)(`span`,{className:`inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent`}),e]})}export{n as t};

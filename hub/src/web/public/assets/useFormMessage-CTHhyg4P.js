@@ -1,0 +1,1 @@
+import{a as e,u as t}from"./api-CXqkJEZx.js";var n=t(e(),1);function r(){let[e,t]=(0,n.useState)(null);return{msg:e,showSuccess:e=>t({text:e,color:`green`}),showError:e=>t({text:e instanceof Error?e.message:`Failed`,color:`red`}),showWarning:e=>t({text:e,color:`yellow`}),clear:()=>t(null)}}export{r as t};
