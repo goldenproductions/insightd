@@ -44,6 +44,30 @@ interface EndpointDigest {
   avgResponseMs: number | null;
 }
 
+interface DigestAlert {
+  type: string;
+  target: string;
+  hostId: string;
+  message: string;
+  triggeredAt: string;
+  resolvedAt: string | null;
+  durationMinutes: number;
+  reminderCount: number;
+}
+
+interface DigestAnomaly {
+  entityType: string;
+  entityId: string;
+  metric: string;
+  bucketStart: string;
+  robustZ: number;
+}
+
+interface DigestHostGroup {
+  group: string | null;
+  hostIds: string[];
+}
+
 interface DigestContainer {
   name: string;
   hostId: string;
@@ -76,6 +100,9 @@ interface DigestData {
   updatesAvailable: UpdateRow[];
   hostCount: number;
   endpoints: EndpointDigest[];
+  triggeredAlertsThisWeek: DigestAlert[];
+  anomaliesThisWeek: DigestAnomaly[];
+  hostGroups: DigestHostGroup[];
 }
 
 function buildDigest(db: Database.Database, config: DigestConfig): DigestData {
@@ -194,6 +221,79 @@ function buildDigest(db: Database.Database, config: DigestConfig): DigestData {
     // http-monitor module not available
   }
 
+  // --- Alerts fired during the week ---
+  let triggeredAlertsThisWeek: DigestAlert[] = [];
+  try {
+    const alertRows = db.prepare(`
+      SELECT host_id, alert_type, target, message, triggered_at, resolved_at, notify_count,
+             CAST((julianday(COALESCE(resolved_at, 'now')) - julianday(triggered_at)) * 1440 AS INTEGER) AS duration_minutes
+      FROM alert_state
+      WHERE triggered_at >= ?
+      ORDER BY duration_minutes DESC
+      LIMIT 20
+    `).all(thisWeekStart) as Array<{
+      host_id: string;
+      alert_type: string;
+      target: string;
+      message: string;
+      triggered_at: string;
+      resolved_at: string | null;
+      notify_count: number;
+      duration_minutes: number;
+    }>;
+    triggeredAlertsThisWeek = alertRows.map(r => ({
+      type: r.alert_type,
+      target: r.target,
+      hostId: r.host_id,
+      message: r.message,
+      triggeredAt: r.triggered_at,
+      resolvedAt: r.resolved_at,
+      durationMinutes: r.duration_minutes || 0,
+      reminderCount: Math.max(0, (r.notify_count || 1) - 1),
+    }));
+  } catch {
+    // alert_state table not present
+  }
+
+  // --- Anomalies detected during the week ---
+  let anomaliesThisWeek: DigestAnomaly[] = [];
+  try {
+    anomaliesThisWeek = (db.prepare(`
+      SELECT entity_type, entity_id, metric, bucket_start, robust_z
+      FROM rollup_anomalies
+      WHERE bucket_start >= ?
+      ORDER BY ABS(robust_z) DESC
+      LIMIT 10
+    `).all(thisWeekStart) as Array<{ entity_type: string; entity_id: string; metric: string; bucket_start: string; robust_z: number }>).map(r => ({
+      entityType: r.entity_type,
+      entityId: r.entity_id,
+      metric: r.metric,
+      bucketStart: r.bucket_start,
+      robustZ: r.robust_z,
+    }));
+  } catch {
+    // rollup_anomalies table not present
+  }
+
+  // --- Host groups (single-host standalone mode typically has none) ---
+  let hostGroups: DigestHostGroup[] = [];
+  try {
+    const hostRowsWithGroup = db.prepare(`
+      SELECT host_id, COALESCE(host_group_override, host_group) AS host_group
+      FROM hosts
+      ORDER BY host_group, host_id
+    `).all() as Array<{ host_id: string; host_group: string | null }>;
+    const grouped = new Map<string | null, string[]>();
+    for (const row of hostRowsWithGroup) {
+      const key = row.host_group || null;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(row.host_id);
+    }
+    hostGroups = Array.from(grouped.entries()).map(([group, hostIds]) => ({ group, hostIds }));
+  } catch {
+    // hosts table not present (standalone mode may not track hosts)
+  }
+
   // --- Build summary ---
   const issues: string[] = [];
   if (containers.some(c => c.status === 'red')) issues.push('container downtime');
@@ -225,6 +325,9 @@ function buildDigest(db: Database.Database, config: DigestConfig): DigestData {
     updatesAvailable: latestUpdates,
     hostCount: hostRows.length,
     endpoints,
+    triggeredAlertsThisWeek,
+    anomaliesThisWeek,
+    hostGroups,
   };
 
   logger.info('digest', `Built digest for week ${weekNumber} (${hostRows.length} host${hostRows.length !== 1 ? 's' : ''}): ${summaryLine}`);

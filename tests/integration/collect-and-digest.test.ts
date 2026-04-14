@@ -72,7 +72,7 @@ describe('integration: collect and digest', () => {
     assert.match(html, /nginx/);
 
     const text = renderPlainText(digest);
-    assert.match(text, /Insightd/);
+    assert.match(text, /insightd/i);
   });
 
   it('handles empty container environment gracefully', async () => {

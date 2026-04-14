@@ -14,6 +14,9 @@ interface SmtpConfig {
 interface SenderConfig {
   smtp: SmtpConfig;
   digestTo: string;
+  web?: {
+    baseUrl?: string;
+  };
 }
 
 interface DigestData {
@@ -38,13 +41,14 @@ async function sendDigest(digestData: DigestData, config: SenderConfig, db: Data
 
     const icon = digestData.overallStatus === 'green' ? '\u{1F7E2}' : digestData.overallStatus === 'yellow' ? '\u{1F7E1}' : '\u{1F534}';
     const subject = `${icon} Insightd \u2014 Week ${digestData.weekNumber}: ${digestData.summaryLine}`;
+    const baseUrl = config.web?.baseUrl || '';
 
     const info = await transporter.sendMail({
       from: config.smtp.from,
       to: config.digestTo,
       subject,
-      text: renderPlainText(digestData),
-      html: renderHtml(digestData),
+      text: renderPlainText(digestData, baseUrl),
+      html: renderHtml(digestData, baseUrl),
     });
 
     logger.info('sender', `Digest sent to ${config.digestTo} (messageId: ${info.messageId})`);

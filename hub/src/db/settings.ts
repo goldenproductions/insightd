@@ -72,12 +72,17 @@ interface AiConfig {
   enabled?: boolean;
 }
 
+interface WebConfig {
+  baseUrl: string;
+}
+
 interface BaseConfig {
   digestTo: string;
   diskWarnPercent: number;
   smtp: SmtpConfig;
   alerts: AlertsConfig;
   ai?: AiConfig;
+  web?: WebConfig;
   [key: string]: any;
 }
 
@@ -126,6 +131,9 @@ const SETTING_DEFS: SettingDef[] = [
   // Status Page
   { key: 'statusPage.enabled', env: 'INSIGHTD_STATUS_PAGE', type: 'bool', category: 'Status Page', label: 'Enable public status page', hotReload: true, default: 'false', description: 'Serve a public status page at /status (no login required)' },
   { key: 'statusPage.title', env: 'INSIGHTD_STATUS_PAGE_TITLE', type: 'string', category: 'Status Page', label: 'Page title', hotReload: true, default: 'System Status', description: 'Title shown on the public status page' },
+
+  // Web
+  { key: 'web.baseUrl', env: 'INSIGHTD_WEB_BASE_URL', type: 'string', category: 'Web', label: 'Hub Base URL', hotReload: true, default: '', description: 'Public URL of this hub (e.g. https://insightd.example.com). Used to link from emails back to the UI. Leave blank to disable links.' },
 
   // AI Diagnosis
   { key: 'ai.geminiApiKey', env: 'GEMINI_API_KEY', type: 'string', category: 'AI Diagnosis', label: 'Gemini API Key', hotReload: true, default: '', sensitive: true, description: 'Enables the "Diagnose with AI" button on container detail. Get a free key at https://aistudio.google.com/apikey' },
@@ -264,6 +272,9 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts?.excludeContainers || '',
       endpointDown: get('alerts.endpointDown'),
       endpointFailureThreshold: get('alerts.endpointFailureThreshold') || baseConfig.alerts?.endpointFailureThreshold || 3,
+    },
+    web: {
+      baseUrl: (get('web.baseUrl') as string) || baseConfig.web?.baseUrl || '',
     },
   };
 }
