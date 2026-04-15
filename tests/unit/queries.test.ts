@@ -274,33 +274,34 @@ describe('queries', () => {
       assert.equal(hs.score, 97);
     });
 
-    it('excludes intentionally-stopped containers from downContainers', () => {
+    it('overallPercent excludes intentionally-stopped containers', () => {
       // Simulates proxmox-01 with nginx sitting 'exited' for days — the agent
-      // still reports it every 5 min (docker ps -a), and the 24h availability
-      // query would show 0% uptime, but we don't want it in the feed.
+      // still reports it every 5 min (docker ps -a). getDashboard previously
+      // exposed a per-container `downContainers` list that the frontend
+      // routed into the acute "Needs Attention" feed, which duplicated the
+      // retrospective `had downtime` insight. That list is gone; what
+      // remains is the fleet-wide `overallPercent`, which should still
+      // ignore intentionally-stopped containers by design (the upstream
+      // filter in getDashboard skips any container whose latest snapshot
+      // is not 'running').
       seedHost(db, 'h1', recent);
-      // Seed 20 snapshots of an exited container, all within the last 24h and
-      // the most recent one inside the 15-minute active-pair window.
       const snapshots: any[] = [];
       for (let i = 0; i < 20; i++) {
         const minutesAgo = 5 + i * 5;
         snapshots.push({ hostId: 'h1', name: 'nginx', status: 'exited', at: ts(new Date(NOW - minutesAgo * 60 * 1000)) });
       }
-      // Also seed a currently-running container with some historical dips
-      // (10 running + 2 exited = 83.3% uptime) — this SHOULD appear.
-      for (let i = 0; i < 10; i++) {
+      // A currently-running container with 100% uptime — the fleet % should
+      // be 100 and nginx should not drag it down.
+      for (let i = 0; i < 12; i++) {
         snapshots.push({ hostId: 'h1', name: 'webapp', status: 'running', at: ts(new Date(NOW - (5 + i * 5) * 60 * 1000)) });
       }
-      snapshots.push({ hostId: 'h1', name: 'webapp', status: 'exited', at: ts(new Date(NOW - 60 * 60 * 1000)) });
-      snapshots.push({ hostId: 'h1', name: 'webapp', status: 'exited', at: ts(new Date(NOW - 65 * 60 * 1000)) });
       seedContainerSnapshots(db, snapshots);
 
       const dash = getDashboard(db, 10);
-      const downNames = dash.availability.downContainers.map((c: any) => c.name);
-      assert.ok(!downNames.includes('nginx'),
-        'intentionally-stopped nginx should not be in downContainers');
-      assert.ok(downNames.includes('webapp'),
-        'currently-running webapp with historical downtime should be in downContainers');
+      assert.equal(dash.availability.overallPercent, 100,
+        'exited nginx must not drag overallPercent below 100');
+      assert.equal(dash.availability.downContainers, undefined,
+        'downContainers field removed — retrospective dips live in topInsights now');
     });
 
     it('leaves alerts factor alone when live count matches stored value', () => {
@@ -326,6 +327,28 @@ describe('queries', () => {
       // Score stays at stored value since nothing was patched
       assert.equal(h1.score, 80);
       assert.equal(dash.systemHealthScore.score, 80);
+    });
+
+    it('getTopInsights returns the evidence column so the frontend can render timeAgo', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
+      db.prepare(`
+        INSERT INTO insights (entity_type, entity_id, category, severity, title, message, metric, current_value, baseline_value, evidence)
+        VALUES ('container', 'h1/nginx', 'availability', 'warning',
+                'nginx recovered from a brief dip',
+                'Down for ~5m in the last 24h — now running again (98.9% uptime).',
+                null, 98.9, 99,
+                '{"lastDownAt":"2026-04-15 16:32:07","downMinutes":5,"uptimePct":98.9}')
+      `).run();
+
+      const dash = getDashboard(db, 10);
+      const insight = dash.topInsights.find((i: any) => i.title.includes('recovered'));
+      assert.ok(insight, 'expected the availability insight to surface in topInsights');
+      assert.ok(insight.evidence, 'evidence field must be returned');
+      const ev = JSON.parse(insight.evidence);
+      assert.equal(ev.lastDownAt, '2026-04-15 16:32:07');
+      assert.equal(ev.downMinutes, 5);
+      assert.equal(ev.uptimePct, 98.9);
     });
   });
 

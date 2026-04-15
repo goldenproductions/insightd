@@ -140,23 +140,35 @@ describe('detector', () => {
   });
 
   describe('downtime insight filter', () => {
-    it('flags a container that was briefly down but has recovered', () => {
+    it('flags a container that was briefly down but has recovered, with evidence JSON', () => {
       const recent = ts(new Date(NOW - 2 * 60 * 1000));
       seedHost(db, 'h1', recent);
 
-      // 6 hours down, then currently running.
+      // 6 hours down, then currently running. The most recent non-running
+      // snapshot should end up in the evidence JSON as lastDownAt.
       for (let h = 23; h > 6; h--) {
         seedContainerSnapshots(db, [{ hostId: 'h1', name: 'svc', status: 'running', cpu: 5, mem: 50, at: ts(new Date(NOW - h * 3600_000)) }]);
       }
+      const lastDownAt = ts(new Date(NOW - 2 * 3600_000));
       for (let h = 6; h > 1; h--) {
         seedContainerSnapshots(db, [{ hostId: 'h1', name: 'svc', status: 'exited', cpu: 0, mem: 0, at: ts(new Date(NOW - h * 3600_000)) }]);
       }
+      seedContainerSnapshots(db, [{ hostId: 'h1', name: 'svc', status: 'exited', cpu: 0, mem: 0, at: lastDownAt }]);
       seedContainerSnapshots(db, [{ hostId: 'h1', name: 'svc', status: 'running', cpu: 5, mem: 50, at: recent }]);
 
       generateInsights(db);
-      const rows = db.prepare("SELECT * FROM insights WHERE entity_id = 'h1/svc' AND category = 'availability'").all();
+      const rows = db.prepare("SELECT * FROM insights WHERE entity_id = 'h1/svc' AND category = 'availability'").all() as Array<{
+        title: string; message: string; evidence: string | null;
+      }>;
       assert.equal(rows.length, 1);
-      assert.match(rows[0].message, /recovered/);
+      assert.match(rows[0].title, /recovered from a brief dip/);
+      assert.match(rows[0].message, /running again/);
+
+      assert.ok(rows[0].evidence, 'evidence JSON must be populated');
+      const ev = JSON.parse(rows[0].evidence!);
+      assert.equal(ev.lastDownAt, lastDownAt, 'lastDownAt should equal the most recent non-running snapshot');
+      assert.ok(typeof ev.downMinutes === 'number' && ev.downMinutes > 0);
+      assert.ok(typeof ev.uptimePct === 'number' && ev.uptimePct < 100);
     });
 
     it('does NOT flag a long-stopped container as "had downtime"', () => {

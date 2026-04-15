@@ -100,6 +100,7 @@ interface InsightRow {
   severity: string;
   title: string;
   message: string;
+  evidence: string | null;
 }
 
 interface HostMetricsRow {
@@ -511,18 +512,17 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     if (!c.labels) return true;
     try { return JSON.parse(c.labels)['insightd.internal'] !== 'true'; } catch { return true; }
   });
+  // Per-container retrospective downtime used to surface here as an acute
+  // "Downtime" row in the dashboard feed. That duplicated the `availability`
+  // insight (same event, same container) in two columns, making recovered
+  // dips look like active problems. The fleet-wide `overallPercent` still
+  // needs the totals, but individual entries now live only in the Insights
+  // feed via getTopInsights + the `had downtime` insight row.
   let totalSnapshots = 0, totalRunning = 0;
-  const downContainers: Array<{ hostId: string; name: string; uptimePercent: number; downMinutes: number }> = [];
   for (const r of availFiltered) {
     totalSnapshots += r.total;
     totalRunning += r.running;
-    const pct = Math.round((r.running / r.total) * 1000) / 10;
-    if (pct < 100) {
-      const downMinutes = Math.round((r.total - r.running) * 5);
-      downContainers.push({ hostId: r.host_id, name: r.container_name, uptimePercent: pct, downMinutes });
-    }
   }
-  downContainers.sort((a, b) => a.uptimePercent - b.uptimePercent);
   const overallAvailability = totalSnapshots > 0 ? Math.round((totalRunning / totalSnapshots) * 1000) / 10 : null;
 
   const result = {
@@ -542,7 +542,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     groups,
     systemHealthScore: getSystemHealthScore(db),
     topInsights: getTopInsights(db),
-    availability: { overallPercent: overallAvailability, downContainers },
+    availability: { overallPercent: overallAvailability },
   };
 
   _dashboardCache.data = result;
@@ -629,7 +629,7 @@ function getSystemHealthScore(db: Database.Database): { score: number; factors: 
 function getTopInsights(db: Database.Database): InsightRow[] {
   try {
     return db.prepare(`
-      SELECT entity_type, entity_id, category, severity, title, message FROM insights
+      SELECT entity_type, entity_id, category, severity, title, message, evidence FROM insights
       ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END
       LIMIT 5
     `).all() as InsightRow[];

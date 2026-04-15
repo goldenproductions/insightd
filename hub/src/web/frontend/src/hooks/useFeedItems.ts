@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
 import type { DashboardData, Alert, DashboardInsight } from '@/types/api';
 import type { FeedSeverity } from '@/components/FeedRow';
-import { fmtDurationMs, formatAlertType } from '@/lib/formatters';
+import { formatAlertType, timeAgo } from '@/lib/formatters';
 import { splitContainerEntityId } from '@/lib/containers';
 
 export interface FeedItem {
   id: string;
-  kind: 'alert' | 'downtime' | 'insight';
+  kind: 'alert' | 'insight';
   severity: FeedSeverity;
   icon: string;
   title: string;
@@ -64,7 +64,22 @@ function normalizeInsightSeverity(sev: string): FeedSeverity | null {
 }
 
 const SEVERITY_ORDER: Record<FeedSeverity, number> = { critical: 0, warning: 1, info: 2 };
-const KIND_ORDER: Record<FeedItem['kind'], number> = { alert: 0, downtime: 1, insight: 2 };
+const KIND_ORDER: Record<FeedItem['kind'], number> = { alert: 0, insight: 1 };
+
+interface AvailabilityEvidence {
+  lastDownAt?: string;
+  downMinutes?: number;
+  uptimePct?: number;
+}
+
+function parseAvailabilityEvidence(raw: string | null | undefined): AvailabilityEvidence | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as AvailabilityEvidence;
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    return parsed;
+  } catch { return null; }
+}
 
 export function useFeedItems(data: DashboardData | undefined): FeedItem[] {
   return useMemo(() => {
@@ -86,26 +101,27 @@ export function useFeedItems(data: DashboardData | undefined): FeedItem[] {
       });
     }
 
-    for (const c of data.availability.downContainers) {
-      const hasAlert = data.activeAlertsList.some(a => a.host_id === c.hostId && a.target === c.name);
-      if (hasAlert) continue;
-      items.push({
-        id: `downtime-${c.hostId}-${c.name}`,
-        kind: 'downtime',
-        severity: c.uptimePercent < 95 ? 'critical' : 'warning',
-        icon: '\u23f8\ufe0f',
-        title: `${c.name} down ~${fmtDurationMs(c.downMinutes * 60000)}`,
-        pillLabel: 'Downtime',
-        detail: `${c.uptimePercent}% uptime`,
-        meta: c.hostId,
-        to: `/hosts/${encodeURIComponent(c.hostId)}/containers/${encodeURIComponent(c.name)}`,
-      });
-    }
+    // Retrospective "had downtime" events used to produce a separate acute
+    // "Downtime" row here, duplicating the `availability` insight from
+    // topInsights. That made recovered dips look like active problems.
+    // They now live only in the Insights feed below, with a timeAgo-rich
+    // detail so the user can tell "3h ago" from "23h ago" at a glance.
 
     for (const insight of data.topInsights ?? []) {
       const severity = normalizeInsightSeverity(insight.severity);
       if (!severity) continue;
       const config = INSIGHT_CONFIG[insight.category] ?? INSIGHT_CONFIG.performance!;
+
+      let detail = insight.message;
+      if (insight.category === 'availability') {
+        const ev = parseAvailabilityEvidence(insight.evidence);
+        if (ev?.lastDownAt) {
+          const pct = typeof ev.uptimePct === 'number' ? `${ev.uptimePct}% uptime` : null;
+          const ago = timeAgo(ev.lastDownAt);
+          detail = pct ? `Brief dip ${ago} — ${pct}` : `Brief dip ${ago}`;
+        }
+      }
+
       items.push({
         id: `insight-${insight.entity_type}-${insight.entity_id}-${insight.category}`,
         kind: 'insight',
@@ -113,7 +129,7 @@ export function useFeedItems(data: DashboardData | undefined): FeedItem[] {
         icon: config.icon,
         title: insight.title,
         pillLabel: config.label,
-        detail: insight.message,
+        detail,
         meta: insightEntityName(insight),
         to: insightLink(insight),
         insight,

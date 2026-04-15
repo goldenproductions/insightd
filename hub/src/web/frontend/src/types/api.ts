@@ -16,6 +16,7 @@ export interface DashboardInsight {
   severity: string;
   title: string;
   message: string;
+  evidence?: string | null;
 }
 
 export interface DashboardData {
@@ -40,7 +41,7 @@ export interface DashboardData {
     computedAt: string;
   } | null;
   topInsights: DashboardInsight[];
-  availability: { overallPercent: number | null; downContainers: { hostId: string; name: string; uptimePercent: number; downMinutes: number }[] };
+  availability: { overallPercent: number | null };
 }
 
 export interface RankingItem {
