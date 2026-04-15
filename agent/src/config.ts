@@ -20,6 +20,10 @@ const config = Object.freeze({
   nodeName: process.env.NODE_NAME || '',
   nodeIp: process.env.NODE_IP || '',
 
+  // Optional kubelet URL override. Defaults to https://${NODE_IP}:10250.
+  // Useful for k3s/flatcar or clusters where the kubelet listens on a non-standard port.
+  kubeletUrl: process.env.INSIGHTD_KUBELET_URL || '',
+
   // Docker
   dockerSocket: process.env.DOCKER_HOST || '/var/run/docker.sock',
 
@@ -54,6 +58,17 @@ function validate(): string[] {
   if (!config.mqttUrl) errors.push('INSIGHTD_MQTT_URL is required');
   if (!config.hostId || config.hostId === 'local') {
     errors.push('INSIGHTD_HOST_ID should be set to identify this host (e.g., "proxmox-01")');
+  }
+  // In Kubernetes mode, remote updates and container actions are not supported:
+  // pod lifecycle and image updates are managed by the cluster control plane.
+  // Warn the operator if they've turned these on so the intent is visible.
+  const isK8s = config.runtime === 'kubernetes'
+    || (config.runtime === 'auto' && !!process.env.KUBERNETES_SERVICE_HOST);
+  if (isK8s && config.allowUpdates) {
+    errors.push('INSIGHTD_ALLOW_UPDATES=true is ignored in Kubernetes mode (agent updates are managed by the cluster)');
+  }
+  if (isK8s && config.allowActions) {
+    errors.push('INSIGHTD_ALLOW_ACTIONS=true is ignored in Kubernetes mode (pod lifecycle is managed by the cluster)');
   }
   return errors;
 }
