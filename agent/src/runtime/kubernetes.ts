@@ -24,8 +24,8 @@ interface K8sMeta {
 
 interface K8sContainerState {
   running?: { startedAt?: string };
-  waiting?: { reason?: string };
-  terminated?: { reason?: string };
+  waiting?: { reason?: string; message?: string };
+  terminated?: { reason?: string; message?: string };
 }
 
 interface K8sContainerStatus {
@@ -33,6 +33,7 @@ interface K8sContainerStatus {
   ready: boolean;
   restartCount: number;
   state?: K8sContainerState;
+  lastState?: K8sContainerState;
   image: string;
 }
 
@@ -294,12 +295,25 @@ export class KubernetesRuntime implements ContainerRuntime {
           healthStatus = 'starting';
         }
 
+        // Parity with Docker's healthCheckOutput: surface the reason/message from
+        // the current waiting state or the most recent termination so "why" is
+        // visible in alerts + diagnosis findings.
+        const waiting = cs.state?.waiting;
+        const terminated = cs.state?.terminated ?? cs.lastState?.terminated;
+        let healthCheckOutput: string | null = null;
+        if (waiting?.reason) {
+          healthCheckOutput = (waiting.message ? `${waiting.reason}: ${waiting.message}` : waiting.reason).slice(0, 500);
+        } else if (terminated?.reason) {
+          healthCheckOutput = (terminated.message ? `${terminated.reason}: ${terminated.message}` : terminated.reason).slice(0, 500);
+        }
+
         containers.push({
           name,
           id,
           status,
           restartCount: cs.restartCount || 0,
           healthStatus,
+          healthCheckOutput,
           labels: { ...podLabels }, // container-level labels don't exist in K8s
           image: cs.image,
         });
