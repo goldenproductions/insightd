@@ -175,6 +175,43 @@ describe('detector', () => {
       const rows = db.prepare("SELECT * FROM insights WHERE entity_id = 'h1/old-nginx' AND category = 'availability'").all();
       assert.equal(rows.length, 0, `long-stopped container should not produce a downtime insight, got: ${JSON.stringify(rows)}`);
     });
+
+    it('skips containers that have stopped being reported (removed pods/containers)', () => {
+      // Same class of leak the alert evaluator had: a container whose last
+      // snapshot is older than the 15-minute recency window should not
+      // regenerate insights from its historical data.
+      const recent = ts(new Date(NOW - 2 * 60 * 1000));
+      seedHost(db, 'h1', recent);
+
+      // Seed a container with a clear restart-loop history (>=3 restarts
+      // over the last 24h) but whose latest snapshot is 30 minutes old —
+      // the container has been deleted since, and the detector should
+      // skip it entirely.
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'ghost', status: 'running', cpu: 5, mem: 50, restarts: 2, at: ts(new Date(NOW - 60 * 60 * 1000)) },
+        { hostId: 'h1', name: 'ghost', status: 'running', cpu: 5, mem: 50, restarts: 8, at: ts(new Date(NOW - 30 * 60 * 1000)) },
+      ]);
+
+      generateInsights(db);
+      const rows = db.prepare("SELECT * FROM insights WHERE entity_id = 'h1/ghost'").all();
+      assert.equal(rows.length, 0, `removed container should not produce insights, got: ${JSON.stringify(rows)}`);
+    });
+
+    it('still generates insights for an actively reporting container with the same history', () => {
+      // Inverse of the previous test: same restart-loop history, but the
+      // latest snapshot is fresh, so the detector should process it.
+      const recent = ts(new Date(NOW - 2 * 60 * 1000));
+      seedHost(db, 'h1', recent);
+
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'alive', status: 'running', cpu: 5, mem: 50, restarts: 2, at: ts(new Date(NOW - 60 * 60 * 1000)) },
+        { hostId: 'h1', name: 'alive', status: 'running', cpu: 5, mem: 50, restarts: 8, at: recent },
+      ]);
+
+      generateInsights(db);
+      const rows = db.prepare("SELECT * FROM insights WHERE entity_id = 'h1/alive' AND category = 'availability'").all();
+      assert.ok(rows.length >= 1, `active container with restart history should still get insights, got: ${JSON.stringify(rows)}`);
+    });
   });
 
   describe('cascade detection', () => {
