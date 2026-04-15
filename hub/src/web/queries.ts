@@ -702,6 +702,12 @@ function getContainerId(db: Database.Database, hostId: string, containerName: st
   return row?.container_id || null;
 }
 
+function getHostRuntimeType(db: Database.Database, hostId: string): string {
+  const row = db.prepare('SELECT runtime_type FROM hosts WHERE host_id = ?')
+    .get(hostId) as { runtime_type?: string } | undefined;
+  return row?.runtime_type ?? 'docker';
+}
+
 function getUptimeTimeline(db: Database.Database, hostId: string, days: number): Array<{ name: string; slots: string[]; uptimePercent: number | null }> {
   const rows = db.prepare(`
     SELECT container_name, status, collected_at
@@ -1009,4 +1015,4 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };

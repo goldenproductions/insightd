@@ -67,6 +67,10 @@ export function AgentUpdatesCard({ hosts, latestAgent }: Props) {
     const outdated: HostWithAgent[] = [];
     let hasOnline = false;
     for (const h of hosts || []) {
+      // k8s agents are updated by the cluster control plane, not the hub —
+      // skip them from the "outdated" summary so the Update All button
+      // doesn't claim to act on them.
+      if (h.runtime_type === 'kubernetes') continue;
       if (latestAgent && h.agent_version && h.agent_version !== latestAgent) {
         outdated.push(h);
         if (h.is_online) hasOnline = true;
@@ -95,7 +99,8 @@ export function AgentUpdatesCard({ hosts, latestAgent }: Props) {
       <div className="space-y-3">
         {(hosts || []).map(h => {
           const result = results[h.host_id];
-          const isOutdated = latestAgent && h.agent_version && h.agent_version !== latestAgent;
+          const isKubernetes = h.runtime_type === 'kubernetes';
+          const isOutdated = !isKubernetes && latestAgent && h.agent_version && h.agent_version !== latestAgent;
           const isUpdating = result?.status === 'updating';
 
           return (
@@ -106,6 +111,7 @@ export function AgentUpdatesCard({ hosts, latestAgent }: Props) {
                     <span className={`h-2 w-2 rounded-full ${h.is_online ? 'bg-success' : 'bg-danger'}`} />
                     {h.host_id}
                     {!h.is_online && <span className="text-xs font-normal text-muted">Offline</span>}
+                    {isKubernetes && <Badge text="k8s" color="blue" />}
                   </div>
                   <div className="mt-1 flex items-center gap-2 text-xs">
                     {h.agent_version ? (
@@ -113,6 +119,11 @@ export function AgentUpdatesCard({ hosts, latestAgent }: Props) {
                         <Badge text={`v${h.agent_version}`} color={isOutdated ? 'yellow' : 'green'} />
                         {isOutdated && latestAgent && (
                           <span className="text-muted">&rarr; v{latestAgent}</span>
+                        )}
+                        {isKubernetes && (
+                          <span className="text-muted" title="Kubernetes agents are updated by the cluster control plane — edit the DaemonSet image tag.">
+                            Managed by cluster
+                          </span>
                         )}
                       </>
                     ) : (
@@ -126,7 +137,7 @@ export function AgentUpdatesCard({ hosts, latestAgent }: Props) {
                       Update
                     </Button>
                   )}
-                  {isAuthenticated && h.is_online && !isOutdated && h.agent_version && !isUpdating && result?.status !== 'success' && (
+                  {isAuthenticated && h.is_online && !isOutdated && !isKubernetes && h.agent_version && !isUpdating && result?.status !== 'success' && (
                     <Button variant="secondary" onClick={() => updateAgent.mutate(h.host_id)} disabled={updateAgent.isPending}>
                       Reinstall
                     </Button>

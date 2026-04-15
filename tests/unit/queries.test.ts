@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
-const { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getContainerDowntime } = require('../../hub/src/web/queries');
+const { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getContainerDowntime, getHostRuntimeType } = require('../../hub/src/web/queries');
 
 const recent = ts(new Date(NOW - 2 * 60 * 1000)); // 2 min ago
 const old = ts(new Date(NOW - 30 * 60 * 1000)); // 30 min ago
@@ -170,6 +170,24 @@ describe('queries', () => {
       assert.equal(detail.disk.length, 1);
       assert.equal(detail.alerts.length, 1);
       assert.equal(detail.updates.length, 1);
+    });
+  });
+
+  describe('getHostRuntimeType', () => {
+    it('defaults to "docker" when host does not exist', () => {
+      assert.equal(getHostRuntimeType(db, 'unknown'), 'docker');
+    });
+
+    it('defaults to "docker" for hosts inserted without a runtime_type', () => {
+      // seedHost uses bare INSERT; schema default is 'docker'
+      seedHost(db, 'legacy-host', recent);
+      assert.equal(getHostRuntimeType(db, 'legacy-host'), 'docker');
+    });
+
+    it('returns "kubernetes" when the host is a k8s node', () => {
+      db.prepare('INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type) VALUES (?, datetime(?), datetime(?), ?)')
+        .run('k3d-node-1', recent, recent, 'kubernetes');
+      assert.equal(getHostRuntimeType(db, 'k3d-node-1'), 'kubernetes');
     });
   });
 
