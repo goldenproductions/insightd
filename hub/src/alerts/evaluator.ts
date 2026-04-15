@@ -332,13 +332,58 @@ function checkEndpointDown(db: Database.Database, failureThreshold: number): Ale
   return alerts;
 }
 
+// Alert types whose target is a container name. Host-scoped and endpoint
+// alerts are excluded — their "stale" semantics are different (a host that
+// stops reporting has its own offline signal, and endpoints are always
+// polled by the hub).
+const CONTAINER_ALERT_TYPES = new Set<string>([
+  'container_down',
+  'restart_loop',
+  'high_cpu',
+  'high_memory',
+  'container_unhealthy',
+]);
+
+// Generous window for "agent stopped reporting this container". The default
+// collect interval is 5 minutes and the host detail page's live container
+// list uses the same 15-minute filter, so this stays consistent with what
+// the user already sees in the UI.
+const STALE_CONTAINER_MINUTES = 15;
+
 function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): AlertItem[] {
   const resolved: AlertItem[] = [];
   const activeAlerts = db.prepare(
     'SELECT id, host_id, alert_type, target, triggered_at FROM alert_state WHERE resolved_at IS NULL'
   ).all() as { id: number; host_id: string; alert_type: string; target: string; triggered_at: string }[];
 
+  const recentSnapshotStmt = db.prepare(
+    "SELECT 1 FROM container_snapshots WHERE host_id = ? AND container_name = ? AND collected_at >= datetime('now', ?) LIMIT 1"
+  );
+
   for (const alert of activeAlerts) {
+    // Before running the type-specific resolver, auto-resolve any
+    // container-scoped alert whose target hasn't been reported in the
+    // recency window. This closes the long-standing leak where a deleted
+    // container (Docker rm, k8s pod delete) would leave its last "bad"
+    // snapshot frozen in place forever, because the existing resolvers all
+    // look at that frozen snapshot and conclude "still bad".
+    if (CONTAINER_ALERT_TYPES.has(alert.alert_type)) {
+      const recent = recentSnapshotStmt.get(
+        alert.host_id, alert.target, `-${STALE_CONTAINER_MINUTES} minutes`
+      );
+      if (!recent) {
+        resolved.push({
+          type: alert.alert_type,
+          hostId: alert.host_id,
+          target: alert.target,
+          message: `Container "${alert.target}" on ${alert.host_id} is no longer reported by the agent (auto-resolved after ${STALE_CONTAINER_MINUTES}m)`,
+          triggeredAt: alert.triggered_at,
+          isResolution: true,
+        });
+        continue;
+      }
+    }
+
     let isResolved = false;
 
     if (alert.alert_type === 'container_down') {
