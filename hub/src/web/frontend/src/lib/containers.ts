@@ -30,3 +30,23 @@ export function splitContainerEntityId(
     containerName: entityId.slice(slash + 1),
   };
 }
+
+/**
+ * Count restarts over a history window by summing positive deltas between
+ * consecutive snapshots. Robust to counter resets (Docker container
+ * recreation, k8s pod recreation, agent restart) — a naive last-minus-first
+ * would undercount when the counter drops to zero mid-window.
+ *
+ * Mirrors the backend logic in hub/src/insights/diagnosis/context.ts so the
+ * hero metric and the diagnosis engine's restart count stay in sync.
+ */
+export function sumPositiveRestartDeltas(
+  history: ReadonlyArray<{ restart_count: number }>,
+): number {
+  let total = 0;
+  for (let i = 1; i < history.length; i++) {
+    const delta = history[i]!.restart_count - history[i - 1]!.restart_count;
+    if (delta > 0) total += delta;
+  }
+  return total;
+}
