@@ -102,8 +102,8 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   db.prepare('DELETE FROM insights').run();
 
   const insert = db.prepare(`
-    INSERT INTO insights (entity_type, entity_id, category, severity, title, message, metric, current_value, baseline_value)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO insights (entity_type, entity_id, category, severity, title, message, metric, current_value, baseline_value, evidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let count = 0;
@@ -127,7 +127,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         insert.run('host', host_id, 'performance', cpuValues[0] > 95 ? 'critical' : 'warning',
           `CPU saturated on ${host_id}`,
           `CPU has been above 80% for 30+ minutes. Current: ${round(cpuValues[0])}%`,
-          'cpu_percent', cpuValues[0], 80);
+          'cpu_percent', cpuValues[0], 80, null);
         count++;
       }
 
@@ -141,7 +141,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         insert.run('host', host_id, 'performance', memPcts[0] > 95 ? 'critical' : 'warning',
           `Memory pressure on ${host_id}`,
           `Memory has been above 85% for 30+ minutes. Current: ${round(memPcts[0])}%`,
-          'memory_used_mb', memPcts[0], 85);
+          'memory_used_mb', memPcts[0], 85, null);
         count++;
       }
 
@@ -151,7 +151,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         insert.run('host', host_id, 'performance', loadValues[0] > 16 ? 'critical' : 'warning',
           `High load on ${host_id}`,
           `Load average has been above 8 for 30+ minutes. Current: ${round(loadValues[0])}`,
-          'load_5', loadValues[0], 8);
+          'load_5', loadValues[0], 8, null);
         count++;
       }
     }
@@ -176,7 +176,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         insert.run('host', host_id, 'trend', 'warning',
           `CPU usage growing on ${host_id}`,
           `Average CPU is ${ratio}x higher than last week (${round(thisWeekAvg.cpu)}% vs ${round(lastWeekAvg.cpu)}%)`,
-          'cpu_percent', thisWeekAvg.cpu, lastWeekAvg.cpu);
+          'cpu_percent', thisWeekAvg.cpu, lastWeekAvg.cpu, null);
         count++;
       }
       // Memory trend: only flag if we know total and usage is above 50% of capacity AND grew 1.5x
@@ -189,7 +189,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         insert.run('host', host_id, 'trend', 'warning',
           `Memory usage growing on ${host_id}`,
           `Average memory is ${ratio}x higher than last week (${round(memPct)}% of total)`,
-          'memory_used_mb', thisWeekAvg.mem, lastWeekAvg.mem);
+          'memory_used_mb', thisWeekAvg.mem, lastWeekAvg.mem, null);
         count++;
       }
     }
@@ -229,7 +229,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
           insert.run('container', entityId, 'performance', 'warning',
             `${container_name} CPU sustained high`,
             `${container_name} CPU has been above 50% for 30+ minutes. Current: ${round(cpuValues[0])}%`,
-            'cpu_percent', cpuValues[0], cpuBl.p95);
+            'cpu_percent', cpuValues[0], cpuBl.p95, null);
           count++;
         }
       }
@@ -243,7 +243,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
           insert.run('container', entityId, 'performance', 'warning',
             `${container_name} memory unusually high`,
             `${container_name} memory at ${round(memValues[0])} MB, sustained above P95 (${round(p95)} MB) for 30+ minutes`,
-            'memory_mb', memValues[0], memBl.p95);
+            'memory_mb', memValues[0], memBl.p95, null);
           count++;
         }
       }
@@ -271,10 +271,22 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
         const uptimePct = (uptimeData.running / uptimeData.total) * 100;
         if (uptimePct < 99 && uptimePct > 0) {
           const downMinutes = Math.round((uptimeData.total - uptimeData.running) * 5);
+          // Most recent non-running snapshot inside the 24h window — lets the
+          // frontend render "Brief dip 3h ago" via timeAgo() instead of the
+          // vague "in the last 24 hours" the old copy used.
+          const lastDown = db.prepare(`
+            SELECT collected_at FROM container_snapshots
+            WHERE host_id = ? AND container_name = ? AND status != 'running'
+              AND collected_at >= datetime('now', '-1 day')
+            ORDER BY collected_at DESC LIMIT 1
+          `).get(host_id, container_name) as { collected_at: string } | undefined;
+          const evidence = lastDown
+            ? JSON.stringify({ lastDownAt: lastDown.collected_at, downMinutes, uptimePct: round(uptimePct) })
+            : null;
           insert.run('container', entityId, 'availability', uptimePct < 90 ? 'critical' : 'warning',
-            `${container_name} had downtime`,
-            `${container_name} was down for ~${downMinutes} minutes in the last 24 hours but has recovered (${round(uptimePct)}% uptime)`,
-            null, uptimePct, 99);
+            `${container_name} recovered from a brief dip`,
+            `Down for ~${downMinutes}m in the last 24h — now running again (${round(uptimePct)}% uptime).`,
+            null, uptimePct, 99, evidence);
           count++;
         }
       }
@@ -290,7 +302,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
       insert.run('container', entityId, 'availability', 'warning',
         `${container_name} restarting frequently`,
         `${container_name} has restarted ${restarts} times in the last 24 hours`,
-        null, restarts, 0);
+        null, restarts, 0, null);
       count++;
     }
 
@@ -312,7 +324,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
       insert.run('container', entityId, 'trend', 'warning',
         `${container_name} memory growing`,
         `${container_name} is using ${ratio}x more memory than last week (${round(thisWeek.mem)} MB vs ${round(lastWeek.mem)} MB)`,
-        'memory_mb', thisWeek.mem, lastWeek.mem);
+        'memory_mb', thisWeek.mem, lastWeek.mem, null);
       count++;
     }
   }
@@ -419,7 +431,7 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
       insert.run('host', host_id, 'prediction', severity,
         `${label} trending up on ${host_id}`,
         `${label} at ${round(pred.current)}${unit}, growing ${round(pred.dailyGrowth)}${unit}/day — will reach ${round(saturation)}${unit} (saturation) in ~${daysUntil} ${dayWord}`,
-        metric, pred.current, saturation);
+        metric, pred.current, saturation, null);
       count++;
     }
   }
@@ -453,7 +465,7 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
       insert.run('container', entityId, 'prediction', severity,
         `${container_name} ${label.toLowerCase()} trending up`,
         `${container_name} ${label.toLowerCase()} at ${round(pred.current)}${unit}, growing ${round(pred.dailyGrowth)}${unit}/day — will exceed P90 (${round(bl.p90)}${unit}) in ~${daysUntil} ${dayWord}`,
-        metric, pred.current, bl.p90);
+        metric, pred.current, bl.p90, null);
       count++;
     }
   }
