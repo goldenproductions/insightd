@@ -4,6 +4,7 @@ import type { Finding, Neighbor } from '@/types/api';
 import { timeAgo } from '@/lib/formatters';
 import { DiagnosisCard, severityStyles } from '@/components/DiagnosisCard';
 import { Button } from '@/components/FormField';
+import { splitContainerEntityId } from '@/lib/containers';
 
 export interface LiveSnapshot {
   status?: string | null;
@@ -77,16 +78,15 @@ function formatMem(v: number | null | undefined): string {
 }
 
 function neighborLink(entityId: string): string {
-  const parts = entityId.split('/');
-  if (parts.length === 2) {
-    return `/hosts/${encodeURIComponent(parts[0]!)}/containers/${encodeURIComponent(parts[1]!)}`;
+  const split = splitContainerEntityId(entityId);
+  if (split) {
+    return `/hosts/${encodeURIComponent(split.hostId)}/containers/${encodeURIComponent(split.containerName)}`;
   }
   return `/hosts/${encodeURIComponent(entityId)}`;
 }
 
 function neighborLabel(entityId: string): string {
-  const parts = entityId.split('/');
-  return parts.length === 2 ? parts[1]! : entityId;
+  return splitContainerEntityId(entityId)?.containerName ?? entityId;
 }
 
 export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAction, feedback }: Props) {

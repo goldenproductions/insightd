@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { DashboardData, Alert, DashboardInsight } from '@/types/api';
 import type { FeedSeverity } from '@/components/FeedRow';
 import { fmtDurationMs, formatAlertType } from '@/lib/formatters';
+import { splitContainerEntityId } from '@/lib/containers';
 
 export interface FeedItem {
   id: string;
@@ -40,9 +41,9 @@ const INSIGHT_CONFIG: Record<string, { icon: string; label: string }> = {
 
 function insightLink(insight: DashboardInsight): string {
   if (insight.entity_type === 'container') {
-    const parts = insight.entity_id.split('/');
-    if (parts.length === 2) {
-      return `/hosts/${encodeURIComponent(parts[0]!)}/containers/${encodeURIComponent(parts[1]!)}`;
+    const split = splitContainerEntityId(insight.entity_id);
+    if (split) {
+      return `/hosts/${encodeURIComponent(split.hostId)}/containers/${encodeURIComponent(split.containerName)}`;
     }
   }
   return `/hosts/${encodeURIComponent(insight.entity_id)}`;
@@ -50,8 +51,8 @@ function insightLink(insight: DashboardInsight): string {
 
 function insightEntityName(insight: DashboardInsight): string {
   if (insight.entity_type === 'container') {
-    const parts = insight.entity_id.split('/');
-    return parts.length === 2 ? parts[1]! : insight.entity_id;
+    const split = splitContainerEntityId(insight.entity_id);
+    if (split) return split.containerName;
   }
   return insight.entity_id;
 }
