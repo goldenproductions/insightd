@@ -178,7 +178,11 @@ export function ContainerDetailPage() {
   // Keyboard shortcuts — registered unconditionally (Rules of Hooks); callbacks
   // read the latest `data` via the ref-wrapped trigger inside useKeyboardShortcut.
   const isRunning = data?.status === 'running';
-  const canControl = isAuthenticated && isRunning;
+  // Kubernetes pods are managed by the cluster — the agent rejects action
+  // requests at runtime, so the UI should disable the buttons and explain why.
+  const isKubernetes = data?.runtime_type === 'kubernetes';
+  const canControl = isAuthenticated && isRunning && !isKubernetes;
+  const k8sReadOnlyTitle = 'Not supported in Kubernetes mode — pod lifecycle is managed by the cluster';
   useKeyboardShortcut({
     keys: 'r',
     description: 'Restart container',
@@ -327,23 +331,23 @@ export function ContainerDetailPage() {
             <h1 className="truncate text-xl font-bold text-fg">{data.container_name}</h1>
           </div>
           {isAuthenticated && (
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="flex shrink-0 items-center gap-2" title={isKubernetes ? k8sReadOnlyTitle : undefined}>
               {data.status !== 'running' && (
                 <>
-                  <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}>
+                  <Button variant="ghost" size="sm" title={isKubernetes ? k8sReadOnlyTitle : undefined} onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:start` ? 'Starting…' : 'Start'}
                   </Button>
-                  <Button variant="danger" size="sm" onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}>
+                  <Button variant="danger" size="sm" title={isKubernetes ? k8sReadOnlyTitle : undefined} onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:remove` ? 'Removing…' : 'Remove'}
                   </Button>
                 </>
               )}
               {data.status === 'running' && (
                 <>
-                  <Button variant="ghost" size="sm" title="Restart (r)" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
+                  <Button variant="ghost" size="sm" title={isKubernetes ? k8sReadOnlyTitle : 'Restart (r)'} onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:restart` ? 'Restarting…' : 'Restart'}
                   </Button>
-                  <Button variant="danger" size="sm" title="Stop (s)" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
+                  <Button variant="danger" size="sm" title={isKubernetes ? k8sReadOnlyTitle : 'Stop (s)'} onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:stop` ? 'Stopping…' : 'Stop'}
                   </Button>
                 </>
@@ -394,7 +398,7 @@ export function ContainerDetailPage() {
               // primary button directly into the finding so the advice and
               // the fix live in the same block — no scroll hunt required.
               const wantsRestart = /restart|reboot|bounce/i.test(finding.suggestedAction ?? '');
-              const canRestart = wantsRestart && data.status === 'running' && isAuthenticated;
+              const canRestart = wantsRestart && data.status === 'running' && isAuthenticated && !isKubernetes;
               const isRestarting = actionLoading === `${containerName}:restart`;
               const primaryAction = canRestart ? {
                 label: isRestarting ? 'Restarting…' : 'Restart container',
