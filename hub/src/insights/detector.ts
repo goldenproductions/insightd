@@ -196,9 +196,15 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   }
 
   // --- Container insights ---
+  // Only consider containers actively being reported. A 15-minute recency
+  // window matches the host-detail page's live container filter and the
+  // alert-evaluator's staleness cutoff (hub/src/alerts/evaluator.ts), so
+  // a removed container stops generating insights on the next tick instead
+  // of indefinitely regenerating "restarting frequently" and "is
+  // crash-looping" rows from historical snapshots.
   const containers = db.prepare(`
     SELECT DISTINCT host_id, container_name FROM container_snapshots
-    WHERE collected_at >= datetime('now', '-1 day')
+    WHERE collected_at >= datetime('now', '-15 minutes')
   `).all() as ContainerIdRow[];
 
   for (const { host_id, container_name } of containers) {
