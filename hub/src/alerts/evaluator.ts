@@ -359,15 +359,35 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
   const recentSnapshotStmt = db.prepare(
     "SELECT 1 FROM container_snapshots WHERE host_id = ? AND container_name = ? AND collected_at >= datetime('now', ?) LIMIT 1"
   );
+  const hostReportingStmt = db.prepare(
+    "SELECT 1 FROM hosts WHERE host_id = ? AND last_seen >= datetime('now', ?) LIMIT 1"
+  );
+
+  // Per-cycle cache of "is this host still reporting?" — one row lookup per
+  // unique host rather than per alert.
+  const hostReporting = new Map<string, boolean>();
+  const isHostReporting = (hostId: string): boolean => {
+    const cached = hostReporting.get(hostId);
+    if (cached !== undefined) return cached;
+    const row = hostReportingStmt.get(hostId, `-${STALE_CONTAINER_MINUTES} minutes`);
+    const reporting = !!row;
+    hostReporting.set(hostId, reporting);
+    return reporting;
+  };
 
   for (const alert of activeAlerts) {
     // Before running the type-specific resolver, auto-resolve any
     // container-scoped alert whose target hasn't been reported in the
-    // recency window. This closes the long-standing leak where a deleted
-    // container (Docker rm, k8s pod delete) would leave its last "bad"
-    // snapshot frozen in place forever, because the existing resolvers all
-    // look at that frozen snapshot and conclude "still bad".
-    if (CONTAINER_ALERT_TYPES.has(alert.alert_type)) {
+    // recency window. Closes the leak where a deleted container (Docker
+    // rm, k8s pod delete) leaves its last "bad" snapshot frozen forever.
+    //
+    // CRITICAL: only apply the "stale auto-resolve" path when the host
+    // itself is still reporting. If the whole agent went dark, every
+    // container on that host looks "stale" — auto-resolving their alerts
+    // would silently clear real failures and mislead the operator into
+    // thinking the problem was fixed. In that case we leave alerts in
+    // their current state so the host-offline situation stays visible.
+    if (CONTAINER_ALERT_TYPES.has(alert.alert_type) && isHostReporting(alert.host_id)) {
       const recent = recentSnapshotStmt.get(
         alert.host_id, alert.target, `-${STALE_CONTAINER_MINUTES} minutes`
       );

@@ -255,10 +255,22 @@ describe('evaluateAlerts', () => {
     });
 
     describe('stale container auto-resolve', () => {
+      // Mark a host as "still reporting" by setting last_seen to now.
+      // Required for the auto-resolve path after the host-offline guard —
+      // a stale container alert only resolves when the HOST itself is
+      // currently reporting. Otherwise every alert on a dark agent would
+      // silently disappear.
+      const markHostAlive = (hostId: string = 'local') => {
+        db.prepare(
+          "INSERT OR REPLACE INTO hosts (host_id, first_seen, last_seen) VALUES (?, datetime('now', '-1 day'), datetime('now'))"
+        ).run(hostId);
+      };
+
       // An unhealthy container whose latest snapshot is older than the
       // 15-minute recency window counts as "gone" — pod was deleted,
       // agent stopped reporting, etc.
       it('resolves container_unhealthy when the container stops being reported', () => {
+        markHostAlive();
         const longAgo = ts(new Date(NOW - 30 * 60 * 1000)); // 30 min ago
         seedContainerSnapshots(db, [
           { name: 'crashloop', status: 'created', health: 'unhealthy', at: longAgo },
@@ -274,6 +286,7 @@ describe('evaluateAlerts', () => {
       });
 
       it('resolves restart_loop when the container stops being reported', () => {
+        markHostAlive();
         const longAgo = ts(new Date(NOW - 30 * 60 * 1000));
         seedContainerSnapshots(db, [
           { name: 'zombie', status: 'exited', at: longAgo },
@@ -288,6 +301,7 @@ describe('evaluateAlerts', () => {
       });
 
       it('does NOT auto-resolve when the container is still being reported', () => {
+        markHostAlive();
         // Snapshot from 5 min ago — well within the 15-min window, so the
         // container is still live. The existing container_unhealthy resolver
         // should still fire (or not) based on the actual health_status.
@@ -303,6 +317,28 @@ describe('evaluateAlerts', () => {
         const match = resolved.filter((a: any) => a.type === 'container_unhealthy');
         // Still unhealthy and still being reported → alert stays open.
         assert.equal(match.length, 0);
+      });
+
+      it('does NOT auto-resolve when the HOST is offline (agent went dark)', () => {
+        // The whole host stopped reporting 30 min ago — mark hosts.last_seen
+        // stale. A container alert on that host must NOT auto-resolve: the
+        // container is still in its last-known "bad" state, and silently
+        // clearing the alert would hide a real failure mode from the user.
+        const longAgo = ts(new Date(NOW - 30 * 60 * 1000));
+        db.prepare(
+          "INSERT OR REPLACE INTO hosts (host_id, first_seen, last_seen) VALUES (?, datetime('now', '-1 day'), ?)"
+        ).run('local', longAgo);
+
+        seedContainerSnapshots(db, [
+          { name: 'offline-container', status: 'running', health: 'unhealthy', at: longAgo },
+        ]);
+        seedAlertState(db, [
+          { type: 'container_unhealthy', target: 'offline-container', triggeredAt: longAgo, lastNotified: longAgo },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'container_unhealthy');
+        assert.equal(match.length, 0, `alert must stay active when the host is offline, got: ${JSON.stringify(match)}`);
       });
 
       it('does NOT auto-resolve host-scoped alerts', () => {
