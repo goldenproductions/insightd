@@ -13,6 +13,7 @@ import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
 import { fmtDurationMs } from '@/lib/formatters';
+import { sumPositiveRestartDeltas } from '@/lib/containers';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
 import { CardSkeleton } from '@/components/Skeleton';
@@ -269,9 +270,12 @@ export function ContainerDetailPage() {
   // fields are *cumulative* bytes, so we derive per-second rates from deltas.
   const chartData = buildChartData(history);
 
-  const firstRestart = history.length > 0 ? history[0]!.restart_count : 0;
-  const lastRestart = history.length > 0 ? history[history.length - 1]!.restart_count : 0;
-  const restartDelta = Math.max(0, lastRestart - firstRestart);
+  // Sum positive deltas so the metric is robust to counter resets — a pod
+  // that was recreated drops its restart_count to 0, and the hero should
+  // still reflect the restarts that happened across both incarnations.
+  // Matches the backend logic in hub/src/insights/diagnosis/context.ts so
+  // this number agrees with what the diagnosis engine reports.
+  const restartDelta = sumPositiveRestartDeltas(history);
 
   const showHealthFailure = data.health_status === 'unhealthy';
 
@@ -428,7 +432,6 @@ export function ContainerDetailPage() {
                     healthStatus: data.health_status,
                     cpuPercent: data.cpu_percent,
                     memoryMb: data.memory_mb,
-                    restartCount: data.restart_count,
                   }}
                   primaryAction={primaryAction}
                   feedback={feedbackCbs}

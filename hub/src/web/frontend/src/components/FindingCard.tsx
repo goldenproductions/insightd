@@ -11,7 +11,6 @@ export interface LiveSnapshot {
   healthStatus?: string | null;
   cpuPercent?: number | null;
   memoryMb?: number | null;
-  restartCount?: number | null;
 }
 
 export interface FindingPrimaryAction {
@@ -113,8 +112,7 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
     liveSnapshot.status != null ||
     liveSnapshot.healthStatus != null ||
     liveSnapshot.cpuPercent != null ||
-    liveSnapshot.memoryMb != null ||
-    liveSnapshot.restartCount != null
+    liveSnapshot.memoryMb != null
   );
 
   const pills = (
@@ -286,9 +284,6 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
               )}
               {liveSnapshot!.memoryMb != null && (
                 <><span className="text-muted">Memory (now)</span><span>{formatMem(liveSnapshot!.memoryMb)}</span></>
-              )}
-              {liveSnapshot!.restartCount != null && (
-                <><span className="text-muted">Restart count</span><span>{liveSnapshot!.restartCount}</span></>
               )}
             </div>
           )}
