@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-const { createTestDb, seedHostSnapshots, seedContainerSnapshots, seedAlertState, markContainerRemoved } = require('../helpers/db');
+const { createTestDb, seedHostSnapshots, seedContainerSnapshots, markContainerRemoved } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
 const { computeBaselines } = require('../../hub/src/insights/baselines');
