@@ -253,6 +253,71 @@ describe('evaluateAlerts', () => {
       assert.equal(resolved.length, 1);
       assert.equal(resolved[0].type, 'high_cpu');
     });
+
+    describe('stale container auto-resolve', () => {
+      // An unhealthy container whose latest snapshot is older than the
+      // 15-minute recency window counts as "gone" — pod was deleted,
+      // agent stopped reporting, etc.
+      it('resolves container_unhealthy when the container stops being reported', () => {
+        const longAgo = ts(new Date(NOW - 30 * 60 * 1000)); // 30 min ago
+        seedContainerSnapshots(db, [
+          { name: 'crashloop', status: 'created', health: 'unhealthy', at: longAgo },
+        ]);
+        seedAlertState(db, [
+          { type: 'container_unhealthy', target: 'crashloop', triggeredAt: longAgo, lastNotified: longAgo },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'container_unhealthy');
+        assert.equal(match.length, 1);
+        assert.ok(match[0].message.includes('no longer reported'), `expected stale message, got: ${match[0].message}`);
+      });
+
+      it('resolves restart_loop when the container stops being reported', () => {
+        const longAgo = ts(new Date(NOW - 30 * 60 * 1000));
+        seedContainerSnapshots(db, [
+          { name: 'zombie', status: 'exited', at: longAgo },
+        ]);
+        seedAlertState(db, [
+          { type: 'restart_loop', target: 'zombie', triggeredAt: longAgo, lastNotified: longAgo },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'restart_loop');
+        assert.equal(match.length, 1);
+      });
+
+      it('does NOT auto-resolve when the container is still being reported', () => {
+        // Snapshot from 5 min ago — well within the 15-min window, so the
+        // container is still live. The existing container_unhealthy resolver
+        // should still fire (or not) based on the actual health_status.
+        const fresh = ts(new Date(NOW - 5 * 60 * 1000));
+        seedContainerSnapshots(db, [
+          { name: 'alive', status: 'running', health: 'unhealthy', at: fresh },
+        ]);
+        seedAlertState(db, [
+          { type: 'container_unhealthy', target: 'alive', triggeredAt: fresh, lastNotified: fresh },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'container_unhealthy');
+        // Still unhealthy and still being reported → alert stays open.
+        assert.equal(match.length, 0);
+      });
+
+      it('does NOT auto-resolve host-scoped alerts', () => {
+        // high_host_cpu is host-scoped, not container-scoped — it should
+        // never get caught by the container-targeting recency check.
+        // Seed no container_snapshots, no host_snapshots — the host-scoped
+        // resolver will simply fail to match and the alert stays active.
+        seedAlertState(db, [
+          { type: 'high_host_cpu', target: 'proxmox-01', triggeredAt: ts(new Date(NOW - 3600000)), lastNotified: ts(new Date(NOW - 3600000)) },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        assert.equal(resolved.filter((a: any) => a.type === 'high_host_cpu').length, 0);
+      });
+    });
   });
 });
 
