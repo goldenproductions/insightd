@@ -320,6 +320,10 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   }
 
   // --- Health check diagnoses (correlation-based) ---
+  // Only run diagnosis for containers whose latest snapshot is recent.
+  // Without this filter, a deleted container (Docker rm, k8s pod delete)
+  // whose last snapshot happened to be unhealthy keeps regenerating
+  // "is crash-looping" style insights on every */15 tick forever.
   const unhealthyContainers = db.prepare(`
     SELECT cs.host_id, cs.container_name
     FROM container_snapshots cs
@@ -330,6 +334,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
       AND cs.container_name = latest.container_name
       AND cs.collected_at = latest.max_at
     WHERE cs.health_status = 'unhealthy'
+      AND cs.collected_at >= datetime('now', '-15 minutes')
   `).all() as { host_id: string; container_name: string }[];
 
   const { runDiagnosis } = require('./diagnosis/run') as {
