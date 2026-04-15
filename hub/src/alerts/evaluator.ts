@@ -25,6 +25,8 @@ interface AlertsConfig {
   hostCpuPercent: number;
   hostMemoryAvailableMb: number;
   hostLoadThreshold: number;
+  hostOffline: boolean;
+  hostOfflineMinutes: number;
   containerUnhealthy: boolean;
   excludeContainers: string;
   endpointDown: boolean | undefined;
@@ -107,6 +109,13 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
     if (alerts.hostLoadThreshold > 0) {
       triggered.push(...checkHighLoad(db, host_id, alerts.hostLoadThreshold));
     }
+  }
+
+  // Host offline — iterate the `hosts` table directly so we don't rely on
+  // host_snapshots rows (which can be pruned by retention). Threshold of 0
+  // disables; the toggle is the explicit kill switch.
+  if (alerts.hostOffline && alerts.hostOfflineMinutes > 0) {
+    triggered.push(...checkHostOffline(db, alerts.hostOfflineMinutes));
   }
 
   // Container health
@@ -291,6 +300,29 @@ function checkHighLoad(db: Database.Database, hostId: string, threshold: number)
   }];
 }
 
+/**
+ * Fire host_offline for any host whose agent hasn't reported in
+ * `thresholdMinutes`. Queried directly from the `hosts` table (not
+ * host_snapshots) so the check keeps working for hosts whose snapshot
+ * rows have aged out of the retention window.
+ */
+function checkHostOffline(db: Database.Database, thresholdMinutes: number): AlertItem[] {
+  const rows = db.prepare(
+    "SELECT host_id, last_seen, " +
+    " CAST((strftime('%s','now') - strftime('%s', last_seen)) / 60 AS INTEGER) AS offline_minutes " +
+    "FROM hosts WHERE last_seen < datetime('now', ?)"
+  ).all(`-${thresholdMinutes} minutes`) as Array<{ host_id: string; last_seen: string; offline_minutes: number }>;
+
+  return rows.map(r => ({
+    type: 'host_offline',
+    hostId: r.host_id,
+    target: 'system',
+    message: `Host "${r.host_id}" has not reported in ${r.offline_minutes} minutes (last seen ${r.last_seen})`,
+    value: r.offline_minutes,
+    threshold: thresholdMinutes,
+  }));
+}
+
 function checkContainerUnhealthy(db: Database.Database, hostId: string): AlertItem[] {
   const rows = db.prepare(`
     SELECT container_name, health_status, health_check_output FROM container_snapshots
@@ -445,6 +477,13 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
         const checks = getLastNChecks(db, ep.id, 1) as { is_up: number }[];
         isResolved = checks.length > 0 && checks[0].is_up === 1;
       }
+    } else if (alert.alert_type === 'host_offline') {
+      // Resolved when the host has reported within the configured window.
+      const windowMinutes = alertsConfig.hostOfflineMinutes || 15;
+      const row = db.prepare(
+        "SELECT 1 FROM hosts WHERE host_id = ? AND last_seen >= datetime('now', ?) LIMIT 1"
+      ).get(alert.host_id, `-${windowMinutes} minutes`);
+      isResolved = !!row;
     }
 
     if (isResolved) {
@@ -472,6 +511,7 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'high_host_cpu': return `Host${on} CPU back to normal`;
     case 'low_host_memory': return `Host${on} memory back to normal`;
     case 'high_load': return `Host${on} load back to normal`;
+    case 'host_offline': return `Host "${hostId}" is back online`;
     case 'container_unhealthy': return `Container "${target}"${on} is healthy again`;
     case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
     default: return `Alert resolved for ${target}${on}`;

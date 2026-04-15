@@ -58,6 +58,8 @@ interface AlertsConfig {
   hostCpuPercent: number;
   hostMemoryAvailableMb: number;
   hostLoadThreshold: number;
+  hostOffline: boolean;
+  hostOfflineMinutes: number;
   containerUnhealthy: boolean;
   excludeContainers: string;
   endpointDown: boolean;
@@ -112,6 +114,8 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'alerts.hostCpuPercent', env: 'INSIGHTD_ALERT_HOST_CPU', type: 'int', category: 'Alerts', label: 'Host CPU Threshold (%)', hotReload: true, default: '90' },
   { key: 'alerts.hostMemoryAvailableMb', env: 'INSIGHTD_ALERT_HOST_MEMORY', type: 'int', category: 'Alerts', label: 'Host Low Memory Threshold (MB)', hotReload: true, default: '0' },
   { key: 'alerts.hostLoadThreshold', env: 'INSIGHTD_ALERT_LOAD', type: 'float', category: 'Alerts', label: 'Host Load Threshold', hotReload: true, default: '0' },
+  { key: 'alerts.hostOffline', env: 'INSIGHTD_ALERT_HOST_OFFLINE', type: 'bool', category: 'Alerts', label: 'Host Offline Alerts', hotReload: true, default: 'true', description: 'Fire an alert when an agent stops reporting (host down, crashed, network partition).' },
+  { key: 'alerts.hostOfflineMinutes', env: 'INSIGHTD_ALERT_HOST_OFFLINE_MINUTES', type: 'int', category: 'Alerts', label: 'Host Offline Threshold (minutes)', hotReload: true, default: '15', description: 'Minutes without a report before the host is considered offline. Agents publish every 5 min by default.' },
   { key: 'alerts.containerUnhealthy', env: 'INSIGHTD_ALERT_UNHEALTHY', type: 'bool', category: 'Alerts', label: 'Unhealthy Container Alerts', hotReload: true, default: 'true' },
   { key: 'alerts.excludeContainers', env: 'INSIGHTD_ALERT_EXCLUDE', type: 'string', category: 'Alerts', label: 'Exclude Containers (patterns)', hotReload: true, default: '', description: 'Comma-separated patterns. Use * as wildcard. E.g. dev-*,test-*,insightd-*' },
   { key: 'alerts.endpointDown', env: 'INSIGHTD_ALERT_ENDPOINT_DOWN', type: 'bool', category: 'Alerts', label: 'Endpoint Down Alerts', hotReload: true, default: 'true' },
@@ -268,6 +272,8 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       hostCpuPercent: get('alerts.hostCpuPercent'),
       hostMemoryAvailableMb: get('alerts.hostMemoryAvailableMb'),
       hostLoadThreshold: get('alerts.hostLoadThreshold'),
+      hostOffline: get('alerts.hostOffline'),
+      hostOfflineMinutes: get('alerts.hostOfflineMinutes') || baseConfig.alerts?.hostOfflineMinutes || 15,
       containerUnhealthy: get('alerts.containerUnhealthy'),
       excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts?.excludeContainers || '',
       endpointDown: get('alerts.endpointDown'),

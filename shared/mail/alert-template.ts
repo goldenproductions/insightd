@@ -56,7 +56,7 @@ export interface RenderAlertContext {
 function resolveSeverity(alert: AlertEmailInput): 'red' | 'yellow' | 'green' {
   if (alert.isResolution) return 'green';
   // Container-down and reminders escalate visually to red.
-  if (alert.type.includes('down') || alert.type.includes('unhealthy') || alert.type.includes('crash')) return 'red';
+  if (alert.type.includes('down') || alert.type.includes('unhealthy') || alert.type.includes('crash') || alert.type.includes('offline')) return 'red';
   return 'yellow';
 }
 

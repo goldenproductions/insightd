@@ -211,6 +211,94 @@ describe('evaluateAlerts', () => {
     });
   });
 
+  describe('host_offline', () => {
+    const offlineConfig = { ...alertsConfig, hostOffline: true, hostOfflineMinutes: 15 };
+
+    const seedHost = (hostId: string, lastSeen: string) => {
+      db.prepare(
+        "INSERT OR REPLACE INTO hosts (host_id, first_seen, last_seen) VALUES (?, datetime('now', '-1 day'), datetime(?))"
+      ).run(hostId, lastSeen);
+    };
+
+    it('triggers when a host last_seen is older than the threshold', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000))); // 30 min ago
+
+      const { triggered } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 1);
+      assert.equal(offline[0].hostId, 'proxmox-01');
+      assert.equal(offline[0].target, 'system');
+      assert.ok(offline[0].message.includes('has not reported'));
+    });
+
+    it('does NOT trigger when a host last_seen is within the threshold', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 5 * 60 * 1000))); // 5 min ago — well within 15 min window
+
+      const { triggered } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+
+    it('does NOT trigger when alerts.hostOffline is false', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000)));
+
+      const disabled = { ...offlineConfig, hostOffline: false };
+      const { triggered } = evaluateAlerts(db, { alerts: disabled });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+
+    it('does NOT trigger when hostOfflineMinutes is 0 (kill switch)', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000)));
+
+      const zero = { ...offlineConfig, hostOfflineMinutes: 0 };
+      const { triggered } = evaluateAlerts(db, { alerts: zero });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+
+    it('fires one alert per offline host in a mixed fleet', () => {
+      seedHost('alive', ts(new Date(NOW - 2 * 60 * 1000)));    // 2 min ago — online
+      seedHost('grace', ts(new Date(NOW - 10 * 60 * 1000)));   // 10 min — within grace
+      seedHost('offline-1', ts(new Date(NOW - 30 * 60 * 1000)));
+      seedHost('offline-2', ts(new Date(NOW - 2 * 60 * 60 * 1000))); // 2 hours
+
+      const { triggered } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 2);
+      const ids = offline.map((a: any) => a.hostId).sort();
+      assert.deepEqual(ids, ['offline-1', 'offline-2']);
+    });
+
+    it('resolves when the host reports again', () => {
+      // Seed a host whose last_seen is now fresh, plus a stale host_offline alert.
+      seedHost('proxmox-01', ts(new Date(NOW - 2 * 60 * 1000))); // 2 min ago — fresh
+      seedAlertState(db, [
+        { hostId: 'proxmox-01', type: 'host_offline', target: 'system',
+          triggeredAt: ts(new Date(NOW - 60 * 60 * 1000)),
+          lastNotified: ts(new Date(NOW - 60 * 60 * 1000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = resolved.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 1);
+      assert.ok(offline[0].message.includes('back online'));
+    });
+
+    it('does NOT resolve when the host is still offline', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000))); // still stale
+      seedAlertState(db, [
+        { hostId: 'proxmox-01', type: 'host_offline', target: 'system',
+          triggeredAt: ts(new Date(NOW - 60 * 60 * 1000)),
+          lastNotified: ts(new Date(NOW - 60 * 60 * 1000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = resolved.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+  });
+
   describe('resolutions', () => {
     it('resolves container_down when container is running again', () => {
       seedContainerSnapshots(db, [
