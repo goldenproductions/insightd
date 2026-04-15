@@ -21,6 +21,8 @@ interface AlertsConfig {
   cpuPercent: number;
   memoryMb: number;
   diskPercent: number;
+  hostOffline?: boolean;
+  hostOfflineMinutes?: number;
   endpointDown?: boolean;
   endpointFailureThreshold?: number;
   cooldownMinutes: number;
@@ -89,6 +91,13 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
   // Disk — check across all hosts
   if (alerts.diskPercent > 0) {
     triggered.push(...checkDiskFull(db, alerts.diskPercent));
+  }
+
+  // Host offline — fires when an agent stops reporting for longer than the
+  // configured window. Queries the `hosts` table directly (authoritative
+  // last_seen), not host_snapshots which can be pruned by retention.
+  if (alerts.hostOffline && (alerts.hostOfflineMinutes || 0) > 0) {
+    triggered.push(...checkHostOffline(db, alerts.hostOfflineMinutes || 15));
   }
 
   // HTTP endpoints — hub-level checks
@@ -216,6 +225,28 @@ function checkDiskFull(db: Database.Database, threshold: number): AlertItem[] {
       message: `Disk "${r.mount_point}" on ${r.host_id} at ${r.used_percent}% (${r.used_gb}/${r.total_gb}GB)`,
       value: r.used_percent,
     }));
+}
+
+/**
+ * Fire host_offline for any host whose agent hasn't reported in
+ * `thresholdMinutes`. Queries the `hosts` table directly so the check
+ * keeps working for hosts whose snapshot rows have aged out of retention.
+ */
+function checkHostOffline(db: Database.Database, thresholdMinutes: number): AlertItem[] {
+  const rows = db.prepare(
+    "SELECT host_id, last_seen, " +
+    " CAST((strftime('%s','now') - strftime('%s', last_seen)) / 60 AS INTEGER) AS offline_minutes " +
+    "FROM hosts WHERE last_seen < datetime('now', ?)"
+  ).all(`-${thresholdMinutes} minutes`) as Array<{ host_id: string; last_seen: string; offline_minutes: number }>;
+
+  return rows.map(r => ({
+    type: 'host_offline',
+    hostId: r.host_id,
+    target: 'system',
+    message: `Host "${r.host_id}" has not reported in ${r.offline_minutes} minutes (last seen ${r.last_seen})`,
+    value: r.offline_minutes,
+    threshold: thresholdMinutes,
+  }));
 }
 
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {
@@ -351,6 +382,12 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
       } catch {
         // http-monitor module not available
       }
+    } else if (alert.alert_type === 'host_offline') {
+      const windowMinutes = alertsConfig.hostOfflineMinutes || 15;
+      const row = db.prepare(
+        "SELECT 1 FROM hosts WHERE host_id = ? AND last_seen >= datetime('now', ?) LIMIT 1"
+      ).get(alert.host_id, `-${windowMinutes} minutes`);
+      isResolved = !!row;
     }
 
     if (isResolved) {
@@ -375,6 +412,7 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'high_cpu': return `Container "${target}"${on} CPU back to normal`;
     case 'high_memory': return `Container "${target}"${on} memory back to normal`;
     case 'disk_full': return `Disk "${target}"${on} usage back to normal`;
+    case 'host_offline': return `Host "${hostId}" is back online`;
     case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
     default: return `Alert resolved for ${target}${on}`;
   }

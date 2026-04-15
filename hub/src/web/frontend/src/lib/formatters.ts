@@ -83,6 +83,7 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
   high_host_cpu: 'Host CPU high',
   low_host_memory: 'Host memory low',
   high_load: 'Host load high',
+  host_offline: 'Host offline',
   endpoint_down: 'Endpoint down',
 };
 
