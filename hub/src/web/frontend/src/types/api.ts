@@ -194,6 +194,8 @@ export interface Finding {
 
 export interface ContainerDetail extends ContainerSnapshot {
   host_id: string;
+  /** Runtime of the host this container lives on — drives UI gating of Docker-only actions. */
+  runtime_type?: 'docker' | 'kubernetes' | string;
   health_diagnosis: string | null;
   findings: Finding[];
   history: ContainerHistory[];
@@ -514,6 +516,7 @@ export interface HostWithAgent {
   host_id: string;
   agent_version: string | null;
   is_online: number;
+  runtime_type?: string;
 }
 
 export interface ImageUpdate {

@@ -298,9 +298,14 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     // Swallow — degraded rendering is better than a 500.
   }
 
+  // Used by the UI to disable Docker-only actions (restart/stop/start) on
+  // k8s pods, which the agent would reject at runtime.
+  const runtime_type = queries.getHostRuntimeType(db, params.hostId);
+
   return {
     ...latest,
     host_id: params.hostId,
+    runtime_type,
     health_diagnosis,
     findings,
     history: queries.getContainerHistory(db, params.hostId, params.containerName, hours),
