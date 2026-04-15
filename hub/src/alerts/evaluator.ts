@@ -376,11 +376,11 @@ const CONTAINER_ALERT_TYPES = new Set<string>([
   'container_unhealthy',
 ]);
 
-// Generous window for "agent stopped reporting this container". The default
-// collect interval is 5 minutes and the host detail page's live container
-// list uses the same 15-minute filter, so this stays consistent with what
-// the user already sees in the UI.
-const STALE_CONTAINER_MINUTES = 15;
+// Generous window for "is the agent itself still reporting?" — used as a
+// safety guard before auto-resolving container alerts on vanished targets.
+// If the whole agent went dark every container looks removed, and we want
+// the host-offline situation to stay visible instead.
+const HOST_REPORTING_MINUTES = 15;
 
 function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): AlertItem[] {
   const resolved: AlertItem[] = [];
@@ -388,8 +388,8 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
     'SELECT id, host_id, alert_type, target, triggered_at FROM alert_state WHERE resolved_at IS NULL'
   ).all() as { id: number; host_id: string; alert_type: string; target: string; triggered_at: string }[];
 
-  const recentSnapshotStmt = db.prepare(
-    "SELECT 1 FROM container_snapshots WHERE host_id = ? AND container_name = ? AND collected_at >= datetime('now', ?) LIMIT 1"
+  const containerRemovedStmt = db.prepare(
+    'SELECT removed_at FROM containers WHERE host_id = ? AND container_name = ?'
   );
   const hostReportingStmt = db.prepare(
     "SELECT 1 FROM hosts WHERE host_id = ? AND last_seen >= datetime('now', ?) LIMIT 1"
@@ -401,7 +401,7 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
   const isHostReporting = (hostId: string): boolean => {
     const cached = hostReporting.get(hostId);
     if (cached !== undefined) return cached;
-    const row = hostReportingStmt.get(hostId, `-${STALE_CONTAINER_MINUTES} minutes`);
+    const row = hostReportingStmt.get(hostId, `-${HOST_REPORTING_MINUTES} minutes`);
     const reporting = !!row;
     hostReporting.set(hostId, reporting);
     return reporting;
@@ -409,26 +409,24 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
 
   for (const alert of activeAlerts) {
     // Before running the type-specific resolver, auto-resolve any
-    // container-scoped alert whose target hasn't been reported in the
-    // recency window. Closes the leak where a deleted container (Docker
-    // rm, k8s pod delete) leaves its last "bad" snapshot frozen forever.
+    // container-scoped alert whose target has been removed (Docker rm,
+    // k8s pod delete, completed Job pod). The `containers` registry is
+    // the source of truth: `removed_at IS NOT NULL`, or no row at all,
+    // means the container is no longer present.
     //
-    // CRITICAL: only apply the "stale auto-resolve" path when the host
-    // itself is still reporting. If the whole agent went dark, every
-    // container on that host looks "stale" — auto-resolving their alerts
-    // would silently clear real failures and mislead the operator into
-    // thinking the problem was fixed. In that case we leave alerts in
-    // their current state so the host-offline situation stays visible.
+    // CRITICAL: only apply the stale auto-resolve path when the host
+    // itself is still reporting. If the whole agent went dark, we leave
+    // container alerts in their current state so the host-offline
+    // situation stays visible instead of being masked by mass resolutions.
     if (CONTAINER_ALERT_TYPES.has(alert.alert_type) && isHostReporting(alert.host_id)) {
-      const recent = recentSnapshotStmt.get(
-        alert.host_id, alert.target, `-${STALE_CONTAINER_MINUTES} minutes`
-      );
-      if (!recent) {
+      const row = containerRemovedStmt.get(alert.host_id, alert.target) as
+        { removed_at: string | null } | undefined;
+      if (!row || row.removed_at !== null) {
         resolved.push({
           type: alert.alert_type,
           hostId: alert.host_id,
           target: alert.target,
-          message: `Container "${alert.target}" on ${alert.host_id} is no longer reported by the agent (auto-resolved after ${STALE_CONTAINER_MINUTES}m)`,
+          message: `Container "${alert.target}" on ${alert.host_id} is no longer reported by the agent (auto-resolved)`,
           triggeredAt: alert.triggered_at,
           isResolution: true,
         });

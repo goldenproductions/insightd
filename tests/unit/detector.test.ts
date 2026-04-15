@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-const { createTestDb, seedHostSnapshots, seedContainerSnapshots, seedAlertState } = require('../helpers/db');
+const { createTestDb, seedHostSnapshots, seedContainerSnapshots, markContainerRemoved } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
 const { computeBaselines } = require('../../hub/src/insights/baselines');
@@ -177,20 +177,21 @@ describe('detector', () => {
     });
 
     it('skips containers that have stopped being reported (removed pods/containers)', () => {
-      // Same class of leak the alert evaluator had: a container whose last
-      // snapshot is older than the 15-minute recency window should not
-      // regenerate insights from its historical data.
+      // Same class of leak the alert evaluator had: a container whose
+      // registry row is marked `removed_at` should not regenerate insights
+      // from its historical snapshots.
       const recent = ts(new Date(NOW - 2 * 60 * 1000));
       seedHost(db, 'h1', recent);
 
       // Seed a container with a clear restart-loop history (>=3 restarts
-      // over the last 24h) but whose latest snapshot is 30 minutes old —
-      // the container has been deleted since, and the detector should
-      // skip it entirely.
+      // over the last 24h). Its registry row is then flagged as removed,
+      // so the detector should skip it entirely even though the snapshots
+      // are still in the DB.
       seedContainerSnapshots(db, [
         { hostId: 'h1', name: 'ghost', status: 'running', cpu: 5, mem: 50, restarts: 2, at: ts(new Date(NOW - 60 * 60 * 1000)) },
         { hostId: 'h1', name: 'ghost', status: 'running', cpu: 5, mem: 50, restarts: 8, at: ts(new Date(NOW - 30 * 60 * 1000)) },
       ]);
+      markContainerRemoved(db, 'h1', 'ghost');
 
       generateInsights(db);
       const rows = db.prepare("SELECT * FROM insights WHERE entity_id = 'h1/ghost'").all();

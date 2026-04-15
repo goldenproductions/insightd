@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedHttpEndpoints, seedHttpChecks } = require('../helpers/db');
+const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedHttpEndpoints, seedHttpChecks, markContainerRemoved } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
 
@@ -354,15 +354,15 @@ describe('evaluateAlerts', () => {
         ).run(hostId);
       };
 
-      // An unhealthy container whose latest snapshot is older than the
-      // 15-minute recency window counts as "gone" — pod was deleted,
-      // agent stopped reporting, etc.
+      // An unhealthy container whose registry row is marked `removed_at`
+      // counts as "gone" — pod was deleted, Docker rm, etc.
       it('resolves container_unhealthy when the container stops being reported', () => {
         markHostAlive();
         const longAgo = ts(new Date(NOW - 30 * 60 * 1000)); // 30 min ago
         seedContainerSnapshots(db, [
           { name: 'crashloop', status: 'created', health: 'unhealthy', at: longAgo },
         ]);
+        markContainerRemoved(db, 'local', 'crashloop', longAgo);
         seedAlertState(db, [
           { type: 'container_unhealthy', target: 'crashloop', triggeredAt: longAgo, lastNotified: longAgo },
         ]);
@@ -379,6 +379,7 @@ describe('evaluateAlerts', () => {
         seedContainerSnapshots(db, [
           { name: 'zombie', status: 'exited', at: longAgo },
         ]);
+        markContainerRemoved(db, 'local', 'zombie', longAgo);
         seedAlertState(db, [
           { type: 'restart_loop', target: 'zombie', triggeredAt: longAgo, lastNotified: longAgo },
         ]);
@@ -390,9 +391,9 @@ describe('evaluateAlerts', () => {
 
       it('does NOT auto-resolve when the container is still being reported', () => {
         markHostAlive();
-        // Snapshot from 5 min ago — well within the 15-min window, so the
-        // container is still live. The existing container_unhealthy resolver
-        // should still fire (or not) based on the actual health_status.
+        // Container is still present in the registry (seedContainerSnapshots
+        // auto-upserts). The existing container_unhealthy resolver should
+        // fire (or not) based on the actual health_status.
         const fresh = ts(new Date(NOW - 5 * 60 * 1000));
         seedContainerSnapshots(db, [
           { name: 'alive', status: 'running', health: 'unhealthy', at: fresh },
