@@ -548,7 +548,10 @@ function enrichInsightsWithCorrelations(db: Database.Database): void {
       "SELECT COUNT(DISTINCT container_name) as c FROM container_snapshots WHERE host_id = ? AND collected_at >= datetime('now', '-1 day')"
     ).get(hostId) as TotalOnHostRow;
     if (insights.length >= totalOnHost.c * 0.5) {
-      const names = insights.map(i => i.entity_id.split('/')[1]);
+      // entity_id is "hostId/containerName"; containerName may itself contain
+      // slashes (k8s: "namespace/pod/container"), so take everything after the
+      // first slash — not just the second segment.
+      const names = insights.map(i => i.entity_id.slice(i.entity_id.indexOf('/') + 1));
       const ids = insights.map(i => i.id);
       db.prepare(`DELETE FROM insights WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids);
       db.prepare(`
@@ -593,7 +596,11 @@ function enrichInsightsWithCorrelations(db: Database.Database): void {
     `).all(hostId) as AlertStateRow[];
 
     const correlations: string[] = [];
-    const selfContainer = insight.entity_type === 'container' ? insight.entity_id.split('/')[1] : null;
+    // Same note as above: slice off the hostId prefix so k8s container names
+    // (namespace/pod/container) round-trip intact.
+    const selfContainer = insight.entity_type === 'container'
+      ? insight.entity_id.slice(insight.entity_id.indexOf('/') + 1)
+      : null;
 
     for (const evt of recentEvents) {
       if (selfContainer && evt.container_name === selfContainer) continue;
