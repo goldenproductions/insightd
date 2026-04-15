@@ -301,17 +301,19 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
 }
 
 function getLatestContainers(db: Database.Database, hostId: string, showInternal: boolean = false): ContainerRow[] {
-  // Only return containers seen in the last 15 minutes — drops "ghost" entries
-  // for containers that were once reported but have since been deleted or
-  // filtered out (e.g. completed K8s Job pods, removed Docker containers).
-  // Historical snapshots stay in the DB for the timeline view; this only
-  // affects the current host detail view.
+  // Return the latest snapshot for every container currently present on the
+  // host, per the `containers` registry. Containers whose latest batch no
+  // longer lists them (Docker rm, k8s pod delete, completed Job pods) have
+  // `removed_at` set by `ingestContainers` and are excluded here. Historical
+  // snapshots stay in the DB for the timeline view.
   const rows = db.prepare(`
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.collected_at
     FROM container_snapshots cs
+    INNER JOIN containers c
+      ON c.host_id = cs.host_id AND c.container_name = cs.container_name
     INNER JOIN (
       SELECT host_id, container_name, MAX(collected_at) as max_at
       FROM container_snapshots WHERE host_id = ?
@@ -319,9 +321,9 @@ function getLatestContainers(db: Database.Database, hostId: string, showInternal
     ) latest ON cs.host_id = latest.host_id
       AND cs.container_name = latest.container_name
       AND cs.collected_at = latest.max_at
-    WHERE cs.collected_at > datetime('now', '-15 minutes')
+    WHERE c.host_id = ? AND c.removed_at IS NULL
     ORDER BY cs.container_name
-  `).all(hostId) as ContainerRow[];
+  `).all(hostId, hostId) as ContainerRow[];
   if (showInternal) return rows;
   return rows.filter(r => {
     if (!r.labels) return true;
@@ -389,6 +391,8 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
   const allContainers = db.prepare(`
     SELECT cs.status, cs.labels
     FROM container_snapshots cs
+    INNER JOIN containers c
+      ON c.host_id = cs.host_id AND c.container_name = cs.container_name
     INNER JOIN (
       SELECT host_id as h, container_name as cn, MAX(collected_at) as max_at
       FROM container_snapshots
@@ -396,7 +400,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     ) latest ON cs.host_id = latest.h
       AND cs.container_name = latest.cn
       AND cs.collected_at = latest.max_at
-    WHERE cs.collected_at > datetime('now', '-15 minutes')
+    WHERE c.removed_at IS NULL
   `).all() as ContainerStatusRow[];
   const filtered = showInternal ? allContainers : allContainers.filter(c => {
     if (!c.labels) return true;
@@ -449,15 +453,14 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     groups = groupQueries.getGroups(db, showInternal);
   } catch { /* group queries not available */ }
 
-  // 24h availability per container — only for containers still being reported.
-  // Two-pass to avoid a correlated EXISTS over the snapshot table: first get
-  // the set of (host,name) pairs active in the last 15 min, then aggregate
-  // 24h stats filtered to that set. Joining via a temp table is much cheaper
-  // than re-evaluating EXISTS for every matching row.
+  // 24h availability per container — only for containers still present in
+  // the registry. Two-pass to avoid a correlated EXISTS over the snapshot
+  // table: first get the set of active (host,name) pairs, then aggregate
+  // 24h stats filtered to that set.
   const activePairs = db.prepare(`
-    SELECT DISTINCT host_id, container_name
-    FROM container_snapshots
-    WHERE collected_at > datetime('now', '-15 minutes')
+    SELECT host_id, container_name
+    FROM containers
+    WHERE removed_at IS NULL
   `).all() as Array<{ host_id: string; container_name: string }>;
   const availRows: AvailabilityRow[] = [];
   if (activePairs.length > 0) {

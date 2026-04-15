@@ -196,15 +196,13 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   }
 
   // --- Container insights ---
-  // Only consider containers actively being reported. A 15-minute recency
-  // window matches the host-detail page's live container filter and the
-  // alert-evaluator's staleness cutoff (hub/src/alerts/evaluator.ts), so
-  // a removed container stops generating insights on the next tick instead
-  // of indefinitely regenerating "restarting frequently" and "is
-  // crash-looping" rows from historical snapshots.
+  // Only consider containers still present in the registry. A removed
+  // container's registry row has `removed_at` stamped on the next ingest
+  // cycle (hub/src/ingest.ts), so stale "restart loop" / "crash looping"
+  // insights stop regenerating one cycle after the container disappears.
   const containers = db.prepare(`
-    SELECT DISTINCT host_id, container_name FROM container_snapshots
-    WHERE collected_at >= datetime('now', '-15 minutes')
+    SELECT host_id, container_name FROM containers
+    WHERE removed_at IS NULL
   `).all() as ContainerIdRow[];
 
   for (const { host_id, container_name } of containers) {
@@ -320,13 +318,15 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   }
 
   // --- Health check diagnoses (correlation-based) ---
-  // Only run diagnosis for containers whose latest snapshot is recent.
-  // Without this filter, a deleted container (Docker rm, k8s pod delete)
-  // whose last snapshot happened to be unhealthy keeps regenerating
-  // "is crash-looping" style insights on every */15 tick forever.
+  // Only run diagnosis for containers still present in the registry. A
+  // removed container's registry row is flagged `removed_at` on the next
+  // ingest (hub/src/ingest.ts), so its frozen "unhealthy" snapshot stops
+  // regenerating diagnoses one cycle after deletion.
   const unhealthyContainers = db.prepare(`
     SELECT cs.host_id, cs.container_name
     FROM container_snapshots cs
+    INNER JOIN containers c
+      ON c.host_id = cs.host_id AND c.container_name = cs.container_name
     INNER JOIN (
       SELECT host_id, container_name, MAX(collected_at) as max_at
       FROM container_snapshots GROUP BY host_id, container_name
@@ -334,7 +334,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
       AND cs.container_name = latest.container_name
       AND cs.collected_at = latest.max_at
     WHERE cs.health_status = 'unhealthy'
-      AND cs.collected_at >= datetime('now', '-15 minutes')
+      AND c.removed_at IS NULL
   `).all() as { host_id: string; container_name: string }[];
 
   const { runDiagnosis } = require('./diagnosis/run') as {
