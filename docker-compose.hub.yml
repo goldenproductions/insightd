@@ -34,6 +34,14 @@ services:
           mosquitto_passwd -b -c /mosquitto/config/passwd \
             "$$INSIGHTD_MQTT_USER" "$$INSIGHTD_MQTT_PASS"
         fi
+        # Fix ownership + perms every boot. The bootstrap runs as root, so
+        # mosquitto.conf is root-owned and mosquitto_passwd creates its file
+        # with mode 0700 — the broker runs as the 'mosquitto' user and bails
+        # with "Unable to open pwfile" without this. Applying every boot also
+        # repairs installs created before this fix.
+        chown -R mosquitto:mosquitto /mosquitto/config
+        chmod 0644 /mosquitto/config/mosquitto.conf
+        chmod 0600 /mosquitto/config/passwd
     environment:
       INSIGHTD_MQTT_USER: ${INSIGHTD_MQTT_USER:-insightd}
       INSIGHTD_MQTT_PASS: ${INSIGHTD_MQTT_PASS:-}
