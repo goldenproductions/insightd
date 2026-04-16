@@ -713,10 +713,11 @@ function getHostRuntimeType(db: Database.Database, hostId: string): string {
 
 function getUptimeTimeline(db: Database.Database, hostId: string, days: number): Array<{ name: string; slots: string[]; uptimePercent: number | null }> {
   const rows = db.prepare(`
-    SELECT container_name, status, collected_at
-    FROM container_snapshots
-    WHERE host_id = ? AND collected_at >= datetime('now', '-' || ? || ' days')
-    ORDER BY container_name, collected_at
+    SELECT cs.container_name, cs.status, cs.collected_at
+    FROM container_snapshots cs
+    INNER JOIN containers c ON c.host_id = cs.host_id AND c.container_name = cs.container_name AND c.removed_at IS NULL
+    WHERE cs.host_id = ? AND cs.collected_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY cs.container_name, cs.collected_at
   `).all(hostId, days) as UptimeSnapshotRow[];
 
   const containers: Record<string, UptimeSnapshotRow[]> = {};

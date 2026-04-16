@@ -10,7 +10,9 @@ import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
 import { fmtPercent, fmtUptime, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
 import { getAnalogy, findBaseline } from '@/lib/analogies';
-import { isInternalContainer } from '@/lib/containers';
+import { isInternalContainer, getContainerNamespace, getContainerDisplayName } from '@/lib/containers';
+import { useNamespaceFilter } from '@/hooks/useNamespaceFilter';
+import { NamespaceFilterBar } from '@/components/NamespaceFilterBar';
 
 interface HostChartDataset {
   timestamps: number[];
@@ -86,11 +88,22 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
     [metricsHistory],
   );
 
-  const running = data.containers.filter(c => c.status === 'running').length;
-  const total = data.containers.length;
+  const { namespaces, hidden, filtered, toggle, showAll, isKubernetes } = useNamespaceFilter(data.containers, hostId);
+  const running = filtered.filter(c => c.status === 'running').length;
+  const total = filtered.length;
+  const totalUnfiltered = data.containers.length;
 
   const containerCols: Column<ContainerSnapshot>[] = [
-    { header: 'Name', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.status} />{r.container_name}</span> },
+    { header: 'Name', accessor: r => {
+      const ns = getContainerNamespace(r.container_name);
+      const display = getContainerDisplayName(r.container_name);
+      return (
+        <span className="flex items-center gap-2">
+          <StatusDot status={r.status} />
+          {ns ? <span><span className="text-muted">{ns}/</span>{display}</span> : r.container_name}
+        </span>
+      );
+    } },
     { header: 'Status', accessor: r => <Badge text={r.status} color={r.status === 'running' ? 'green' : 'red'} /> },
     { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
     { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
@@ -242,17 +255,34 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
         </Card>
       )}
 
+      {isKubernetes && (
+        <NamespaceFilterBar
+          namespaces={namespaces}
+          hidden={hidden}
+          onToggle={toggle}
+          onShowAll={showAll}
+          totalCount={totalUnfiltered}
+          visibleCount={total}
+        />
+      )}
+
       {timeline && timeline.length > 0 && (
         <Card title="Uptime (7 days)">
-          <UptimeTimeline containers={timeline} hostId={hostId} />
+          <UptimeTimeline
+            containers={hidden.size > 0 ? timeline.filter(t => { const ns = getContainerNamespace(t.name); return !ns || !hidden.has(ns); }) : timeline}
+            hostId={hostId}
+          />
         </Card>
       )}
 
       <Card title="Containers" actions={<LinkButton to={`/hosts/${hid}/logs`} variant="ghost" size="sm">Split Logs</LinkButton>}>
-        <p className="mb-3 text-xs text-muted">{running}/{total} running</p>
+        <p className="mb-3 text-xs text-muted">
+          {running}/{total} running
+          {hidden.size > 0 && <span> (filtered from {totalUnfiltered})</span>}
+        </p>
         <DataTable
           columns={containerCols}
-          data={data.containers}
+          data={filtered}
           onRowClick={r => navigate(`/hosts/${hid}/containers/${encodeURIComponent(r.container_name)}`)}
           emptyText="No containers"
         />
