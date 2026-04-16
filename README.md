@@ -41,9 +41,15 @@ docker run -d \
 
 Open **http://your-server:3000** and follow the **Setup Wizard** — it walks you through setting a password, configuring email, and adding agents.
 
-### Multi-Server (Docker Compose)
+### Multi-Server (One Command)
 
-For monitoring multiple servers, insightd uses MQTT to connect lightweight agents to a central hub. See the [Docker Compose setup guide](https://docs.insightd.org/guides/docker-compose/) for the full walkthrough (Mosquitto config, `.env`, `docker-compose.yml`, and adding remote agents).
+For monitoring multiple servers, insightd uses MQTT to connect lightweight agents to a central hub. One command brings up Mosquitto, the hub, and a local agent — MQTT credentials are auto-generated and surfaced in the UI's **Add Agent** page for remote enrollment.
+
+```bash
+curl -sSL https://insightd.org/install.sh | bash
+```
+
+The script is ~40 lines of bash and [public on GitHub](https://github.com/goldenproductions/insightd.org/blob/main/public/install.sh) — audit before running if you prefer. See the [Quick Start guide](https://docs.insightd.org/guides/quick-start/) for the manual Docker Compose walkthrough.
 
 ### Kubernetes / k3s
 
