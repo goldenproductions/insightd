@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, HostMetricsSnapshot, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
+import type { HostDetail, HostMetricsSnapshot, Host, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { Button, Input } from '@/components/FormField';
@@ -14,6 +14,7 @@ import { useShowInternal } from '@/hooks/useShowInternal';
 import { useAuth } from '@/context/AuthContext';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
+import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { useState } from 'react';
 import { queryKeys } from '@/lib/queryKeys';
 import { HostOverviewTab } from './HostOverviewTab';
@@ -38,6 +39,22 @@ export function HostDetailPage() {
   const { data: events } = useQuery({ queryKey: queryKeys.events(hostId), queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
   const { data: baselines, isFetched: baselinesReady } = useQuery({ queryKey: queryKeys.hostBaselines(hostId), queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
   const { data: metricsHistory } = useQuery({ queryKey: queryKeys.hostMetricsHistory(hostId), queryFn: () => api<HostMetricsSnapshot[]>(`/hosts/${hid}/metrics?hours=24`).catch(() => []), refetchInterval: 60_000 });
+  const { data: allHosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<Host[]>('/hosts'), staleTime: 30_000 });
+
+  // Prev/next sibling navigation — alphabetical by host_id, matching the hosts page order.
+  const hostIds = allHosts?.map(h => h.host_id) ?? [];
+  const currentIdx = hostId ? hostIds.indexOf(hostId) : -1;
+  const prevHost = currentIdx > 0 ? hostIds[currentIdx - 1] : null;
+  const nextHost = currentIdx >= 0 && currentIdx < hostIds.length - 1 ? hostIds[currentIdx + 1] : null;
+  const goToHost = (id: string) => navigate(`/hosts/${encodeURIComponent(id)}`);
+
+  // Keyboard shortcuts — registered unconditionally (Rules of Hooks).
+  useKeyboardShortcut({ keys: '1', description: 'Overview tab', scope: 'Host detail', onTrigger: () => setActiveTab('overview') });
+  useKeyboardShortcut({ keys: '2', description: 'Resources tab', scope: 'Host detail', onTrigger: () => setActiveTab('resources') });
+  useKeyboardShortcut({ keys: '3', description: 'Alerts tab', scope: 'Host detail', onTrigger: () => setActiveTab('alerts') });
+  useKeyboardShortcut({ keys: 'b', description: 'Back to hosts', scope: 'Host detail', onTrigger: () => navigate('/hosts') });
+  useKeyboardShortcut({ keys: '[', description: 'Previous host', scope: 'Host detail', disabled: !prevHost, onTrigger: () => { if (prevHost) goToHost(prevHost); } });
+  useKeyboardShortcut({ keys: ']', description: 'Next host', scope: 'Host detail', disabled: !nextHost, onTrigger: () => { if (nextHost) goToHost(nextHost); } });
 
   if (!data) return (
     <div className="space-y-6">
@@ -49,14 +66,39 @@ export function HostDetailPage() {
   );
 
   const tabs = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'resources', label: 'Resources' },
-    { id: 'alerts', label: 'Alerts', count: data.alerts.length },
+    { id: 'overview', label: 'Overview', shortcut: '1' },
+    { id: 'resources', label: 'Resources', shortcut: '2' },
+    { id: 'alerts', label: 'Alerts', count: data.alerts.length, shortcut: '3' },
   ];
 
   return (
     <div className="animate-fade-in space-y-6">
-      <BackLink to="/hosts" label="Back to Hosts" />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <BackLink to="/hosts" label="Back to Hosts" />
+        {(prevHost || nextHost) && (
+          <div className="flex items-center gap-1 text-xs">
+            <button
+              type="button"
+              onClick={() => prevHost && goToHost(prevHost)}
+              disabled={!prevHost}
+              title={prevHost ? `Previous: ${prevHost} ([)` : 'No previous host'}
+              className="rounded px-2 py-1 text-muted transition-colors hover:bg-bg-secondary hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+            >
+              ← {prevHost ?? '—'}
+            </button>
+            <span className="px-1 text-[10px] text-muted">{currentIdx >= 0 && hostIds.length > 0 ? `${currentIdx + 1}/${hostIds.length}` : ''}</span>
+            <button
+              type="button"
+              onClick={() => nextHost && goToHost(nextHost)}
+              disabled={!nextHost}
+              title={nextHost ? `Next: ${nextHost} (])` : 'No next host'}
+              className="rounded px-2 py-1 text-muted transition-colors hover:bg-bg-secondary hover:text-fg disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-muted"
+            >
+              {nextHost ?? '—'} →
+            </button>
+          </div>
+        )}
+      </div>
 
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -96,7 +138,7 @@ export function HostDetailPage() {
       )}
 
       {activeTab === 'alerts' && (
-        <HostAlertsTab data={data} events={events} />
+        <HostAlertsTab data={data} events={events} hostId={hostId!} />
       )}
 
       {/* v26 — historical S-H-ESD anomalies for this host. Always visible
