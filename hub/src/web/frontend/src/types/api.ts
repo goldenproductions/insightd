@@ -90,6 +90,24 @@ export interface HostMetrics {
   collected_at: string;
 }
 
+export interface HostMetricsSnapshot {
+  cpu_percent: number | null;
+  memory_total_mb: number | null;
+  memory_used_mb: number | null;
+  memory_available_mb: number | null;
+  load_1: number | null;
+  load_5: number | null;
+  load_15: number | null;
+  gpu_utilization_percent: number | null;
+  gpu_temperature_celsius: number | null;
+  cpu_temperature_celsius: number | null;
+  disk_read_bytes_per_sec: number | null;
+  disk_write_bytes_per_sec: number | null;
+  net_rx_bytes_per_sec: number | null;
+  net_tx_bytes_per_sec: number | null;
+  collected_at: string;
+}
+
 export interface DiskSnapshot {
   mount_point: string;
   total_gb: number;

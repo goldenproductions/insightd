@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
+import type { HostDetail, HostMetricsSnapshot, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { Button, Input } from '@/components/FormField';
@@ -37,6 +37,7 @@ export function HostDetailPage() {
   const { data: trends } = useQuery({ queryKey: queryKeys.trends(hostId), queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
   const { data: events } = useQuery({ queryKey: queryKeys.events(hostId), queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
   const { data: baselines, isFetched: baselinesReady } = useQuery({ queryKey: queryKeys.hostBaselines(hostId), queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
+  const { data: metricsHistory } = useQuery({ queryKey: queryKeys.hostMetricsHistory(hostId), queryFn: () => api<HostMetricsSnapshot[]>(`/hosts/${hid}/metrics?hours=24`).catch(() => []), refetchInterval: 60_000 });
 
   if (!data) return (
     <div className="space-y-6">
@@ -86,6 +87,7 @@ export function HostDetailPage() {
           runAction={runAction}
           removeContainer={removeContainer}
           baselines={baselinesReady ? baselines : undefined}
+          metricsHistory={metricsHistory}
         />
       )}
 
