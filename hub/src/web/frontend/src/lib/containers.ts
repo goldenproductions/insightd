@@ -12,6 +12,27 @@ export function isInternalContainer(labels: string | null | undefined): boolean 
 }
 
 /**
+ * Extract the Kubernetes namespace from a container_name.
+ * K8s names follow "namespace/stableName/container" (two slashes).
+ * Returns null for Docker containers (no slashes).
+ */
+export function getContainerNamespace(containerName: string): string | null {
+  const slash = containerName.indexOf('/');
+  if (slash <= 0) return null;
+  return containerName.slice(0, slash);
+}
+
+/**
+ * Strip the namespace prefix from a k8s container_name, returning
+ * "stableName/container". Returns the full name for Docker containers.
+ */
+export function getContainerDisplayName(containerName: string): string {
+  const slash = containerName.indexOf('/');
+  if (slash <= 0) return containerName;
+  return containerName.slice(slash + 1);
+}
+
+/**
  * Split a container entity_id of the form "hostId/containerName". k8s
  * container names are themselves slashed ("namespace/pod/container"), so
  * splitting naively on '/' and taking two parts loses everything after the
