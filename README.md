@@ -16,124 +16,46 @@ No critical issues. Good week.
 
 ## Features
 
-- **Multi-host monitoring** — deploy agents on each server, all reporting to a central hub via MQTT
-- **Multi-runtime support** — Docker (default) and Kubernetes/k3s (DaemonSet mode), one agent per node. K8s mode uses kubelet stats for accurate per-node CPU/memory.
-- **Host grouping** — organize hosts by cluster, environment, or location with `INSIGHTD_HOST_GROUP`. The Hosts page renders collapsible sections per group, with a UI override per host for users without env-var access.
-- **Container monitoring** — status, CPU, RAM, restarts, network/block I/O, health checks
-- **Host system metrics** — CPU, memory, load, uptime, GPU, temperature, disk I/O, network I/O (Docker mode); CPU, memory, uptime (k8s mode)
-- **Disk monitoring** — usage warnings with "X days until full" forecasts
-- **HTTP endpoint monitoring** — uptime, response time, configurable intervals
-- **Smart insights engine** — capacity-based health scoring (only flags actual saturation, not baseline deviation), time-of-day baselines, predictive alerts, correlation detection
-- **Research-grounded diagnosis engine** — when a container is unhealthy, insightd runs seven signal detectors against metrics, robust baselines, restart history, host state, and recent logs, then fuses the results through a unified diagnoser that also ranks **correlated upstream services** (Personalized PageRank over a compose/host/service topology). Based on Drain (ICWS 2017), MicroRCA (NOMS 2020), Twitter AnomalyDetection, and Adtributor (NSDI 2014).
-- **Drain log template mining** — recent container logs are mined into per-image templates at diagnosis time. Detects novel error patterns without hand-written regexes; flags templates first-seen in the last 5 minutes as anomaly signals.
-- **S-H-ESD historical anomalies** — Seasonal-Hybrid ESD runs on hourly rollups for every host + container, surfacing real spikes vs the 14-day baseline in a collapsible card on detail pages.
-- **Robust baselines** — `|value − median| / MAD` z-score bands replace "above P95" thresholds, so a normally-quiet host doesn't get flagged for 1.6% CPU drift. Falls back to percentile comparison when MAD is unavailable.
-- **Calibrated confidence** — thumbs-up / thumbs-down feedback on diagnosis cards feeds a Beta(2,2) posterior per `(diagnoser, conclusion_tag)`. After ≥5 votes, the engine learns whether its `high` / `medium` / `low` confidence actually matches operator judgment and recalibrates future findings.
-- **Insights page** — dedicated `/insights` view with expandable cards, thumbs up/down feedback (wired into calibration), and per-session dismiss
-- **Real-time alerts** — 10 alert types with cooldowns, auto-resolution, and webhook delivery — alerts include the health check output so notifications tell you *why* a container is unhealthy
-- **Webhook notifications** — Slack, Discord, Telegram, ntfy, or any generic webhook
-- **Weekly digest emails** — HTML + plaintext summary of the week
-- **Container actions** — start/stop/restart/remove containers from the UI (opt-in, Docker mode only)
-- **Remove containers** — delete exited containers + clean all insightd data (alerts, history, baselines)
-- **Remote agent updates** — update agents from the hub UI via MQTT (opt-in, Docker mode only)
-- **Image update detection** — compares local images against Docker Hub, with a "Check now" button on the Updates page
-- **Explainable alerts** — every alert stores why it fired (value, threshold, message) so you can understand what happened
-- **Configurable data retention** — keep raw snapshots for 30 days (configurable), then automatic hourly rollups for long-term trends (default 365 days)
-- **Storage management** — see your database size and last cleanup time on the Settings page, with an on-demand vacuum button
-- **Metric personalities** — baseline-aware human-friendly moods on every metric (e.g. "😌 Normal", "🔥 Way above normal")
-- **Health score breakdown** — click the system health score to see per-host factor analysis
-- **Stacks** — organize containers by purpose across hosts, auto-detected from Docker Compose project labels (UI label, formerly "Services")
-- **Public status page** — shareable uptime page, no auth required (opt-in)
-- **API keys** — programmatic access with hashed key storage
-- **Full UI onboarding** — setup wizard configures everything including SMTP, no .env file required
+- **Multi-host, multi-runtime monitoring** — deploy agents on each server reporting to a central hub via MQTT. Docker and Kubernetes/k3s (DaemonSet mode) are both first-class.
+- **Research-grounded diagnosis engine** — when a container is unhealthy, seven signal detectors fuse metrics, robust baselines, restart history, host state, and Drain-mined log patterns into a ranked explanation with correlated upstream services via Personalized PageRank. Based on Drain (ICWS 2017), MicroRCA (NOMS 2020), and Adtributor (NSDI 2014).
+- **Smart alerts with calibrated confidence** — 10 alert types with cooldowns, exponential reminder backoff, per-alert silencing, and webhook delivery (Slack, Discord, Telegram, ntfy, generic). Thumbs-up/down feedback on diagnosis cards recalibrates future confidence via a Beta posterior.
+- **Insights & anomaly detection** — time-of-day baselines, predictive alerts, trend detection, and Seasonal-Hybrid ESD on hourly rollups. A dedicated `/insights` page surfaces analytical signals separate from operational "Needs Attention" alerts.
+- **Modern web dashboard** — React UI with health score, uptime timelines, per-container charts, host grouping, stacks (auto-detected from Docker Compose), public status page, keyboard shortcuts, and a setup wizard that means no `.env` file is required.
 
 ## Quick Start
 
-### Standalone (single host)
+### Single Server (Standalone Mode)
 
-If you only have one server, run the hub directly — no MQTT needed:
+The fastest way to get started. One container, no MQTT needed.
 
 ```bash
 docker run -d \
   --name insightd \
   --restart unless-stopped \
-  -p 3000:3000 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v /:/host:ro \
   -v insightd-data:/data \
-  -e TZ=UTC \
+  -p 3000:3000 \
   andreas404/insightd-hub:latest
 ```
 
-Open `http://localhost:3000` and follow the setup wizard.
+Open **http://your-server:3000** and follow the **Setup Wizard** — it walks you through setting a password, configuring email, and adding agents.
 
-### Multi-host (hub + agents)
+### Multi-Server (Docker Compose)
 
-For monitoring multiple servers, you need an MQTT broker, the hub, and an agent on each host.
-
-**1. On your main server** — start the hub stack:
-
-```bash
-git clone https://github.com/goldenproductions/insightd.git
-cd insightd
-cp .env.example .env   # edit with your settings
-docker compose -f docker-compose.hub.yml up -d
-```
-
-This starts Mosquitto (MQTT broker), the hub, and a local agent.
-
-**2. On each remote server** — run an agent:
-
-```bash
-docker run -d \
-  --name insightd-agent \
-  --restart unless-stopped \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /:/host:ro \
-  -e INSIGHTD_HOST_ID=my-server \
-  -e INSIGHTD_MQTT_URL=mqtt://hub-ip:1883 \
-  -e INSIGHTD_MQTT_USER=insightd \
-  -e INSIGHTD_MQTT_PASS=your-mqtt-password \
-  andreas404/insightd-agent:latest
-```
-
-Or use the setup command shown in the hub's **Add Agent** page.
+For monitoring multiple servers, insightd uses MQTT to connect lightweight agents to a central hub. See the [Docker Compose setup guide](https://docs.insightd.org/guides/docker-compose/) for the full walkthrough (Mosquitto config, `.env`, `docker-compose.yml`, and adding remote agents).
 
 ### Kubernetes / k3s
 
-Run the agent as a DaemonSet — one pod per node, each reports its node as a host. See [`docs/kubernetes-setup.md`](docs/kubernetes-setup.md) for the full guide.
-
-```bash
-kubectl apply -f agent/k8s/rbac.yaml
-kubectl apply -f agent/k8s/daemonset.yaml
-```
-
-Edit `agent/k8s/daemonset.yaml` first to set your `INSIGHTD_MQTT_URL`. Each pod's containers appear in insightd as `{namespace}/{pod-name}/{container-name}`. K8s mode is read-only — actions and image update checks aren't supported (those are managed by the cluster). Host CPU, memory, and uptime come from the kubelet (`/stats/summary` + Node API), not `/proc` — see [`docs/kubernetes-setup.md`](docs/kubernetes-setup.md) for details.
+Run the agent as a DaemonSet — one pod per node, each reports its node as a host. See the [Kubernetes guide](https://docs.insightd.org/guides/kubernetes/) for the full setup.
 
 ## Web UI
 
-The hub serves a dashboard at `http://localhost:3000`:
-
-- **Dashboard** — health score with clickable breakdown, availability, compact status bar, unified "Needs Attention" feed, metric personalities
-- **Hosts** — collapsible sections per host group, with status, metrics, and inline group editing
-- **Host detail** — tabbed view: overview, resources, alerts; click the group badge to retag the host
-- **Container detail** — CPU/memory gauges, logs, status history, structured diagnosis with short signal chips, related services (PPR), historical anomalies, and Drain-mined log patterns
-- **Endpoints** — HTTP endpoint monitoring with uptime timelines
-- **Stacks** — container groups with aggregate status (auto-detected from Docker Compose, or create your own)
-- **Alerts** — full alert history with reason, trigger value, and threshold
-- **Insights** — analytical signals (predictions, trends, performance) with thumbs up/down feedback
-- **Updates** — available image updates, remote agent updates
-- **Status page** — public uptime view (enable with `INSIGHTD_STATUS_PAGE=true`)
-- **Settings** — email, alerts, thresholds, retention, storage management, API keys
+The hub serves a dashboard at `http://localhost:3000`. See [insightd.org](https://insightd.org) for screenshots of the dashboard, container detail, host detail, and insights pages.
 
 ## Architecture
 
-```
-[Agents per host] --> MQTT (Mosquitto) --> [Hub] --> SQLite --> React UI
-                                                          +--> Email digests
-                                                          +--> Webhooks
-                                                          +--> Alerts
-```
+![Insightd architecture](docs/diagrams/insightd-architecture-diagram.png)
 
 - **Agent** — collects Docker and host metrics, publishes to MQTT, handles log requests, container actions, and remote updates
 - **Hub** — subscribes to MQTT, stores in SQLite, serves the React UI, runs the insights engine, sends alerts and digests
@@ -142,7 +64,7 @@ The hub serves a dashboard at `http://localhost:3000`:
 
 ## Configuration
 
-All configuration can be done via the **Setup Wizard** and **Settings page** in the UI — no `.env` file required. Environment variables are also supported and documented in [`.env.example`](.env.example).
+All configuration can be done via the **Setup Wizard** and **Settings page** in the web UI after the hub is deployed — no `.env` file required. Most settings are hot-reloadable and take effect without a restart. Environment variables are also supported; see the [full configuration reference](https://docs.insightd.org/reference/config/) for every variable.
 
 ### Key variables
 
@@ -150,20 +72,16 @@ All configuration can be done via the **Setup Wizard** and **Settings page** in 
 |----------|---------|-------------|
 | `INSIGHTD_MQTT_URL` | — | MQTT broker URL (enables hub mode) |
 | `INSIGHTD_HOST_ID` | `local` | Identifies this host in multi-host setups |
-| `INSIGHTD_HOST_GROUP` | — | Optional logical group label for the Hosts page (e.g. `production`, `k3d-test`) |
+| `INSIGHTD_HOST_GROUP` | — | Optional logical group label for the Hosts page |
 | `INSIGHTD_RUNTIME` | `auto` | Container runtime: `auto`, `docker`, or `kubernetes` |
 | `INSIGHTD_ADMIN_PASSWORD` | — | Admin password for the web UI |
-| `INSIGHTD_ALLOW_ACTIONS` | `false` | Enable container start/stop/restart from UI |
-| `INSIGHTD_ALLOW_UPDATES` | `false` | Enable remote agent updates from hub |
+| `INSIGHTD_ALLOW_ACTIONS` | `false` | Enable container start/stop/restart from UI (Docker only) |
+| `INSIGHTD_ALLOW_UPDATES` | `false` | Enable remote agent updates from hub (Docker only) |
 | `INSIGHTD_STATUS_PAGE` | `false` | Enable public status page at `/status` |
-| `INSIGHTD_ALERTS_ENABLED` | `false` | Enable real-time alerts |
-| `INSIGHTD_SMTP_HOST` | — | SMTP server for email digest/alerts |
-| `INSIGHTD_DIGEST_CRON` | `0 8 * * 1` | Digest schedule (default: Monday 08:00) |
-| `INSIGHTD_COLLECT_INTERVAL` | `5` | Collection interval in minutes |
-| `INSIGHTD_DISK_WARN_THRESHOLD` | `85` | Disk usage warning threshold (%) |
-| `INSIGHTD_RETENTION_RAW_DAYS` | `30` | Days to keep full-resolution snapshots (min 7) |
-| `INSIGHTD_RETENTION_ROLLUP_DAYS` | `365` | Days to keep hourly rollups (min 30) |
+| `GEMINI_API_KEY` | — | Enables the "Diagnose with AI" button on container detail |
 | `TZ` | `UTC` | Timezone for cron schedules |
+
+Everything else — SMTP, alert thresholds, retention, webhooks, AI diagnosis model, digest schedule — can be tweaked from the Settings page inside the hub after it's deployed.
 
 ## Docker Images
 
@@ -174,22 +92,13 @@ Available on Docker Hub as multi-arch images (amd64 + arm64):
 
 ## Resource Usage
 
-Insightd is designed to be lightweight:
+Insightd is designed to be lightweight. Typical footprint on a homelab with ~10 hosts:
 
-- **~28MB RAM** in typical use
+- **Hub**: ~180 MB RAM
+- **Agent**: ~40 MB RAM per host
+- **Mosquitto**: ~10 MB RAM
 - **SQLite** for storage — no external database needed
 - Raw snapshots auto-pruned after 30 days (configurable), with hourly rollups kept for 365 days for long-term trends
-
-## Development
-
-```bash
-git clone https://github.com/goldenproductions/insightd.git
-cd insightd
-npm install
-npm test                    # Run tests
-npm run build               # Build frontend
-docker compose build        # Build Docker images
-```
 
 ## Security
 
