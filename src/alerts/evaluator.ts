@@ -119,13 +119,15 @@ function checkContainerDown(db: Database.Database, hostId: string): AlertItem[] 
 
   for (const { container_name } of containers) {
     const rows = db.prepare(`
-      SELECT status, collected_at FROM container_snapshots
+      SELECT status, exit_code, collected_at FROM container_snapshots
       WHERE host_id = ? AND container_name = ?
       ORDER BY collected_at DESC LIMIT 2
-    `).all(hostId, container_name) as { status: string; collected_at: string }[];
+    `).all(hostId, container_name) as { status: string; exit_code: number | null; collected_at: string }[];
 
     if (rows.length < 2) continue;
     const [latest, previous] = rows;
+    // Successfully-completed one-shots (exited with code 0) aren't failures.
+    if (latest.status === 'exited' && latest.exit_code === 0) continue;
     if ((latest.status === 'exited' || latest.status === 'dead') && previous.status === 'running') {
       alerts.push({
         type: 'container_down',

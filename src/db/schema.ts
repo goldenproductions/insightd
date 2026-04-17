@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 27;
+const SCHEMA_VERSION = 28;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -36,6 +36,7 @@ function bootstrap(db: Database.Database): void {
       health_status   TEXT,
       health_check_output TEXT,
       labels          TEXT,
+      exit_code       INTEGER,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -612,6 +613,12 @@ function migrate(db: Database.Database, fromVersion: number): void {
       FROM container_snapshots
       GROUP BY host_id, container_name
     `);
+  }
+  if (fromVersion < 28) {
+    // exit_code for exited containers — distinguishes "completed" (0) from
+    // "failed" (non-zero) so one-shot containers (bootstrap, k8s Jobs,
+    // migration containers) don't all look like failures.
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN exit_code INTEGER'); } catch { /* already exists */ }
   }
 }
 

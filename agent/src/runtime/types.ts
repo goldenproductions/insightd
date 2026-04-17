@@ -20,6 +20,12 @@ export interface ContainerInfo {
   labels: Record<string, string>;
   /** Image reference — used for update checks. Optional. */
   image?: string;
+  /**
+   * Exit code for containers no longer running. Null for running containers
+   * or when the runtime can't report it. Distinguishes "completed
+   * successfully" (0) from "failed" (non-zero) for one-shot containers.
+   */
+  exitCode?: number | null;
 }
 
 export interface ContainerWithResources extends ContainerInfo {

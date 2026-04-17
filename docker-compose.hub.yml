@@ -9,6 +9,8 @@ services:
     image: eclipse-mosquitto:2
     container_name: insightd-bootstrap
     restart: "no"
+    labels:
+      insightd.internal: "true"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |

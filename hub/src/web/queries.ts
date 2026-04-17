@@ -42,6 +42,7 @@ interface ContainerRow {
   health_status: string | null;
   health_check_output: string | null;
   labels: string | null;
+  exit_code: number | null;
   collected_at: string;
   is_stale: number;
 }
@@ -315,7 +316,7 @@ function getLatestContainers(db: Database.Database, hostId: string, onlineThresh
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
-           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at,
+           cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
              THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs
@@ -696,7 +697,7 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
-           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at,
+           cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
              THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs
@@ -765,9 +766,9 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
   });
 }
 
-function getResourceRankings(db: Database.Database, limit: number): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
+function getResourceRankings(db: Database.Database, limit: number, showInternal: boolean = false): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
   const query = `
-    SELECT cs.host_id, cs.container_name, cs.cpu_percent, cs.memory_mb
+    SELECT cs.host_id, cs.container_name, cs.cpu_percent, cs.memory_mb, cs.labels
     FROM container_snapshots cs
     INNER JOIN (
       SELECT host_id as h, container_name as cn, MAX(collected_at) as max_at
@@ -775,9 +776,17 @@ function getResourceRankings(db: Database.Database, limit: number): { byCpu: Res
     ) latest ON cs.host_id = latest.h AND cs.container_name = latest.cn AND cs.collected_at = latest.max_at
     WHERE cs.status = 'running'
   `;
-  const byCpu = db.prepare(query + ' AND cs.cpu_percent IS NOT NULL ORDER BY cs.cpu_percent DESC LIMIT ?').all(limit) as ResourceRow[];
-  const byMemory = db.prepare(query + ' AND cs.memory_mb IS NOT NULL ORDER BY cs.memory_mb DESC LIMIT ?').all(limit) as ResourceRow[];
-  return { byCpu, byMemory };
+  const rawByCpu = db.prepare(query + ' AND cs.cpu_percent IS NOT NULL ORDER BY cs.cpu_percent DESC LIMIT ?').all(limit * 4) as Array<ResourceRow & { labels: string | null }>;
+  const rawByMemory = db.prepare(query + ' AND cs.memory_mb IS NOT NULL ORDER BY cs.memory_mb DESC LIMIT ?').all(limit * 4) as Array<ResourceRow & { labels: string | null }>;
+  const filter = (rows: Array<ResourceRow & { labels: string | null }>): ResourceRow[] => {
+    const filtered = showInternal ? rows : rows.filter(r => {
+      if (!r.labels) return true;
+      try { return JSON.parse(r.labels)['insightd.internal'] !== 'true'; } catch { return true; }
+    });
+    // Strip labels — callers don't need them in the ranking response.
+    return filtered.slice(0, limit).map(({ labels: _labels, ...rest }) => rest);
+  };
+  return { byCpu: filter(rawByCpu), byMemory: filter(rawByMemory) };
 }
 
 function getTrends(db: Database.Database, hostId: string): { containers: any[]; host: any } {

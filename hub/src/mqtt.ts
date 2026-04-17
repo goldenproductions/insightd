@@ -45,6 +45,7 @@ interface CollectionPayload {
     health_status?: string | null;
     health_check_output?: string | null;
     labels?: Record<string, string> | null;
+    exit_code?: number | null;
   }>;
   disk?: Array<{
     mount_point: string;
@@ -214,6 +215,7 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     healthStatus: c.health_status,
     healthCheckOutput: c.health_check_output ?? null,
     labels: c.labels || null,
+    exitCode: c.exit_code ?? null,
   }));
 
   // Detect containers transitioning to unhealthy — pre-warm the log cache for diagnosis

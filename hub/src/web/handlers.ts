@@ -415,7 +415,8 @@ function handleTimeline(req: HandlerReq, res: ServerResponse, db: Database.Datab
 function handleRankings(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const limit = Math.max(1, Math.min(50, parseInt(url.searchParams.get('limit') || '10', 10) || 10));
-  return queries.getResourceRankings(db, limit);
+  const showInternal = url.searchParams.get('showInternal') === 'true';
+  return queries.getResourceRankings(db, limit, showInternal);
 }
 
 function handleTrends(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
