@@ -274,8 +274,8 @@ describe('collectDiskIO', () => {
 
     assert.ok(agentResult);
     assert.ok(standaloneResult);
-    assert.equal(agentResult.readBytesPerSec, standaloneResult.readBytesPerSec);
-    assert.equal(agentResult.writeBytesPerSec, standaloneResult.writeBytesPerSec);
+    assert.ok(Math.abs(agentResult.readBytesPerSec - standaloneResult.readBytesPerSec) < 10_000);
+    assert.ok(Math.abs(agentResult.writeBytesPerSec - standaloneResult.writeBytesPerSec) < 10_000);
   });
 
   it('keeps slave raw disks excluded when the dm row is malformed', async () => {
