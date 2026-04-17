@@ -58,6 +58,8 @@ const config = Object.freeze({
     diskPercent: parseInt(process.env.INSIGHTD_ALERT_DISK || '90', 10),
     restartCount: parseInt(process.env.INSIGHTD_ALERT_RESTART || '3', 10),
     containerDown: process.env.INSIGHTD_ALERT_DOWN !== 'false',
+    hostOffline: process.env.INSIGHTD_ALERT_HOST_OFFLINE !== 'false',
+    hostOfflineMinutes: parseInt(process.env.INSIGHTD_ALERT_HOST_OFFLINE_MINUTES || '15', 10),
   }),
 });
 

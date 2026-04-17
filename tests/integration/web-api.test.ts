@@ -78,7 +78,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.status, 'ok');
-    assert.equal(data.schemaVersion, 26);
+    assert.equal(data.schemaVersion, 28);
   });
 
   it('GET /api/hosts returns host list', async () => {
@@ -108,6 +108,7 @@ describe('Web API integration', () => {
   });
 
   it('GET /api/hosts/:hostId/containers returns containers', async () => {
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', at: recent },
     ]);
@@ -115,6 +116,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.length, 1);
+    assert.equal(data[0].is_stale, 0);
   });
 
   it('GET /api/hosts/:hostId/disk returns disk info', async () => {
@@ -151,6 +153,7 @@ describe('Web API integration', () => {
   });
 
   it('GET /api/hosts/:hostId/containers/:name returns container detail', async () => {
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: recent },
     ]);
@@ -158,6 +161,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.container_name, 'nginx');
+    assert.equal(data.is_stale, 0);
     assert.ok(Array.isArray(data.history));
     assert.ok(Array.isArray(data.alerts));
   });
@@ -684,6 +688,75 @@ describe('Web API integration', () => {
   });
 });
 
+describe('POST /api/update/hub — picks the agent reporting insightd-hub', () => {
+  let db: any;
+  let server: any;
+  let port: number;
+  let updateCalls: Array<{ hostId: string; target: string; image: string }>;
+
+  async function start() {
+    const { startWebServer } = require('../../hub/src/web/server');
+    const config = {
+      collectIntervalMinutes: 5,
+      web: { enabled: true, port: 0, host: '127.0.0.1' },
+    };
+    const ctx = {
+      requestUpdate: async (hostId: string, target: string, image: string) => {
+        updateCalls.push({ hostId, target, image });
+        return { status: 'success' };
+      },
+    };
+    return new Promise<{ server: any; port: number }>((resolve) => {
+      const s = startWebServer(db, config, ctx);
+      s.on('listening', () => resolve({ server: s, port: s.address().port }));
+    });
+  }
+
+  beforeEach(async () => {
+    db = createTestDb();
+    updateCalls = [];
+    const r = await start();
+    server = r.server;
+    port = r.port;
+  });
+
+  afterEach(() => {
+    server.close();
+    db.close();
+  });
+
+  it('routes to whichever host reports a running insightd-hub container', async () => {
+    // The local agent registers as "hub-server" (INSIGHTD_HOST_ID default),
+    // but the hub container itself has config.hostId = 'local' — the id
+    // match that used to live in handleUpdateHub failed on every default
+    // install. The fix: find the agent by the container it reports.
+    seedHost(db, 'hub-server', recent);
+    seedHost(db, 'unrelated-host', recent);
+    seedContainerSnapshots(db, [
+      { hostId: 'hub-server', name: 'insightd-hub', status: 'running', at: recent },
+      { hostId: 'unrelated-host', name: 'nginx', status: 'running', at: recent },
+    ]);
+
+    const res = await fetchMethod(port, 'POST', '/api/update/hub');
+    assert.equal(res.status, 200);
+    assert.equal(updateCalls.length, 1);
+    assert.equal(updateCalls[0].hostId, 'hub-server');
+    assert.equal(updateCalls[0].target, 'hub');
+  });
+
+  it('returns 400 when no online agent is reporting insightd-hub', async () => {
+    seedHost(db, 'some-host', recent);
+    seedContainerSnapshots(db, [
+      { hostId: 'some-host', name: 'nginx', status: 'running', at: recent },
+    ]);
+
+    const res = await fetchMethod(port, 'POST', '/api/update/hub');
+    assert.equal(res.status, 400);
+    assert.match(res.json().error, /insightd-hub/);
+    assert.equal(updateCalls.length, 0);
+  });
+});
+
 describe('AI diagnose API', () => {
   let db: any;
   let server: any;
@@ -761,6 +834,7 @@ describe('AI diagnose API', () => {
 
   it('POST ai-diagnose happy path: calls Gemini, persists, subsequent call is cached', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', cpu: 50, mem: 400, at: recent },
     ]);
@@ -803,6 +877,7 @@ describe('AI diagnose API', () => {
 
   it('GET ai-diagnose returns 404 before any run, then the persisted diagnosis', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);
@@ -844,6 +919,7 @@ describe('AI diagnose API', () => {
     assert.equal(status.json().model, 'gemini-1.5-pro');
 
     // And a POST should succeed using the DB key
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);
@@ -864,6 +940,7 @@ describe('AI diagnose API', () => {
 
   it('POST ai-diagnose returns 502 when Gemini fails', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);
@@ -875,6 +952,7 @@ describe('AI diagnose API', () => {
 
   it('POST ai-diagnose returns 429 with Retry-After on Gemini rate limit', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);
