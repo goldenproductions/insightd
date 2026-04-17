@@ -950,17 +950,30 @@ async function handleUpdateHub(req: HandlerReq, res: ServerResponse, db: Databas
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   const { snoozeAlerts } = require('../alert-snooze');
   snoozeAlerts(10);
-  // Find the agent on the same host as the hub
-  const hubHostId = config.hostId || 'local';
-  const hosts = queries.getHosts(db, offlineThresholdMinutes());
-  const localAgent = hosts.find((h: any) => h.host_id === hubHostId && h.is_online);
-  if (!localAgent) { res.statusCode = 400; return { error: `No online agent found on hub host (${hubHostId}). Ensure an agent is running on the same host.` }; }
+  // The agent we need is whichever one can see the hub's own container on
+  // the same Docker daemon. Trying to match `config.hostId` here is fragile:
+  // the hub compose service doesn't set INSIGHTD_HOST_ID (fallback = 'local'),
+  // while the sibling agent's compose entry does (default 'hub-server'), so
+  // a literal id match fails on default installs. Looking up who reports
+  // `insightd-hub` as a running container answers the question directly.
+  const threshold = offlineThresholdMinutes();
+  const row = db.prepare(`
+    SELECT c.host_id
+    FROM containers c
+    INNER JOIN hosts h ON h.host_id = c.host_id
+    WHERE c.container_name = 'insightd-hub'
+      AND c.removed_at IS NULL
+      AND datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+    ORDER BY c.last_seen DESC
+    LIMIT 1
+  `).get(threshold) as { host_id: string } | undefined;
+  if (!row) { res.statusCode = 400; return { error: 'No online agent is reporting the hub container (insightd-hub). Ensure an agent is running on the same host and has reported at least once.' }; }
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
   const tag = vi.latestHubVersion || vi.currentVersion;
   const image = `andreas404/insightd-hub:${tag}`;
   try {
-    const result = await ctx.requestUpdate(localAgent.host_id, 'hub', image);
+    const result = await ctx.requestUpdate(row.host_id, 'hub', image);
     return result;
   } catch (err) {
     res.statusCode = 504;
