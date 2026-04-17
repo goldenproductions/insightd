@@ -9,6 +9,7 @@ interface ContainerSnapshot {
   memoryMb?: number | null;
   restartCount: number;
   labels?: Record<string, string> | string | null;
+  exitCode?: number | null;
 }
 
 interface DiskResult {
@@ -28,21 +29,43 @@ interface UpdateResult {
 
 /**
  * Ingest collected container data into the database.
+ *
+ * Each published batch IS the authoritative "currently present" set for the
+ * host, so we diff against the `containers` registry: present containers are
+ * upserted with `removed_at = NULL`, and any previously-active row whose
+ * `last_seen` falls behind this batch is stamped with `removed_at`. That's
+ * how deleted containers stop appearing in the UI within one cycle instead
+ * of waiting out a 15-minute staleness window.
  */
 function ingestContainers(db: Database.Database, hostId: string, containers: ContainerSnapshot[]): void {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, labels, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, labels, exit_code, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const upsertRegistry = db.prepare(`
+    INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
+    VALUES (?, ?, ?, ?, NULL)
+    ON CONFLICT(host_id, container_name) DO UPDATE SET
+      last_seen = excluded.last_seen,
+      removed_at = NULL
+  `);
+  const markRemoved = db.prepare(`
+    UPDATE containers
+       SET removed_at = ?
+     WHERE host_id = ? AND removed_at IS NULL AND last_seen < ?
   `);
 
-  const insertMany = db.transaction((items: ContainerSnapshot[]) => {
+  const ingestBatch = db.transaction((items: ContainerSnapshot[]) => {
+    const batchAt = (db.prepare("SELECT datetime('now') AS t").get() as { t: string }).t;
     for (const c of items) {
       const labels = typeof c.labels === 'object' ? JSON.stringify(c.labels) : (c.labels || null);
-      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount, labels);
+      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount, labels, c.exitCode ?? null, batchAt);
+      upsertRegistry.run(hostId, c.name, batchAt, batchAt);
     }
+    markRemoved.run(batchAt, hostId, batchAt);
   });
 
-  insertMany(containers);
+  ingestBatch(containers);
   logger.info('ingest', `Stored ${containers.length} container snapshots for ${hostId}`);
 }
 

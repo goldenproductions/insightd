@@ -23,7 +23,7 @@ import { PageTitle } from '@/components/PageTitle';
  * the host; endpoint alerts link to the endpoint detail page.
  */
 function alertLink(alert: Alert): string {
-  const hostScoped = ['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load'];
+  const hostScoped = ['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load', 'host_offline'];
   const endpointScoped = ['endpoint_down'];
   if (hostScoped.includes(alert.alert_type)) {
     return `/hosts/${encodeURIComponent(alert.host_id)}`;
@@ -34,7 +34,7 @@ function alertLink(alert: Alert): string {
   return `/hosts/${encodeURIComponent(alert.host_id)}/containers/${encodeURIComponent(alert.target)}`;
 }
 
-const HOST_SCOPED = new Set(['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load', 'endpoint_down']);
+const HOST_SCOPED = new Set(['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load', 'host_offline', 'endpoint_down']);
 
 function durationBetween(start: string, end: string): string {
   const ms = new Date(end + 'Z').getTime() - new Date(start + 'Z').getTime();

@@ -283,3 +283,191 @@ describe('KubernetesRuntime.getHostMetrics', () => {
     assert.equal(m!.memoryTotalMb, 7800);
   });
 });
+
+describe('KubernetesRuntime constructor: kubeletUrl precedence', () => {
+  it('uses explicit kubeletUrl when provided', () => {
+    const runtime: any = new KubernetesRuntime({
+      nodeName: 'n1',
+      nodeIp: '10.0.0.5',
+      kubeletUrl: 'https://kubelet.example:4443',
+    });
+    assert.equal(runtime.kubeletUrl, 'https://kubelet.example:4443');
+  });
+
+  it('falls back to https://${nodeIp}:10250 when kubeletUrl is not set', () => {
+    const runtime: any = new KubernetesRuntime({ nodeName: 'n1', nodeIp: '10.0.0.5' });
+    assert.equal(runtime.kubeletUrl, 'https://10.0.0.5:10250');
+  });
+
+  it('falls back to loopback when neither kubeletUrl nor nodeIp is set', () => {
+    const runtime: any = new KubernetesRuntime({ nodeName: 'n1' });
+    assert.equal(runtime.kubeletUrl, 'https://127.0.0.1:10250');
+  });
+
+  it('prefers explicit kubeletUrl over nodeIp-derived URL', () => {
+    const runtime: any = new KubernetesRuntime({
+      nodeName: 'n1',
+      nodeIp: '10.0.0.5',
+      kubeletUrl: 'https://override:12345',
+    });
+    assert.equal(runtime.kubeletUrl, 'https://override:12345');
+  });
+});
+
+describe('KubernetesRuntime.listContainers: healthCheckOutput extraction', () => {
+  // Build a runtime with a stubbed coreApi that returns the given pods.
+  function makeRuntime(pods: any[]): any {
+    const runtime: any = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    runtime.coreApi = {
+      listPods: async () => ({ items: pods }),
+    };
+    runtime.appsApi = runtime.coreApi;
+    return runtime;
+  }
+
+  function basePod(containerStatus: any): any {
+    return {
+      metadata: { name: 'crashloop', namespace: 'default', uid: 'uid-1', labels: {} },
+      status: {
+        phase: 'Running',
+        containerStatuses: [{
+          name: 'app',
+          ready: false,
+          restartCount: 3,
+          image: 'busybox:latest',
+          ...containerStatus,
+        }],
+      },
+    };
+  }
+
+  it('extracts reason+message from state.waiting', async () => {
+    const runtime = makeRuntime([basePod({
+      state: { waiting: { reason: 'CrashLoopBackOff', message: 'back-off 5m0s restarting failed container' } },
+    })]);
+    const containers = await runtime.listContainers();
+    assert.equal(containers.length, 1);
+    assert.equal(containers[0].healthCheckOutput, 'CrashLoopBackOff: back-off 5m0s restarting failed container');
+  });
+
+  it('extracts reason-only from state.waiting when message is missing', async () => {
+    const runtime = makeRuntime([basePod({
+      state: { waiting: { reason: 'ImagePullBackOff' } },
+    })]);
+    const containers = await runtime.listContainers();
+    assert.equal(containers[0].healthCheckOutput, 'ImagePullBackOff');
+  });
+
+  it('extracts from lastState.terminated when state is running', async () => {
+    const runtime = makeRuntime([basePod({
+      ready: true,
+      state: { running: { startedAt: new Date().toISOString() } },
+      lastState: { terminated: { reason: 'OOMKilled' } },
+    })]);
+    const containers = await runtime.listContainers();
+    assert.equal(containers[0].healthCheckOutput, 'OOMKilled');
+  });
+
+  it('prefers current state.waiting over lastState.terminated', async () => {
+    const runtime = makeRuntime([basePod({
+      state: { waiting: { reason: 'CrashLoopBackOff' } },
+      lastState: { terminated: { reason: 'Error', message: 'exit 1' } },
+    })]);
+    const containers = await runtime.listContainers();
+    assert.equal(containers[0].healthCheckOutput, 'CrashLoopBackOff');
+  });
+
+  it('returns null when neither waiting nor terminated has a reason', async () => {
+    const runtime = makeRuntime([basePod({
+      ready: true,
+      state: { running: { startedAt: new Date().toISOString() } },
+    })]);
+    const containers = await runtime.listContainers();
+    assert.equal(containers[0].healthCheckOutput, null);
+  });
+
+  it('truncates long messages to 500 chars for column parity with Docker', async () => {
+    const longMessage = 'x'.repeat(1000);
+    const runtime = makeRuntime([basePod({
+      state: { waiting: { reason: 'Error', message: longMessage } },
+    })]);
+    const containers = await runtime.listContainers();
+    assert.equal(containers[0].healthCheckOutput!.length, 500);
+    assert.ok(containers[0].healthCheckOutput!.startsWith('Error: xxxx'));
+  });
+});
+
+describe('KubernetesRuntime.listContainers: healthStatus mapping', () => {
+  function makeRuntime(pods: any[]): any {
+    const runtime: any = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    runtime.coreApi = { listPods: async () => ({ items: pods }) };
+    runtime.appsApi = runtime.coreApi;
+    return runtime;
+  }
+
+  function pod(containerStatus: any): any {
+    return {
+      metadata: { name: 'p', namespace: 'default', uid: 'uid-x', labels: {} },
+      status: {
+        phase: 'Running',
+        containerStatuses: [{
+          name: 'app', ready: false, restartCount: 0, image: 'busybox:latest',
+          ...containerStatus,
+        }],
+      },
+    };
+  }
+
+  it('maps running + ready to healthy', async () => {
+    const r = makeRuntime([pod({ ready: true, state: { running: { startedAt: new Date().toISOString() } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'healthy');
+  });
+
+  it('maps running + !ready to unhealthy', async () => {
+    const r = makeRuntime([pod({ ready: false, state: { running: { startedAt: new Date().toISOString() } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'unhealthy');
+  });
+
+  it('maps waiting + ContainerCreating to starting (genuine startup)', async () => {
+    const r = makeRuntime([pod({ state: { waiting: { reason: 'ContainerCreating' } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'starting');
+  });
+
+  it('maps waiting + PodInitializing to starting', async () => {
+    const r = makeRuntime([pod({ state: { waiting: { reason: 'PodInitializing' } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'starting');
+  });
+
+  it('maps waiting + CrashLoopBackOff to unhealthy (was incorrectly "starting")', async () => {
+    const r = makeRuntime([pod({
+      restartCount: 5,
+      state: { waiting: { reason: 'CrashLoopBackOff', message: 'back-off 5m0s restarting failed container' } },
+    })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'unhealthy');
+  });
+
+  it('maps waiting + ImagePullBackOff to unhealthy', async () => {
+    const r = makeRuntime([pod({ state: { waiting: { reason: 'ImagePullBackOff' } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'unhealthy');
+  });
+
+  it('maps waiting + ErrImagePull to unhealthy', async () => {
+    const r = makeRuntime([pod({ state: { waiting: { reason: 'ErrImagePull' } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'unhealthy');
+  });
+
+  it('maps terminated + OOMKilled to unhealthy', async () => {
+    const r = makeRuntime([pod({ state: { terminated: { reason: 'OOMKilled' } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'unhealthy');
+  });
+
+  it('maps terminated + Completed to null (clean exit, not unhealthy)', async () => {
+    const r = makeRuntime([pod({ state: { terminated: { reason: 'Completed' } } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, null);
+  });
+
+  it('maps waiting with no reason to unhealthy (failure by default)', async () => {
+    const r = makeRuntime([pod({ state: { waiting: {} } })]);
+    assert.equal((await r.listContainers())[0].healthStatus, 'unhealthy');
+  });
+});

@@ -12,7 +12,8 @@ import { Badge } from '@/components/Badge';
 import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
-import { fmtDurationMs } from '@/lib/formatters';
+import { fmtDurationMs, timeAgo } from '@/lib/formatters';
+import { sumPositiveRestartDeltas, deriveContainerDisplayStatus } from '@/lib/containers';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
 import { CardSkeleton } from '@/components/Skeleton';
@@ -178,7 +179,11 @@ export function ContainerDetailPage() {
   // Keyboard shortcuts — registered unconditionally (Rules of Hooks); callbacks
   // read the latest `data` via the ref-wrapped trigger inside useKeyboardShortcut.
   const isRunning = data?.status === 'running';
-  const canControl = isAuthenticated && isRunning;
+  // Kubernetes pods are managed by the cluster — the agent rejects action
+  // requests at runtime, so the UI should disable the buttons and explain why.
+  const isKubernetes = data?.runtime_type === 'kubernetes';
+  const canControl = isAuthenticated && isRunning && !isKubernetes;
+  const k8sReadOnlyTitle = 'Not supported in Kubernetes mode — pod lifecycle is managed by the cluster';
   useKeyboardShortcut({
     keys: 'r',
     description: 'Restart container',
@@ -265,9 +270,12 @@ export function ContainerDetailPage() {
   // fields are *cumulative* bytes, so we derive per-second rates from deltas.
   const chartData = buildChartData(history);
 
-  const firstRestart = history.length > 0 ? history[0]!.restart_count : 0;
-  const lastRestart = history.length > 0 ? history[history.length - 1]!.restart_count : 0;
-  const restartDelta = Math.max(0, lastRestart - firstRestart);
+  // Sum positive deltas so the metric is robust to counter resets — a pod
+  // that was recreated drops its restart_count to 0, and the hero should
+  // still reflect the restarts that happened across both incarnations.
+  // Matches the backend logic in hub/src/insights/diagnosis/context.ts so
+  // this number agrees with what the diagnosis engine reports.
+  const restartDelta = sumPositiveRestartDeltas(history);
 
   const showHealthFailure = data.health_status === 'unhealthy';
 
@@ -317,33 +325,43 @@ export function ContainerDetailPage() {
         )}
       </div>
 
+      {data.is_stale && (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg">
+          <div className="font-medium">Agent not reporting</div>
+          <div className="mt-0.5 text-xs text-muted">
+            Last snapshot {timeAgo(data.collected_at)}. The status, health, and metrics shown below
+            are the last values received — not current truth. Actions are hidden until the agent reconnects.
+          </div>
+        </div>
+      )}
+
       {/* ═══ HERO LAYER ═══
           Identity, live status, and (when things are wrong) the diagnosis that
           demands attention. Always visible, regardless of active tab. */}
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
-            <StatusDot status={data.status} size="lg" />
+            <StatusDot status={data.is_stale ? 'stale' : deriveContainerDisplayStatus(data.status, data.exit_code).dot} size="lg" />
             <h1 className="truncate text-xl font-bold text-fg">{data.container_name}</h1>
           </div>
-          {isAuthenticated && (
-            <div className="flex shrink-0 items-center gap-2">
+          {isAuthenticated && !data.is_stale && (
+            <div className="flex shrink-0 items-center gap-2" title={isKubernetes ? k8sReadOnlyTitle : undefined}>
               {data.status !== 'running' && (
                 <>
-                  <Button variant="ghost" size="sm" onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null}>
+                  <Button variant="ghost" size="sm" title={isKubernetes ? k8sReadOnlyTitle : undefined} onClick={() => runAction(containerName!, 'start', false)} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:start` ? 'Starting…' : 'Start'}
                   </Button>
-                  <Button variant="danger" size="sm" onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null}>
+                  <Button variant="danger" size="sm" title={isKubernetes ? k8sReadOnlyTitle : undefined} onClick={async () => { if (await removeContainer(containerName!)) navigate(`/hosts/${hid}`); }} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:remove` ? 'Removing…' : 'Remove'}
                   </Button>
                 </>
               )}
               {data.status === 'running' && (
                 <>
-                  <Button variant="ghost" size="sm" title="Restart (r)" onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null}>
+                  <Button variant="ghost" size="sm" title={isKubernetes ? k8sReadOnlyTitle : 'Restart (r)'} onClick={() => runAction(containerName!, 'restart')} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:restart` ? 'Restarting…' : 'Restart'}
                   </Button>
-                  <Button variant="danger" size="sm" title="Stop (s)" onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null}>
+                  <Button variant="danger" size="sm" title={isKubernetes ? k8sReadOnlyTitle : 'Stop (s)'} onClick={() => runAction(containerName!, 'stop')} disabled={actionLoading != null || isKubernetes}>
                     {actionLoading === `${containerName}:stop` ? 'Stopping…' : 'Stop'}
                   </Button>
                 </>
@@ -355,8 +373,10 @@ export function ContainerDetailPage() {
         {/* Status pills + compact stats — flat row, no card wrapper */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />
-            {healthPillText && (
+            {data.is_stale
+              ? <Badge text="stale" color="gray" />
+              : (() => { const d = deriveContainerDisplayStatus(data.status, data.exit_code); return <Badge text={d.label} color={d.color} />; })()}
+            {!data.is_stale && healthPillText && (
               <span title="Docker runs a health check command inside the container. This is a probe signal — the service may still be responding.">
                 <Badge text={healthPillText} color={healthPillColor} />
               </span>
@@ -394,7 +414,7 @@ export function ContainerDetailPage() {
               // primary button directly into the finding so the advice and
               // the fix live in the same block — no scroll hunt required.
               const wantsRestart = /restart|reboot|bounce/i.test(finding.suggestedAction ?? '');
-              const canRestart = wantsRestart && data.status === 'running' && isAuthenticated;
+              const canRestart = wantsRestart && data.status === 'running' && isAuthenticated && !isKubernetes;
               const isRestarting = actionLoading === `${containerName}:restart`;
               const primaryAction = canRestart ? {
                 label: isRestarting ? 'Restarting…' : 'Restart container',
@@ -424,7 +444,6 @@ export function ContainerDetailPage() {
                     healthStatus: data.health_status,
                     cpuPercent: data.cpu_percent,
                     memoryMb: data.memory_mb,
-                    restartCount: data.restart_count,
                   }}
                   primaryAction={primaryAction}
                   feedback={feedbackCbs}

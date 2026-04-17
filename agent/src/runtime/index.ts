@@ -15,6 +15,8 @@ export interface RuntimeOptions {
   nodeName?: string;
   /** K8s node IP (optional, used to construct kubelet URL). From NODE_IP env. */
   nodeIp?: string;
+  /** Explicit kubelet URL override. From INSIGHTD_KUBELET_URL env. */
+  kubeletUrl?: string;
 }
 
 /**
@@ -42,6 +44,7 @@ export async function getRuntime(options: RuntimeOptions): Promise<ContainerRunt
       runtime = new KubernetesRuntime({
         nodeName: options.nodeName,
         nodeIp: options.nodeIp,
+        kubeletUrl: options.kubeletUrl,
       });
       break;
     default:
