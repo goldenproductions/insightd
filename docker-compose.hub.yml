@@ -78,6 +78,10 @@ services:
     volumes:
       - hub-data:/data
     environment:
+      # Keep the hub's own host id in sync with the sibling agent so
+      # internal features that need to match them (e.g. self-update) work
+      # without extra configuration.
+      INSIGHTD_HOST_ID: ${INSIGHTD_HOST_ID:-hub-server}
       INSIGHTD_MQTT_URL: mqtt://mosquitto:1883
       INSIGHTD_MQTT_USER: ${INSIGHTD_MQTT_USER:-insightd}
       INSIGHTD_MQTT_PASS: ${INSIGHTD_MQTT_PASS:-}
