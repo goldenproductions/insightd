@@ -98,21 +98,25 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
       const ns = getContainerNamespace(r.container_name);
       const display = getContainerDisplayName(r.container_name);
       return (
-        <span className="flex items-center gap-2">
-          <StatusDot status={r.status} />
+        <span className={`flex items-center gap-2 ${r.is_stale ? 'opacity-60' : ''}`}>
+          <StatusDot status={r.is_stale ? 'stale' : r.status} />
           {ns ? <span><span className="text-muted">{ns}/</span>{display}</span> : r.container_name}
         </span>
       );
     } },
-    { header: 'Status', accessor: r => <Badge text={r.status} color={r.status === 'running' ? 'green' : 'red'} /> },
-    { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
-    { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
-    { header: 'Restarts', accessor: r => r.restart_count },
+    { header: 'Status', accessor: r => r.is_stale
+      ? <Badge text="stale" color="gray" />
+      : <Badge text={r.status} color={r.status === 'running' ? 'green' : 'red'} /> },
+    { header: 'CPU', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{fmtPercent(r.cpu_percent)}</span> },
+    { header: 'Memory', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-'}</span> },
+    { header: 'Restarts', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.restart_count}</span> },
     ...(isAuthenticated ? [{
       header: '',
       accessor: (r: ContainerSnapshot) => {
         const isInternal = isInternalContainer(r.labels);
         if (isInternal) return null;
+        // Actions require a live agent — hide them when data is stale.
+        if (r.is_stale) return null;
         const loading = actionLoading?.startsWith(`${r.container_name}:`);
         return (
           <span className="flex gap-1" onClick={e => e.stopPropagation()}>

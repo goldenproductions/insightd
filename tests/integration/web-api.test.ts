@@ -108,6 +108,7 @@ describe('Web API integration', () => {
   });
 
   it('GET /api/hosts/:hostId/containers returns containers', async () => {
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', at: recent },
     ]);
@@ -115,6 +116,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.length, 1);
+    assert.equal(data[0].is_stale, 0);
   });
 
   it('GET /api/hosts/:hostId/disk returns disk info', async () => {
@@ -151,6 +153,7 @@ describe('Web API integration', () => {
   });
 
   it('GET /api/hosts/:hostId/containers/:name returns container detail', async () => {
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: recent },
     ]);
@@ -158,6 +161,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.container_name, 'nginx');
+    assert.equal(data.is_stale, 0);
     assert.ok(Array.isArray(data.history));
     assert.ok(Array.isArray(data.alerts));
   });
@@ -761,6 +765,7 @@ describe('AI diagnose API', () => {
 
   it('POST ai-diagnose happy path: calls Gemini, persists, subsequent call is cached', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', cpu: 50, mem: 400, at: recent },
     ]);
@@ -803,6 +808,7 @@ describe('AI diagnose API', () => {
 
   it('GET ai-diagnose returns 404 before any run, then the persisted diagnosis', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);
@@ -844,6 +850,7 @@ describe('AI diagnose API', () => {
     assert.equal(status.json().model, 'gemini-1.5-pro');
 
     // And a POST should succeed using the DB key
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);
@@ -864,6 +871,7 @@ describe('AI diagnose API', () => {
 
   it('POST ai-diagnose returns 502 when Gemini fails', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);
@@ -875,6 +883,7 @@ describe('AI diagnose API', () => {
 
   it('POST ai-diagnose returns 429 with Retry-After on Gemini rate limit', async () => {
     ({ server, port } = await startWithConfig(aiConfig));
+    seedHost(db, 'h1', recent);
     seedContainerSnapshots(db, [
       { hostId: 'h1', name: 'nginx', status: 'running', health: 'unhealthy', at: recent },
     ]);

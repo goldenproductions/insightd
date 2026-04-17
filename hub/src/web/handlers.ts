@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type Dockerode from 'dockerode';
 
 const queries = require('./queries');
+const { offlineThresholdMinutes } = require('../config') as { offlineThresholdMinutes: () => number };
 const { isAuthEnabled, authenticate, requireAuth, isSetupComplete, createApiKey, revokeApiKey, getApiKeys } = require('./auth') as {
   isAuthEnabled: () => boolean;
   authenticate: (password: string, ip?: string) => string | null;
@@ -74,7 +75,7 @@ function handleSetupComplete(req: HandlerReq, res: ServerResponse, db: Database.
 }
 
 function handleHosts(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   return queries.getHosts(db, threshold);
 }
 
@@ -176,7 +177,7 @@ async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: D
 function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const showInternal = url.searchParams.get('showInternal') === 'true';
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   const detail = queries.getHostDetail(db, params.hostId, threshold, showInternal);
   if (!detail) {
     res.statusCode = 404;
@@ -200,7 +201,7 @@ function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Dat
 function handleHostContainers(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const showInternal = url.searchParams.get('showInternal') === 'true';
-  return queries.getLatestContainers(db, params.hostId, showInternal);
+  return queries.getLatestContainers(db, params.hostId, offlineThresholdMinutes(), showInternal);
 }
 
 function handleHostDisk(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
@@ -210,7 +211,7 @@ function handleHostDisk(req: HandlerReq, res: ServerResponse, db: Database.Datab
 function handleDashboard(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const showInternal = url.searchParams.get('showInternal') === 'true';
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   return queries.getDashboard(db, threshold, showInternal);
 }
 
@@ -227,7 +228,7 @@ function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Databas
 function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
-  const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
+  const latest = queries.getLatestContainer(db, params.hostId, params.containerName, offlineThresholdMinutes());
   if (!latest) {
     res.statusCode = 404;
     return { error: 'Container not found' };
@@ -798,7 +799,7 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
     return { error: 'ai_disabled', message: 'Set a Gemini API key in Settings → AI Diagnosis (or GEMINI_API_KEY env var) to enable AI diagnosis' };
   }
 
-  const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
+  const latest = queries.getLatestContainer(db, params.hostId, params.containerName, offlineThresholdMinutes());
   if (!latest) { res.statusCode = 404; return { error: 'Container not found' }; }
 
   const { buildContext } = require('../insights/diagnosis/context') as {
@@ -883,7 +884,7 @@ function handleImageUpdates(req: HandlerReq, res: ServerResponse, db: Database.D
 function handleRequestUpdateCheck(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdateCheck) { res.statusCode = 501; return { error: 'Not available in standalone mode' }; }
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   const result = ctx.requestUpdateCheck(db, threshold);
   return { ok: true, hostsNotified: result.hostsNotified };
 }
@@ -926,7 +927,7 @@ async function handleUpdateAllAgents(req: HandlerReq, res: ServerResponse, db: D
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   const { snoozeAlerts } = require('../alert-snooze');
   snoozeAlerts(15);
-  const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
+  const hosts = queries.getHosts(db, offlineThresholdMinutes());
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
   const tag = vi.latestAgentVersion || vi.currentVersion;
@@ -950,7 +951,7 @@ async function handleUpdateHub(req: HandlerReq, res: ServerResponse, db: Databas
   snoozeAlerts(10);
   // Find the agent on the same host as the hub
   const hubHostId = config.hostId || 'local';
-  const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
+  const hosts = queries.getHosts(db, offlineThresholdMinutes());
   const localAgent = hosts.find((h: any) => h.host_id === hubHostId && h.is_online);
   if (!localAgent) { res.statusCode = 400; return { error: `No online agent found on hub host (${hubHostId}). Ensure an agent is running on the same host.` }; }
   const { getVersionInfo } = require('../version-check');

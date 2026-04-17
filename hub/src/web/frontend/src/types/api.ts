@@ -146,6 +146,9 @@ export interface ContainerSnapshot {
   health_check_output: string | null;
   labels: string | null;
   collected_at: string;
+  // 1 when the owning host hasn't reported within the offline threshold —
+  // the snapshot is last-known state, not current truth.
+  is_stale: number;
 }
 
 export interface ContainerHistory {

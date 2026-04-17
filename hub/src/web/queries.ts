@@ -43,6 +43,7 @@ interface ContainerRow {
   health_check_output: string | null;
   labels: string | null;
   collected_at: string;
+  is_stale: number;
 }
 
 interface DiskRow {
@@ -292,7 +293,7 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
 
   return {
     ...host,
-    containers: getLatestContainers(db, hostId, showInternal),
+    containers: getLatestContainers(db, hostId, onlineThresholdMinutes, showInternal),
     disk: getLatestDisk(db, hostId),
     alerts: getAlerts(db, true, hostId),
     updates: getLatestUpdates(db, hostId),
@@ -301,20 +302,26 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
   };
 }
 
-function getLatestContainers(db: Database.Database, hostId: string, showInternal: boolean = false): ContainerRow[] {
+function getLatestContainers(db: Database.Database, hostId: string, onlineThresholdMinutes: number, showInternal: boolean = false): ContainerRow[] {
   // Return the latest snapshot for every container currently present on the
   // host, per the `containers` registry. Containers whose latest batch no
   // longer lists them (Docker rm, k8s pod delete, completed Job pods) have
   // `removed_at` set by `ingestContainers` and are excluded here. Historical
   // snapshots stay in the DB for the timeline view.
+  //
+  // `is_stale=1` when the host hasn't reported within the offline threshold —
+  // the snapshot below is the last known state, not current truth.
   const rows = db.prepare(`
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
-           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at
+           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at,
+           CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+             THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs
     INNER JOIN containers c
       ON c.host_id = cs.host_id AND c.container_name = cs.container_name
+    INNER JOIN hosts h ON h.host_id = cs.host_id
     INNER JOIN (
       SELECT host_id, container_name, MAX(collected_at) as max_at
       FROM container_snapshots WHERE host_id = ?
@@ -324,7 +331,7 @@ function getLatestContainers(db: Database.Database, hostId: string, showInternal
       AND cs.collected_at = latest.max_at
     WHERE c.host_id = ? AND c.removed_at IS NULL
     ORDER BY cs.container_name
-  `).all(hostId, hostId) as ContainerRow[];
+  `).all(onlineThresholdMinutes, hostId, hostId) as ContainerRow[];
   if (showInternal) return rows;
   return rows.filter(r => {
     if (!r.labels) return true;
@@ -684,16 +691,19 @@ function getContainerAlerts(db: Database.Database, hostId: string, containerName
   `).all(hostId, containerName) as ContainerAlertRow[];
 }
 
-function getLatestContainer(db: Database.Database, hostId: string, containerName: string): ContainerRow | null {
+function getLatestContainer(db: Database.Database, hostId: string, containerName: string, onlineThresholdMinutes: number): ContainerRow | null {
   return (db.prepare(`
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
-           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at
+           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at,
+           CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+             THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs
+    INNER JOIN hosts h ON h.host_id = cs.host_id
     WHERE cs.host_id = ? AND cs.container_name = ?
     ORDER BY cs.collected_at DESC LIMIT 1
-  `).get(hostId, containerName) as ContainerRow | undefined) ?? null;
+  `).get(onlineThresholdMinutes, hostId, containerName) as ContainerRow | undefined) ?? null;
 }
 
 function getContainerId(db: Database.Database, hostId: string, containerName: string): string | null {
