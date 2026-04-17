@@ -13,6 +13,7 @@ export const queryKeys = {
   timeline: (hostId?: string) => ['timeline', hostId] as const,
   trends: (hostId?: string) => ['trends', hostId] as const,
   events: (hostId?: string) => ['events', hostId] as const,
+  hostMetricsHistory: (hostId?: string) => ['host-metrics-history', hostId] as const,
 
   // Containers
   container: (hostId?: string, containerName?: string) => ['container', hostId, containerName] as const,

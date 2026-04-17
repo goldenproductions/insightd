@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 26;
+const SCHEMA_VERSION = 28;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -36,11 +36,24 @@ function bootstrap(db: Database.Database): void {
       health_status   TEXT,
       health_check_output TEXT,
       labels          TEXT,
+      exit_code       INTEGER,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_snapshots_host_name_time
       ON container_snapshots (host_id, container_name, collected_at);
+
+    CREATE TABLE IF NOT EXISTS containers (
+      host_id        TEXT NOT NULL,
+      container_name TEXT NOT NULL,
+      first_seen     TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen      TEXT NOT NULL DEFAULT (datetime('now')),
+      removed_at     TEXT,
+      PRIMARY KEY (host_id, container_name)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_containers_host_active
+      ON containers (host_id, removed_at);
 
     CREATE TABLE IF NOT EXISTS host_snapshots (
       id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -584,6 +597,29 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE insight_feedback ADD COLUMN finding_hash TEXT'); } catch { /* already exists */ }
     // confidence_calibration table created via CREATE TABLE IF NOT EXISTS in bootstrap
   }
+  if (fromVersion < 27) {
+    // containers registry — one row per (host, container_name) with
+    // first_seen / last_seen / removed_at. Replaces the 15-minute staleness
+    // window that previously hid deleted containers in the UI.
+    //
+    // Backfill from container_snapshots: anything whose most recent snapshot
+    // is older than 15 minutes stays marked "removed" so the migration is a
+    // no-op for the live UI on first boot.
+    db.exec(`
+      INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
+      SELECT host_id, container_name, MIN(collected_at), MAX(collected_at),
+             CASE WHEN MAX(collected_at) < datetime('now', '-15 minutes')
+                  THEN MAX(collected_at) ELSE NULL END
+      FROM container_snapshots
+      GROUP BY host_id, container_name
+    `);
+  }
+  if (fromVersion < 28) {
+    // exit_code for exited containers — distinguishes "completed" (0) from
+    // "failed" (non-zero) so one-shot containers (bootstrap, k8s Jobs,
+    // migration containers) don't all look like failures.
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN exit_code INTEGER'); } catch { /* already exists */ }
+  }
 }
 
 /**
@@ -610,6 +646,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r5 = db.prepare(`DELETE FROM host_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const r7 = db.prepare(`DELETE FROM http_checks WHERE checked_at < ${rawCutoff}`).run();
   const r8 = db.prepare(`DELETE FROM insight_feedback WHERE created_at < ${rawCutoff}`).run();
+  const rC = db.prepare(`DELETE FROM containers WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
     UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
@@ -623,7 +660,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r12 = db.prepare(`DELETE FROM http_rollups WHERE bucket < ${rollupCutoff}`).run();
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
-    + r6.changes + r7.changes + r8.changes + r9.changes + r10.changes + r11.changes + r12.changes;
+    + r6.changes + r7.changes + r8.changes + rC.changes + r9.changes + r10.changes + r11.changes + r12.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);

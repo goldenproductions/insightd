@@ -72,12 +72,21 @@ export class DockerRuntime implements ContainerRuntime {
       };
     });
 
-    // Enrich with restart counts via inspect — only for running containers
-    // (stopped containers reuse cached restartState)
+    // Enrich with restart counts + exit code via inspect. Running containers
+    // update restart bookkeeping and health-check output; non-running ones
+    // also report their last exit code (so one-shot/successfully-completed
+    // containers can be distinguished from failures in the UI).
     for (const p of parsed) {
       if (p.status !== 'running') {
         const prev = this.restartState.get(p.name);
         if (prev) p.restartCount = prev.restartCount;
+        try {
+          const info = await docker.getContainer(p.id).inspect();
+          const code = info.State?.ExitCode;
+          if (typeof code === 'number') p.exitCode = code;
+        } catch {
+          // container removed between list and inspect — leave exitCode undefined
+        }
         continue;
       }
       try {

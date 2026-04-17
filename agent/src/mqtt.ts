@@ -28,6 +28,7 @@ interface CollectionData {
     healthStatus?: string | null;
     healthCheckOutput?: string | null;
     labels?: Record<string, string>;
+    exitCode?: number | null;
   }>;
   disk: Array<{
     mountPoint: string;
@@ -281,6 +282,7 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
       health_status: c.healthStatus ?? null,
       health_check_output: c.healthCheckOutput ?? null,
       labels: JSON.stringify(c.labels || {}),
+      exit_code: c.exitCode ?? null,
     })),
     disk: data.disk.map(d => ({
       mount_point: d.mountPoint,

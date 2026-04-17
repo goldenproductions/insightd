@@ -24,8 +24,8 @@ interface K8sMeta {
 
 interface K8sContainerState {
   running?: { startedAt?: string };
-  waiting?: { reason?: string };
-  terminated?: { reason?: string };
+  waiting?: { reason?: string; message?: string };
+  terminated?: { reason?: string; message?: string; exitCode?: number };
 }
 
 interface K8sContainerStatus {
@@ -33,6 +33,7 @@ interface K8sContainerStatus {
   ready: boolean;
   restartCount: number;
   state?: K8sContainerState;
+  lastState?: K8sContainerState;
   image: string;
 }
 
@@ -59,6 +60,17 @@ interface K8sReplicaSet {
 }
 
 interface K8sList<T> { items: T[] }
+
+/**
+ * Waiting reasons that represent normal startup. Anything not in this set
+ * (CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerError,
+ * CreateContainerConfigError, InvalidImageName, …) is treated as a failure
+ * and mapped to healthStatus='unhealthy' so alerts and diagnosis fire.
+ */
+const K8S_TRANSIENT_WAITING_REASONS = new Set<string>([
+  'ContainerCreating',
+  'PodInitializing',
+]);
 
 // ---- Lightweight K8s API client using raw HTTPS ----
 
@@ -284,24 +296,52 @@ export class KubernetesRuntime implements ContainerRuntime {
         else if (cs.state?.waiting) status = cs.state.waiting.reason === 'Completed' ? 'exited' : 'created';
         else if (cs.state?.terminated) status = 'exited';
 
-        // Health: derive from ready flag + pod conditions
+        // Health: derive from ready flag + container state.
+        //
+        // A container in state.waiting is only "starting" while Kubernetes is
+        // genuinely bringing it up (ContainerCreating / PodInitializing).
+        // CrashLoopBackOff / ImagePullBackOff / ErrImagePull / CreateContainerError
+        // are failure states — the pod is stuck, not starting — so they must
+        // map to 'unhealthy' to trip the container_unhealthy alert. Similarly
+        // a terminated container with a non-Completed reason (OOMKilled, Error)
+        // is unhealthy, not neutral.
         let healthStatus: string | null = null;
         if (cs.ready) {
           healthStatus = 'healthy';
         } else if (cs.state?.running && !cs.ready) {
           healthStatus = 'unhealthy';
         } else if (cs.state?.waiting) {
-          healthStatus = 'starting';
+          const reason = cs.state.waiting.reason ?? '';
+          healthStatus = K8S_TRANSIENT_WAITING_REASONS.has(reason) ? 'starting' : 'unhealthy';
+        } else if (cs.state?.terminated && cs.state.terminated.reason && cs.state.terminated.reason !== 'Completed') {
+          healthStatus = 'unhealthy';
         }
 
+        // Parity with Docker's healthCheckOutput: surface the reason/message from
+        // the current waiting state or the most recent termination so "why" is
+        // visible in alerts + diagnosis findings.
+        const waiting = cs.state?.waiting;
+        const terminated = cs.state?.terminated ?? cs.lastState?.terminated;
+        let healthCheckOutput: string | null = null;
+        if (waiting?.reason) {
+          healthCheckOutput = (waiting.message ? `${waiting.reason}: ${waiting.message}` : waiting.reason).slice(0, 500);
+        } else if (terminated?.reason) {
+          healthCheckOutput = (terminated.message ? `${terminated.reason}: ${terminated.message}` : terminated.reason).slice(0, 500);
+        }
+
+        // K8s terminated state includes exitCode — surface it so the hub can
+        // tell completed (0) from failed (non-zero) pods.
+        const termCode = (cs.state?.terminated ?? cs.lastState?.terminated)?.exitCode;
         containers.push({
           name,
           id,
           status,
           restartCount: cs.restartCount || 0,
           healthStatus,
+          healthCheckOutput,
           labels: { ...podLabels }, // container-level labels don't exist in K8s
           image: cs.image,
+          exitCode: typeof termCode === 'number' ? termCode : null,
         });
       }
     }
