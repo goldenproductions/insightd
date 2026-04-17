@@ -13,6 +13,7 @@ const colors: Record<string, string> = {
   yellow: 'bg-amber-500',
   unhealthy: 'bg-amber-500',
   none: 'bg-gray-400',
+  stale: 'bg-gray-400',
 };
 
 const liveStatuses = new Set(['online', 'running', 'up', 'green']);

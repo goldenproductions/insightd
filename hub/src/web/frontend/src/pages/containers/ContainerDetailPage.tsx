@@ -12,7 +12,7 @@ import { Badge } from '@/components/Badge';
 import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
-import { fmtDurationMs } from '@/lib/formatters';
+import { fmtDurationMs, timeAgo } from '@/lib/formatters';
 import { sumPositiveRestartDeltas } from '@/lib/containers';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
@@ -325,16 +325,26 @@ export function ContainerDetailPage() {
         )}
       </div>
 
+      {data.is_stale && (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg">
+          <div className="font-medium">Agent not reporting</div>
+          <div className="mt-0.5 text-xs text-muted">
+            Last snapshot {timeAgo(data.collected_at)}. The status, health, and metrics shown below
+            are the last values received — not current truth. Actions are hidden until the agent reconnects.
+          </div>
+        </div>
+      )}
+
       {/* ═══ HERO LAYER ═══
           Identity, live status, and (when things are wrong) the diagnosis that
           demands attention. Always visible, regardless of active tab. */}
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
-            <StatusDot status={data.status} size="lg" />
+            <StatusDot status={data.is_stale ? 'stale' : data.status} size="lg" />
             <h1 className="truncate text-xl font-bold text-fg">{data.container_name}</h1>
           </div>
-          {isAuthenticated && (
+          {isAuthenticated && !data.is_stale && (
             <div className="flex shrink-0 items-center gap-2" title={isKubernetes ? k8sReadOnlyTitle : undefined}>
               {data.status !== 'running' && (
                 <>
@@ -363,8 +373,10 @@ export function ContainerDetailPage() {
         {/* Status pills + compact stats — flat row, no card wrapper */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />
-            {healthPillText && (
+            {data.is_stale
+              ? <Badge text="stale" color="gray" />
+              : <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />}
+            {!data.is_stale && healthPillText && (
               <span title="Docker runs a health check command inside the container. This is a probe signal — the service may still be responding.">
                 <Badge text={healthPillText} color={healthPillColor} />
               </span>

@@ -21,6 +21,7 @@ import { HostOverviewTab } from './HostOverviewTab';
 import { HostResourcesTab } from './HostResourcesTab';
 import { HostAlertsTab } from './HostAlertsTab';
 import { AnomaliesList } from '@/components/AnomaliesList';
+import { timeAgo } from '@/lib/formatters';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -112,6 +113,16 @@ export function HostDetailPage() {
         </div>
         <RemoveHostButton hostId={hostId!} confirm={confirm} />
       </div>
+
+      {!data.is_online && (
+        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg">
+          <div className="font-medium">Agent not reporting</div>
+          <div className="mt-0.5 text-xs text-muted">
+            Last contact {timeAgo(data.last_seen)}. Metrics and container state shown below are the
+            last values received — treat as stale until the agent reconnects.
+          </div>
+        </div>
+      )}
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 

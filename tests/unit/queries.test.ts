@@ -48,26 +48,51 @@ describe('queries', () => {
 
   describe('getLatestContainers', () => {
     it('returns latest snapshot per container', () => {
+      seedHost(db, 'h1', recent);
       seedContainerSnapshots(db, [
         { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: old },
         { hostId: 'h1', name: 'nginx', status: 'running', cpu: 10, mem: 60, at: recent },
         { hostId: 'h1', name: 'redis', status: 'exited', cpu: null, mem: null, at: recent },
       ]);
 
-      const containers = getLatestContainers(db, 'h1');
+      const containers = getLatestContainers(db, 'h1', 10);
       assert.equal(containers.length, 2);
 
       const nginx = containers.find((c: any) => c.container_name === 'nginx');
       assert.equal(nginx.cpu_percent, 10);
       assert.equal(nginx.memory_mb, 60);
+      assert.equal(nginx.is_stale, 0);
 
       const redis = containers.find((c: any) => c.container_name === 'redis');
       assert.equal(redis.status, 'exited');
+      assert.equal(redis.is_stale, 0);
     });
 
     it('returns empty for unknown host', () => {
-      const containers = getLatestContainers(db, 'unknown');
+      const containers = getLatestContainers(db, 'unknown', 10);
       assert.deepEqual(containers, []);
+    });
+
+    it('flags containers as stale when host last_seen exceeds threshold', () => {
+      seedHost(db, 'h1', stale); // 2 hours ago, well past 15 min threshold
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: stale },
+      ]);
+
+      const containers = getLatestContainers(db, 'h1', 15);
+      assert.equal(containers.length, 1);
+      assert.equal(containers[0].is_stale, 1, 'container on offline host should be stale');
+      assert.equal(containers[0].status, 'running', 'last-known status preserved');
+    });
+
+    it('does not flag containers as stale when host is within threshold', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: recent },
+      ]);
+
+      const containers = getLatestContainers(db, 'h1', 15);
+      assert.equal(containers[0].is_stale, 0);
     });
   });
 
