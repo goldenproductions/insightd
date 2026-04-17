@@ -10,6 +10,7 @@ import { Badge } from '@/components/Badge';
 import { PageTitle } from '@/components/PageTitle';
 import { CardSkeleton } from '@/components/Skeleton';
 import { timeAgo } from '@/lib/formatters';
+import { splitContainerEntityId } from '@/lib/containers';
 
 const CATEGORY_LABELS: Record<string, string> = {
   performance: 'Performance',
@@ -35,9 +36,9 @@ const SEVERITY_COLORS: Record<string, string> = {
 
 function entityLink(insight: InsightRow): string {
   if (insight.entity_type === 'container') {
-    const parts = insight.entity_id.split('/');
-    if (parts.length === 2) {
-      return `/hosts/${encodeURIComponent(parts[0]!)}/containers/${encodeURIComponent(parts[1]!)}`;
+    const split = splitContainerEntityId(insight.entity_id);
+    if (split) {
+      return `/hosts/${encodeURIComponent(split.hostId)}/containers/${encodeURIComponent(split.containerName)}`;
     }
   }
   return `/hosts/${encodeURIComponent(insight.entity_id)}`;
@@ -53,8 +54,8 @@ function formatMetricValue(value: number | null, metric: string | null): string 
 
 function entityName(insight: InsightRow): string {
   if (insight.entity_type === 'container') {
-    const parts = insight.entity_id.split('/');
-    return parts.length === 2 ? parts[1]! : insight.entity_id;
+    const split = splitContainerEntityId(insight.entity_id);
+    if (split) return split.containerName;
   }
   return insight.entity_id;
 }

@@ -3,6 +3,7 @@ import type Database from 'better-sqlite3';
 import type Dockerode from 'dockerode';
 
 const queries = require('./queries');
+const { offlineThresholdMinutes } = require('../config') as { offlineThresholdMinutes: () => number };
 const { isAuthEnabled, authenticate, requireAuth, isSetupComplete, createApiKey, revokeApiKey, getApiKeys } = require('./auth') as {
   isAuthEnabled: () => boolean;
   authenticate: (password: string, ip?: string) => string | null;
@@ -74,7 +75,7 @@ function handleSetupComplete(req: HandlerReq, res: ServerResponse, db: Database.
 }
 
 function handleHosts(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   return queries.getHosts(db, threshold);
 }
 
@@ -176,7 +177,7 @@ async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: D
 function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const showInternal = url.searchParams.get('showInternal') === 'true';
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   const detail = queries.getHostDetail(db, params.hostId, threshold, showInternal);
   if (!detail) {
     res.statusCode = 404;
@@ -200,7 +201,7 @@ function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Dat
 function handleHostContainers(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const showInternal = url.searchParams.get('showInternal') === 'true';
-  return queries.getLatestContainers(db, params.hostId, showInternal);
+  return queries.getLatestContainers(db, params.hostId, offlineThresholdMinutes(), showInternal);
 }
 
 function handleHostDisk(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
@@ -210,7 +211,7 @@ function handleHostDisk(req: HandlerReq, res: ServerResponse, db: Database.Datab
 function handleDashboard(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const showInternal = url.searchParams.get('showInternal') === 'true';
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   return queries.getDashboard(db, threshold, showInternal);
 }
 
@@ -227,7 +228,7 @@ function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Databas
 function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
-  const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
+  const latest = queries.getLatestContainer(db, params.hostId, params.containerName, offlineThresholdMinutes());
   if (!latest) {
     res.statusCode = 404;
     return { error: 'Container not found' };
@@ -298,9 +299,14 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     // Swallow — degraded rendering is better than a 500.
   }
 
+  // Used by the UI to disable Docker-only actions (restart/stop/start) on
+  // k8s pods, which the agent would reject at runtime.
+  const runtime_type = queries.getHostRuntimeType(db, params.hostId);
+
   return {
     ...latest,
     host_id: params.hostId,
+    runtime_type,
     health_diagnosis,
     findings,
     history: queries.getContainerHistory(db, params.hostId, params.containerName, hours),
@@ -409,7 +415,8 @@ function handleTimeline(req: HandlerReq, res: ServerResponse, db: Database.Datab
 function handleRankings(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const limit = Math.max(1, Math.min(50, parseInt(url.searchParams.get('limit') || '10', 10) || 10));
-  return queries.getResourceRankings(db, limit);
+  const showInternal = url.searchParams.get('showInternal') === 'true';
+  return queries.getResourceRankings(db, limit, showInternal);
 }
 
 function handleTrends(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
@@ -793,7 +800,7 @@ async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Databa
     return { error: 'ai_disabled', message: 'Set a Gemini API key in Settings → AI Diagnosis (or GEMINI_API_KEY env var) to enable AI diagnosis' };
   }
 
-  const latest = queries.getLatestContainer(db, params.hostId, params.containerName);
+  const latest = queries.getLatestContainer(db, params.hostId, params.containerName, offlineThresholdMinutes());
   if (!latest) { res.statusCode = 404; return { error: 'Container not found' }; }
 
   const { buildContext } = require('../insights/diagnosis/context') as {
@@ -878,7 +885,7 @@ function handleImageUpdates(req: HandlerReq, res: ServerResponse, db: Database.D
 function handleRequestUpdateCheck(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdateCheck) { res.statusCode = 501; return { error: 'Not available in standalone mode' }; }
-  const threshold = config.collectIntervalMinutes * 2;
+  const threshold = offlineThresholdMinutes();
   const result = ctx.requestUpdateCheck(db, threshold);
   return { ok: true, hostsNotified: result.hostsNotified };
 }
@@ -921,7 +928,7 @@ async function handleUpdateAllAgents(req: HandlerReq, res: ServerResponse, db: D
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   const { snoozeAlerts } = require('../alert-snooze');
   snoozeAlerts(15);
-  const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
+  const hosts = queries.getHosts(db, offlineThresholdMinutes());
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
   const tag = vi.latestAgentVersion || vi.currentVersion;
@@ -943,17 +950,30 @@ async function handleUpdateHub(req: HandlerReq, res: ServerResponse, db: Databas
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   const { snoozeAlerts } = require('../alert-snooze');
   snoozeAlerts(10);
-  // Find the agent on the same host as the hub
-  const hubHostId = config.hostId || 'local';
-  const hosts = queries.getHosts(db, config.collectIntervalMinutes * 2);
-  const localAgent = hosts.find((h: any) => h.host_id === hubHostId && h.is_online);
-  if (!localAgent) { res.statusCode = 400; return { error: `No online agent found on hub host (${hubHostId}). Ensure an agent is running on the same host.` }; }
+  // The agent we need is whichever one can see the hub's own container on
+  // the same Docker daemon. Trying to match `config.hostId` here is fragile:
+  // the hub compose service doesn't set INSIGHTD_HOST_ID (fallback = 'local'),
+  // while the sibling agent's compose entry does (default 'hub-server'), so
+  // a literal id match fails on default installs. Looking up who reports
+  // `insightd-hub` as a running container answers the question directly.
+  const threshold = offlineThresholdMinutes();
+  const row = db.prepare(`
+    SELECT c.host_id
+    FROM containers c
+    INNER JOIN hosts h ON h.host_id = c.host_id
+    WHERE c.container_name = 'insightd-hub'
+      AND c.removed_at IS NULL
+      AND datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+    ORDER BY c.last_seen DESC
+    LIMIT 1
+  `).get(threshold) as { host_id: string } | undefined;
+  if (!row) { res.statusCode = 400; return { error: 'No online agent is reporting the hub container (insightd-hub). Ensure an agent is running on the same host and has reported at least once.' }; }
   const { getVersionInfo } = require('../version-check');
   const vi = getVersionInfo();
   const tag = vi.latestHubVersion || vi.currentVersion;
   const image = `andreas404/insightd-hub:${tag}`;
   try {
-    const result = await ctx.requestUpdate(localAgent.host_id, 'hub', image);
+    const result = await ctx.requestUpdate(row.host_id, 'hub', image);
     return result;
   } catch (err) {
     res.statusCode = 504;

@@ -1,24 +1,72 @@
 # Full stack — Mosquitto + Hub + local Agent
 # For multi-host setups. Remote agents connect to this host's MQTT.
+#
+# First boot: the `bootstrap` service generates mosquitto.conf + passwd
+# from INSIGHTD_MQTT_USER / INSIGHTD_MQTT_PASS into a named volume.
+# Re-runs are idempotent — existing config files are left alone.
 services:
+  bootstrap:
+    image: eclipse-mosquitto:2
+    container_name: insightd-bootstrap
+    restart: "no"
+    labels:
+      insightd.internal: "true"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        # Always overwrite mosquitto.conf — it's our contract with the broker,
+        # not user state. The eclipse-mosquitto image seeds a default config
+        # into the volume on first mount, so we can't use a "skip if exists" guard.
+        cat > /mosquitto/config/mosquitto.conf <<'EOF'
+        listener 1883
+        allow_anonymous false
+        password_file /mosquitto/config/passwd
+        persistence true
+        persistence_location /mosquitto/data/
+        EOF
+        # Idempotent: generate passwd only on first boot so re-runs don't
+        # rotate the credential and break already-enrolled agents.
+        if [ ! -f /mosquitto/config/passwd ]; then
+          if [ -z "$$INSIGHTD_MQTT_PASS" ]; then
+            echo "INSIGHTD_MQTT_PASS is empty — refusing to generate an empty-password mosquitto user." >&2
+            echo "Set INSIGHTD_MQTT_PASS in .env (the install script does this for you)." >&2
+            exit 1
+          fi
+          mosquitto_passwd -b -c /mosquitto/config/passwd \
+            "$$INSIGHTD_MQTT_USER" "$$INSIGHTD_MQTT_PASS"
+        fi
+        # Fix ownership + perms every boot. The bootstrap runs as root, so
+        # mosquitto.conf is root-owned and mosquitto_passwd creates its file
+        # with mode 0700 — the broker runs as the 'mosquitto' user and bails
+        # with "Unable to open pwfile" without this. Applying every boot also
+        # repairs installs created before this fix.
+        chown -R mosquitto:mosquitto /mosquitto/config
+        chmod 0644 /mosquitto/config/mosquitto.conf
+        chmod 0600 /mosquitto/config/passwd
+    environment:
+      INSIGHTD_MQTT_USER: ${INSIGHTD_MQTT_USER:-insightd}
+      INSIGHTD_MQTT_PASS: ${INSIGHTD_MQTT_PASS:-}
+    volumes:
+      - mosquitto-config:/mosquitto/config
+
   mosquitto:
     image: eclipse-mosquitto:2
     container_name: insightd-mqtt
     restart: unless-stopped
     labels:
       insightd.internal: "true"
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
     volumes:
-      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-      - ./mosquitto-passwd:/mosquitto/config/passwd:ro
+      - mosquitto-config:/mosquitto/config
       - mosquitto-data:/mosquitto/data
     ports:
       - "1883:1883"
 
   hub:
-    build:
-      context: .
-      dockerfile: hub/Dockerfile
-    image: insightd-hub:latest
+    image: andreas404/insightd-hub:latest
     container_name: insightd-hub
     restart: unless-stopped
     labels:
@@ -29,16 +77,26 @@ services:
       - "3000:3000"
     volumes:
       - hub-data:/data
-    env_file:
-      - .env
     environment:
+      # Keep the hub's own host id in sync with the sibling agent so
+      # internal features that need to match them (e.g. self-update) work
+      # without extra configuration.
+      INSIGHTD_HOST_ID: ${INSIGHTD_HOST_ID:-hub-server}
       INSIGHTD_MQTT_URL: mqtt://mosquitto:1883
+      INSIGHTD_MQTT_USER: ${INSIGHTD_MQTT_USER:-insightd}
+      INSIGHTD_MQTT_PASS: ${INSIGHTD_MQTT_PASS:-}
+      INSIGHTD_ADMIN_PASSWORD: ${INSIGHTD_ADMIN_PASSWORD:-}
+      INSIGHTD_SMTP_HOST: ${INSIGHTD_SMTP_HOST:-}
+      INSIGHTD_SMTP_PORT: ${INSIGHTD_SMTP_PORT:-587}
+      INSIGHTD_SMTP_USER: ${INSIGHTD_SMTP_USER:-}
+      INSIGHTD_SMTP_PASS: ${INSIGHTD_SMTP_PASS:-}
+      INSIGHTD_SMTP_FROM: ${INSIGHTD_SMTP_FROM:-}
+      INSIGHTD_DIGEST_TO: ${INSIGHTD_DIGEST_TO:-}
+      INSIGHTD_ALERTS_ENABLED: ${INSIGHTD_ALERTS_ENABLED:-false}
+      TZ: ${TZ:-UTC}
 
   agent:
-    build:
-      context: .
-      dockerfile: agent/Dockerfile
-    image: insightd-agent:latest
+    image: andreas404/insightd-agent:latest
     container_name: insightd-agent
     restart: unless-stopped
     labels:
@@ -49,14 +107,15 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - /:/host:ro
     environment:
-      INSIGHTD_HOST_ID: ${INSIGHTD_HOST_ID:-local}
+      INSIGHTD_HOST_ID: ${INSIGHTD_HOST_ID:-hub-server}
       INSIGHTD_MQTT_URL: mqtt://mosquitto:1883
       INSIGHTD_MQTT_USER: ${INSIGHTD_MQTT_USER:-insightd}
       INSIGHTD_MQTT_PASS: ${INSIGHTD_MQTT_PASS:-}
-      INSIGHTD_ALLOW_UPDATES: ${INSIGHTD_ALLOW_UPDATES:-false}
-      INSIGHTD_ALLOW_ACTIONS: ${INSIGHTD_ALLOW_ACTIONS:-false}
+      INSIGHTD_ALLOW_UPDATES: ${INSIGHTD_ALLOW_UPDATES:-true}
+      INSIGHTD_ALLOW_ACTIONS: ${INSIGHTD_ALLOW_ACTIONS:-true}
       INSIGHTD_HOST_GROUP: ${INSIGHTD_HOST_GROUP:-}
 
 volumes:
+  mosquitto-config:
   mosquitto-data:
   hub-data:

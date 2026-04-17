@@ -16,6 +16,7 @@ export interface DashboardInsight {
   severity: string;
   title: string;
   message: string;
+  evidence?: string | null;
 }
 
 export interface DashboardData {
@@ -40,7 +41,7 @@ export interface DashboardData {
     computedAt: string;
   } | null;
   topInsights: DashboardInsight[];
-  availability: { overallPercent: number | null; downContainers: { hostId: string; name: string; uptimePercent: number; downMinutes: number }[] };
+  availability: { overallPercent: number | null };
 }
 
 export interface RankingItem {
@@ -89,6 +90,24 @@ export interface HostMetrics {
   collected_at: string;
 }
 
+export interface HostMetricsSnapshot {
+  cpu_percent: number | null;
+  memory_total_mb: number | null;
+  memory_used_mb: number | null;
+  memory_available_mb: number | null;
+  load_1: number | null;
+  load_5: number | null;
+  load_15: number | null;
+  gpu_utilization_percent: number | null;
+  gpu_temperature_celsius: number | null;
+  cpu_temperature_celsius: number | null;
+  disk_read_bytes_per_sec: number | null;
+  disk_write_bytes_per_sec: number | null;
+  net_rx_bytes_per_sec: number | null;
+  net_tx_bytes_per_sec: number | null;
+  collected_at: string;
+}
+
 export interface DiskSnapshot {
   mount_point: string;
   total_gb: number;
@@ -126,7 +145,14 @@ export interface ContainerSnapshot {
   health_status: string | null;
   health_check_output: string | null;
   labels: string | null;
+  // Exit code for non-running containers. Null for running containers or
+  // when the runtime didn't report one. 0 = completed successfully, non-zero
+  // = failed.
+  exit_code: number | null;
   collected_at: string;
+  // 1 when the owning host hasn't reported within the offline threshold —
+  // the snapshot is last-known state, not current truth.
+  is_stale: number;
 }
 
 export interface ContainerHistory {
@@ -194,6 +220,8 @@ export interface Finding {
 
 export interface ContainerDetail extends ContainerSnapshot {
   host_id: string;
+  /** Runtime of the host this container lives on — drives UI gating of Docker-only actions. */
+  runtime_type?: 'docker' | 'kubernetes' | string;
   health_diagnosis: string | null;
   findings: Finding[];
   history: ContainerHistory[];
@@ -514,6 +542,7 @@ export interface HostWithAgent {
   host_id: string;
   agent_version: string | null;
   is_online: number;
+  runtime_type?: string;
 }
 
 export interface ImageUpdate {

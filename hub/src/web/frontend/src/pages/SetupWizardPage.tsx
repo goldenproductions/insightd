@@ -55,6 +55,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
 }
 
 function PasswordStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
+  const { login } = useAuth();
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
@@ -64,7 +65,20 @@ function PasswordStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
     if (password.length < 4) { setError('Password must be at least 4 characters'); return; }
     if (password !== confirm) { setError('Passwords do not match'); return; }
     try {
-      await fetch('/api/setup/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+      const res = await fetch('/api/setup/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(() => '');
+        setError(msg || `Failed to save (${res.status})`);
+        return;
+      }
+      // Log in with the password we just set so subsequent steps (EmailStep's
+      // PUT /api/settings) can authenticate. Without this the token is null
+      // and the email-save silently 401s.
+      try { await login(password); } catch { /* wizard still advances; email save will error and user can skip */ }
       setSaved(true);
       setTimeout(onNext, 1000);
     } catch { setError('Failed to save'); }

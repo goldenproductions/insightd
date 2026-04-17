@@ -74,6 +74,8 @@ const config = Object.freeze({
     hostCpuPercent: parseInt(process.env.INSIGHTD_ALERT_HOST_CPU || '90', 10),
     hostMemoryAvailableMb: parseInt(process.env.INSIGHTD_ALERT_HOST_MEMORY || '0', 10),
     hostLoadThreshold: parseFloat(process.env.INSIGHTD_ALERT_LOAD || '0'),
+    hostOffline: process.env.INSIGHTD_ALERT_HOST_OFFLINE !== 'false',
+    hostOfflineMinutes: parseInt(process.env.INSIGHTD_ALERT_HOST_OFFLINE_MINUTES || '15', 10),
     containerUnhealthy: process.env.INSIGHTD_ALERT_UNHEALTHY !== 'false',
     excludeContainers: process.env.INSIGHTD_ALERT_EXCLUDE || '',
     endpointDown: process.env.INSIGHTD_ALERT_ENDPOINT_DOWN !== 'false',
@@ -101,4 +103,13 @@ function validate(): string[] {
   return warnings;
 }
 
-module.exports = { config, validate, VERSION };
+// Number of consecutive missed collection cycles before a host (and its
+// container/disk data) is considered stale/offline. A host is offline when
+// last_seen is older than OFFLINE_CYCLES × collectIntervalMinutes.
+const OFFLINE_CYCLES = 3;
+
+function offlineThresholdMinutes(): number {
+  return config.collectIntervalMinutes * OFFLINE_CYCLES;
+}
+
+module.exports = { config, validate, VERSION, OFFLINE_CYCLES, offlineThresholdMinutes };

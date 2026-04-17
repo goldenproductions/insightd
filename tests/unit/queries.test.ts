@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
-const { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getContainerDowntime } = require('../../hub/src/web/queries');
+const { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getContainerDowntime, getHostRuntimeType } = require('../../hub/src/web/queries');
 
 const recent = ts(new Date(NOW - 2 * 60 * 1000)); // 2 min ago
 const old = ts(new Date(NOW - 30 * 60 * 1000)); // 30 min ago
@@ -22,7 +22,7 @@ describe('queries', () => {
     it('returns status ok with schema version', () => {
       const health = getHealth(db);
       assert.equal(health.status, 'ok');
-      assert.equal(health.schemaVersion, 26);
+      assert.equal(health.schemaVersion, 28);
       assert.equal(typeof health.uptime, 'number');
     });
   });
@@ -48,26 +48,65 @@ describe('queries', () => {
 
   describe('getLatestContainers', () => {
     it('returns latest snapshot per container', () => {
+      seedHost(db, 'h1', recent);
       seedContainerSnapshots(db, [
         { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: old },
         { hostId: 'h1', name: 'nginx', status: 'running', cpu: 10, mem: 60, at: recent },
         { hostId: 'h1', name: 'redis', status: 'exited', cpu: null, mem: null, at: recent },
       ]);
 
-      const containers = getLatestContainers(db, 'h1');
+      const containers = getLatestContainers(db, 'h1', 10);
       assert.equal(containers.length, 2);
 
       const nginx = containers.find((c: any) => c.container_name === 'nginx');
       assert.equal(nginx.cpu_percent, 10);
       assert.equal(nginx.memory_mb, 60);
+      assert.equal(nginx.is_stale, 0);
 
       const redis = containers.find((c: any) => c.container_name === 'redis');
       assert.equal(redis.status, 'exited');
+      assert.equal(redis.is_stale, 0);
     });
 
     it('returns empty for unknown host', () => {
-      const containers = getLatestContainers(db, 'unknown');
+      const containers = getLatestContainers(db, 'unknown', 10);
       assert.deepEqual(containers, []);
+    });
+
+    it('flags containers as stale when host last_seen exceeds threshold', () => {
+      seedHost(db, 'h1', stale); // 2 hours ago, well past 15 min threshold
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: stale },
+      ]);
+
+      const containers = getLatestContainers(db, 'h1', 15);
+      assert.equal(containers.length, 1);
+      assert.equal(containers[0].is_stale, 1, 'container on offline host should be stale');
+      assert.equal(containers[0].status, 'running', 'last-known status preserved');
+    });
+
+    it('does not flag containers as stale when host is within threshold', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', cpu: 5, mem: 50, at: recent },
+      ]);
+
+      const containers = getLatestContainers(db, 'h1', 15);
+      assert.equal(containers[0].is_stale, 0);
+    });
+
+    it('exposes exit_code so completed oneshots can be distinguished from failures', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'bootstrap', status: 'exited', exitCode: 0, at: recent },
+        { hostId: 'h1', name: 'crasher', status: 'exited', exitCode: 137, at: recent },
+      ]);
+
+      const containers = getLatestContainers(db, 'h1', 15);
+      const bootstrap = containers.find((c: any) => c.container_name === 'bootstrap');
+      const crasher = containers.find((c: any) => c.container_name === 'crasher');
+      assert.equal(bootstrap.exit_code, 0);
+      assert.equal(crasher.exit_code, 137);
     });
   });
 
@@ -173,6 +212,24 @@ describe('queries', () => {
     });
   });
 
+  describe('getHostRuntimeType', () => {
+    it('defaults to "docker" when host does not exist', () => {
+      assert.equal(getHostRuntimeType(db, 'unknown'), 'docker');
+    });
+
+    it('defaults to "docker" for hosts inserted without a runtime_type', () => {
+      // seedHost uses bare INSERT; schema default is 'docker'
+      seedHost(db, 'legacy-host', recent);
+      assert.equal(getHostRuntimeType(db, 'legacy-host'), 'docker');
+    });
+
+    it('returns "kubernetes" when the host is a k8s node', () => {
+      db.prepare('INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type) VALUES (?, datetime(?), datetime(?), ?)')
+        .run('k3d-node-1', recent, recent, 'kubernetes');
+      assert.equal(getHostRuntimeType(db, 'k3d-node-1'), 'kubernetes');
+    });
+  });
+
   describe('getDashboard', () => {
     it('returns zeros when database is empty', () => {
       const dash = getDashboard(db, 10);
@@ -256,33 +313,34 @@ describe('queries', () => {
       assert.equal(hs.score, 97);
     });
 
-    it('excludes intentionally-stopped containers from downContainers', () => {
+    it('overallPercent excludes intentionally-stopped containers', () => {
       // Simulates proxmox-01 with nginx sitting 'exited' for days — the agent
-      // still reports it every 5 min (docker ps -a), and the 24h availability
-      // query would show 0% uptime, but we don't want it in the feed.
+      // still reports it every 5 min (docker ps -a). getDashboard previously
+      // exposed a per-container `downContainers` list that the frontend
+      // routed into the acute "Needs Attention" feed, which duplicated the
+      // retrospective `had downtime` insight. That list is gone; what
+      // remains is the fleet-wide `overallPercent`, which should still
+      // ignore intentionally-stopped containers by design (the upstream
+      // filter in getDashboard skips any container whose latest snapshot
+      // is not 'running').
       seedHost(db, 'h1', recent);
-      // Seed 20 snapshots of an exited container, all within the last 24h and
-      // the most recent one inside the 15-minute active-pair window.
       const snapshots: any[] = [];
       for (let i = 0; i < 20; i++) {
         const minutesAgo = 5 + i * 5;
         snapshots.push({ hostId: 'h1', name: 'nginx', status: 'exited', at: ts(new Date(NOW - minutesAgo * 60 * 1000)) });
       }
-      // Also seed a currently-running container with some historical dips
-      // (10 running + 2 exited = 83.3% uptime) — this SHOULD appear.
-      for (let i = 0; i < 10; i++) {
+      // A currently-running container with 100% uptime — the fleet % should
+      // be 100 and nginx should not drag it down.
+      for (let i = 0; i < 12; i++) {
         snapshots.push({ hostId: 'h1', name: 'webapp', status: 'running', at: ts(new Date(NOW - (5 + i * 5) * 60 * 1000)) });
       }
-      snapshots.push({ hostId: 'h1', name: 'webapp', status: 'exited', at: ts(new Date(NOW - 60 * 60 * 1000)) });
-      snapshots.push({ hostId: 'h1', name: 'webapp', status: 'exited', at: ts(new Date(NOW - 65 * 60 * 1000)) });
       seedContainerSnapshots(db, snapshots);
 
       const dash = getDashboard(db, 10);
-      const downNames = dash.availability.downContainers.map((c: any) => c.name);
-      assert.ok(!downNames.includes('nginx'),
-        'intentionally-stopped nginx should not be in downContainers');
-      assert.ok(downNames.includes('webapp'),
-        'currently-running webapp with historical downtime should be in downContainers');
+      assert.equal(dash.availability.overallPercent, 100,
+        'exited nginx must not drag overallPercent below 100');
+      assert.equal(dash.availability.downContainers, undefined,
+        'downContainers field removed — retrospective dips live in topInsights now');
     });
 
     it('leaves alerts factor alone when live count matches stored value', () => {
@@ -308,6 +366,28 @@ describe('queries', () => {
       // Score stays at stored value since nothing was patched
       assert.equal(h1.score, 80);
       assert.equal(dash.systemHealthScore.score, 80);
+    });
+
+    it('getTopInsights returns the evidence column so the frontend can render timeAgo', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
+      db.prepare(`
+        INSERT INTO insights (entity_type, entity_id, category, severity, title, message, metric, current_value, baseline_value, evidence)
+        VALUES ('container', 'h1/nginx', 'availability', 'warning',
+                'nginx recovered from a brief dip',
+                'Down for ~5m in the last 24h — now running again (98.9% uptime).',
+                null, 98.9, 99,
+                '{"lastDownAt":"2026-04-15 16:32:07","downMinutes":5,"uptimePct":98.9}')
+      `).run();
+
+      const dash = getDashboard(db, 10);
+      const insight = dash.topInsights.find((i: any) => i.title.includes('recovered'));
+      assert.ok(insight, 'expected the availability insight to surface in topInsights');
+      assert.ok(insight.evidence, 'evidence field must be returned');
+      const ev = JSON.parse(insight.evidence);
+      assert.equal(ev.lastDownAt, '2026-04-15 16:32:07');
+      assert.equal(ev.downMinutes, 5);
+      assert.equal(ev.uptimePct, 98.9);
     });
   });
 

@@ -95,11 +95,13 @@ export function App() {
 
   if (!setupComplete) {
     return (
-      <ThemeProvider>
-        <Suspense fallback={<PageLoading />}>
-          <SetupWizardPage mode={mode} onComplete={() => setSetupComplete(true)} />
-        </Suspense>
-      </ThemeProvider>
+      <AuthProvider>
+        <ThemeProvider>
+          <Suspense fallback={<PageLoading />}>
+            <SetupWizardPage mode={mode} onComplete={() => setSetupComplete(true)} />
+          </Suspense>
+        </ThemeProvider>
+      </AuthProvider>
     );
   }
 

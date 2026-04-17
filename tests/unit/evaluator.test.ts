@@ -1,6 +1,6 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedHttpEndpoints, seedHttpChecks } = require('../helpers/db');
+const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedHttpEndpoints, seedHttpChecks, markContainerRemoved } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
 
@@ -83,6 +83,32 @@ describe('evaluateAlerts', () => {
       const { triggered } = evaluateAlerts(db, { alerts: disabledConfig });
       const downs = triggered.filter((a: any) => a.type === 'container_down');
       assert.equal(downs.length, 0);
+    });
+
+    it('does not trigger for successfully-completed one-shot containers (exit_code=0)', () => {
+      const t1 = ts(new Date(NOW - 600000));
+      const t2 = ts(NOW);
+      seedContainerSnapshots(db, [
+        { name: 'bootstrap', status: 'running', at: t1 },
+        { name: 'bootstrap', status: 'exited', exitCode: 0, at: t2 },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const downs = triggered.filter((a: any) => a.type === 'container_down');
+      assert.equal(downs.length, 0, 'exit 0 is a clean completion, not a failure');
+    });
+
+    it('still triggers for non-zero exit codes', () => {
+      const t1 = ts(new Date(NOW - 600000));
+      const t2 = ts(NOW);
+      seedContainerSnapshots(db, [
+        { name: 'crasher', status: 'running', at: t1 },
+        { name: 'crasher', status: 'exited', exitCode: 137, at: t2 },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const downs = triggered.filter((a: any) => a.type === 'container_down');
+      assert.equal(downs.length, 1);
     });
   });
 
@@ -211,6 +237,94 @@ describe('evaluateAlerts', () => {
     });
   });
 
+  describe('host_offline', () => {
+    const offlineConfig = { ...alertsConfig, hostOffline: true, hostOfflineMinutes: 15 };
+
+    const seedHost = (hostId: string, lastSeen: string) => {
+      db.prepare(
+        "INSERT OR REPLACE INTO hosts (host_id, first_seen, last_seen) VALUES (?, datetime('now', '-1 day'), datetime(?))"
+      ).run(hostId, lastSeen);
+    };
+
+    it('triggers when a host last_seen is older than the threshold', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000))); // 30 min ago
+
+      const { triggered } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 1);
+      assert.equal(offline[0].hostId, 'proxmox-01');
+      assert.equal(offline[0].target, 'system');
+      assert.ok(offline[0].message.includes('has not reported'));
+    });
+
+    it('does NOT trigger when a host last_seen is within the threshold', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 5 * 60 * 1000))); // 5 min ago — well within 15 min window
+
+      const { triggered } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+
+    it('does NOT trigger when alerts.hostOffline is false', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000)));
+
+      const disabled = { ...offlineConfig, hostOffline: false };
+      const { triggered } = evaluateAlerts(db, { alerts: disabled });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+
+    it('does NOT trigger when hostOfflineMinutes is 0 (kill switch)', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000)));
+
+      const zero = { ...offlineConfig, hostOfflineMinutes: 0 };
+      const { triggered } = evaluateAlerts(db, { alerts: zero });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+
+    it('fires one alert per offline host in a mixed fleet', () => {
+      seedHost('alive', ts(new Date(NOW - 2 * 60 * 1000)));    // 2 min ago — online
+      seedHost('grace', ts(new Date(NOW - 10 * 60 * 1000)));   // 10 min — within grace
+      seedHost('offline-1', ts(new Date(NOW - 30 * 60 * 1000)));
+      seedHost('offline-2', ts(new Date(NOW - 2 * 60 * 60 * 1000))); // 2 hours
+
+      const { triggered } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = triggered.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 2);
+      const ids = offline.map((a: any) => a.hostId).sort();
+      assert.deepEqual(ids, ['offline-1', 'offline-2']);
+    });
+
+    it('resolves when the host reports again', () => {
+      // Seed a host whose last_seen is now fresh, plus a stale host_offline alert.
+      seedHost('proxmox-01', ts(new Date(NOW - 2 * 60 * 1000))); // 2 min ago — fresh
+      seedAlertState(db, [
+        { hostId: 'proxmox-01', type: 'host_offline', target: 'system',
+          triggeredAt: ts(new Date(NOW - 60 * 60 * 1000)),
+          lastNotified: ts(new Date(NOW - 60 * 60 * 1000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = resolved.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 1);
+      assert.ok(offline[0].message.includes('back online'));
+    });
+
+    it('does NOT resolve when the host is still offline', () => {
+      seedHost('proxmox-01', ts(new Date(NOW - 30 * 60 * 1000))); // still stale
+      seedAlertState(db, [
+        { hostId: 'proxmox-01', type: 'host_offline', target: 'system',
+          triggeredAt: ts(new Date(NOW - 60 * 60 * 1000)),
+          lastNotified: ts(new Date(NOW - 60 * 60 * 1000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: offlineConfig });
+      const offline = resolved.filter((a: any) => a.type === 'host_offline');
+      assert.equal(offline.length, 0);
+    });
+  });
+
   describe('resolutions', () => {
     it('resolves container_down when container is running again', () => {
       seedContainerSnapshots(db, [
@@ -252,6 +366,108 @@ describe('evaluateAlerts', () => {
       const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
       assert.equal(resolved.length, 1);
       assert.equal(resolved[0].type, 'high_cpu');
+    });
+
+    describe('stale container auto-resolve', () => {
+      // Mark a host as "still reporting" by setting last_seen to now.
+      // Required for the auto-resolve path after the host-offline guard —
+      // a stale container alert only resolves when the HOST itself is
+      // currently reporting. Otherwise every alert on a dark agent would
+      // silently disappear.
+      const markHostAlive = (hostId: string = 'local') => {
+        db.prepare(
+          "INSERT OR REPLACE INTO hosts (host_id, first_seen, last_seen) VALUES (?, datetime('now', '-1 day'), datetime('now'))"
+        ).run(hostId);
+      };
+
+      // An unhealthy container whose registry row is marked `removed_at`
+      // counts as "gone" — pod was deleted, Docker rm, etc.
+      it('resolves container_unhealthy when the container stops being reported', () => {
+        markHostAlive();
+        const longAgo = ts(new Date(NOW - 30 * 60 * 1000)); // 30 min ago
+        seedContainerSnapshots(db, [
+          { name: 'crashloop', status: 'created', health: 'unhealthy', at: longAgo },
+        ]);
+        markContainerRemoved(db, 'local', 'crashloop', longAgo);
+        seedAlertState(db, [
+          { type: 'container_unhealthy', target: 'crashloop', triggeredAt: longAgo, lastNotified: longAgo },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'container_unhealthy');
+        assert.equal(match.length, 1);
+        assert.ok(match[0].message.includes('no longer reported'), `expected stale message, got: ${match[0].message}`);
+      });
+
+      it('resolves restart_loop when the container stops being reported', () => {
+        markHostAlive();
+        const longAgo = ts(new Date(NOW - 30 * 60 * 1000));
+        seedContainerSnapshots(db, [
+          { name: 'zombie', status: 'exited', at: longAgo },
+        ]);
+        markContainerRemoved(db, 'local', 'zombie', longAgo);
+        seedAlertState(db, [
+          { type: 'restart_loop', target: 'zombie', triggeredAt: longAgo, lastNotified: longAgo },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'restart_loop');
+        assert.equal(match.length, 1);
+      });
+
+      it('does NOT auto-resolve when the container is still being reported', () => {
+        markHostAlive();
+        // Container is still present in the registry (seedContainerSnapshots
+        // auto-upserts). The existing container_unhealthy resolver should
+        // fire (or not) based on the actual health_status.
+        const fresh = ts(new Date(NOW - 5 * 60 * 1000));
+        seedContainerSnapshots(db, [
+          { name: 'alive', status: 'running', health: 'unhealthy', at: fresh },
+        ]);
+        seedAlertState(db, [
+          { type: 'container_unhealthy', target: 'alive', triggeredAt: fresh, lastNotified: fresh },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'container_unhealthy');
+        // Still unhealthy and still being reported → alert stays open.
+        assert.equal(match.length, 0);
+      });
+
+      it('does NOT auto-resolve when the HOST is offline (agent went dark)', () => {
+        // The whole host stopped reporting 30 min ago — mark hosts.last_seen
+        // stale. A container alert on that host must NOT auto-resolve: the
+        // container is still in its last-known "bad" state, and silently
+        // clearing the alert would hide a real failure mode from the user.
+        const longAgo = ts(new Date(NOW - 30 * 60 * 1000));
+        db.prepare(
+          "INSERT OR REPLACE INTO hosts (host_id, first_seen, last_seen) VALUES (?, datetime('now', '-1 day'), ?)"
+        ).run('local', longAgo);
+
+        seedContainerSnapshots(db, [
+          { name: 'offline-container', status: 'running', health: 'unhealthy', at: longAgo },
+        ]);
+        seedAlertState(db, [
+          { type: 'container_unhealthy', target: 'offline-container', triggeredAt: longAgo, lastNotified: longAgo },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        const match = resolved.filter((a: any) => a.type === 'container_unhealthy');
+        assert.equal(match.length, 0, `alert must stay active when the host is offline, got: ${JSON.stringify(match)}`);
+      });
+
+      it('does NOT auto-resolve host-scoped alerts', () => {
+        // high_host_cpu is host-scoped, not container-scoped — it should
+        // never get caught by the container-targeting recency check.
+        // Seed no container_snapshots, no host_snapshots — the host-scoped
+        // resolver will simply fail to match and the alert stays active.
+        seedAlertState(db, [
+          { type: 'high_host_cpu', target: 'proxmox-01', triggeredAt: ts(new Date(NOW - 3600000)), lastNotified: ts(new Date(NOW - 3600000)) },
+        ]);
+
+        const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+        assert.equal(resolved.filter((a: any) => a.type === 'high_host_cpu').length, 0);
+      });
     });
   });
 });
