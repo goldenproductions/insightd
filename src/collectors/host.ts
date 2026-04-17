@@ -10,8 +10,8 @@ interface MemoryInfo {
   totalMb: number;
   usedMb: number;
   availableMb: number;
-  swapTotalMb: number;
-  swapUsedMb: number;
+  swapTotalMb: number | null;
+  swapUsedMb: number | null;
 }
 
 interface LoadAvg {
@@ -28,6 +28,25 @@ interface HostData {
 }
 
 let prevCpuTotals: { active: number; total: number } | null = null;
+
+function parseProcNumber(value: string | undefined): number | null {
+  if (value == null) return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseMeminfoKb(meminfo: string, key: string): number | null {
+  const match = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
+  if (!match) return null;
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function roundMb(kb: number): number {
+  return Math.round(kb / 1024 * 100) / 100;
+}
 
 /**
  * Collect host-level system metrics from /proc.
@@ -53,11 +72,14 @@ function readCpu(procPath: string): number | null {
     const line = stat.split('\n').find(l => l.startsWith('cpu '));
     if (!line) return null;
 
-    const parts = line.trim().split(/\s+/).slice(1).map(Number);
+    const rawParts = line.trim().split(/\s+/).slice(1).map(value => parseProcNumber(value));
+    const parts = rawParts.filter((value): value is number => value != null);
+    if (parts.length < 5 || parts.length !== rawParts.length) return null;
     // user, nice, system, idle, iowait, irq, softirq, steal
-    const idle = parts[3] + (parts[4] || 0);
-    const total = parts.reduce((a, b) => a + b, 0);
+    const idle = parts[3] + parts[4];
+    const total = parts.reduce((sum, value) => sum + value, 0);
     const active = total - idle;
+    if (!Number.isFinite(idle) || !Number.isFinite(total) || !Number.isFinite(active) || active < 0) return null;
 
     if (!prevCpuTotals) {
       prevCpuTotals = { active, total };
@@ -68,7 +90,7 @@ function readCpu(procPath: string): number | null {
     const totalDelta = total - prevCpuTotals.total;
     prevCpuTotals = { active, total };
 
-    if (totalDelta <= 0) return null;
+    if (!Number.isFinite(activeDelta) || !Number.isFinite(totalDelta) || activeDelta < 0 || totalDelta <= 0 || activeDelta > totalDelta) return null;
     return Math.round((activeDelta / totalDelta) * 100 * 100) / 100;
   } catch {
     return null;
@@ -78,22 +100,23 @@ function readCpu(procPath: string): number | null {
 function readMemory(procPath: string): MemoryInfo | null {
   try {
     const meminfo = fs.readFileSync(path.join(procPath, 'meminfo'), 'utf8');
-    const get = (key: string): number => {
-      const match = meminfo.match(new RegExp(`^${key}:\\s+(\\d+)`, 'm'));
-      return match ? parseInt(match[1], 10) : 0;
-    };
+    const totalKb = parseMeminfoKb(meminfo, 'MemTotal');
+    const availableKb = parseMeminfoKb(meminfo, 'MemAvailable');
+    if (totalKb == null || availableKb == null || availableKb > totalKb) return null;
 
-    const totalKb = get('MemTotal');
-    const availableKb = get('MemAvailable');
-    const swapTotalKb = get('SwapTotal');
-    const swapFreeKb = get('SwapFree');
+    const swapTotalKb = parseMeminfoKb(meminfo, 'SwapTotal');
+    const swapFreeKb = parseMeminfoKb(meminfo, 'SwapFree');
+    const swapTotalMb = swapTotalKb == null ? null : roundMb(swapTotalKb);
+    const swapUsedMb = swapTotalKb == null || swapFreeKb == null || swapFreeKb > swapTotalKb
+      ? null
+      : roundMb(swapTotalKb - swapFreeKb);
 
     return {
-      totalMb: Math.round(totalKb / 1024 * 100) / 100,
-      usedMb: Math.round((totalKb - availableKb) / 1024 * 100) / 100,
-      availableMb: Math.round(availableKb / 1024 * 100) / 100,
-      swapTotalMb: Math.round(swapTotalKb / 1024 * 100) / 100,
-      swapUsedMb: Math.round((swapTotalKb - swapFreeKb) / 1024 * 100) / 100,
+      totalMb: roundMb(totalKb),
+      usedMb: roundMb(totalKb - availableKb),
+      availableMb: roundMb(availableKb),
+      swapTotalMb,
+      swapUsedMb,
     };
   } catch {
     return null;
@@ -104,10 +127,15 @@ function readLoadAvg(procPath: string): LoadAvg | null {
   try {
     const content = fs.readFileSync(path.join(procPath, 'loadavg'), 'utf8');
     const parts = content.trim().split(/\s+/);
+    const load1 = parseProcNumber(parts[0]);
+    const load5 = parseProcNumber(parts[1]);
+    const load15 = parseProcNumber(parts[2]);
+    if (load1 == null || load5 == null || load15 == null) return null;
+
     return {
-      load1: parseFloat(parts[0]),
-      load5: parseFloat(parts[1]),
-      load15: parseFloat(parts[2]),
+      load1,
+      load5,
+      load15,
     };
   } catch {
     return null;
@@ -117,9 +145,8 @@ function readLoadAvg(procPath: string): LoadAvg | null {
 function readUptime(procPath: string): number | null {
   try {
     const content = fs.readFileSync(path.join(procPath, 'uptime'), 'utf8');
-    const value = parseFloat(content.trim().split(/\s+/)[0]);
-    // Guard against LXC/Proxmox overflow where /proc/uptime returns negative or absurd values
-    if (!isFinite(value) || value < 0 || value > 315360000) return null; // max ~10 years
+    const value = parseProcNumber(content.trim().split(/\s+/)[0]);
+    if (value == null || value < 0) return null;
     return value;
   } catch {
     return null;

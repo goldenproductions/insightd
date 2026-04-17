@@ -42,7 +42,9 @@ interface ContainerRow {
   health_status: string | null;
   health_check_output: string | null;
   labels: string | null;
+  exit_code: number | null;
   collected_at: string;
+  is_stale: number;
 }
 
 interface DiskRow {
@@ -100,6 +102,7 @@ interface InsightRow {
   severity: string;
   title: string;
   message: string;
+  evidence: string | null;
 }
 
 interface HostMetricsRow {
@@ -291,7 +294,7 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
 
   return {
     ...host,
-    containers: getLatestContainers(db, hostId, showInternal),
+    containers: getLatestContainers(db, hostId, onlineThresholdMinutes, showInternal),
     disk: getLatestDisk(db, hostId),
     alerts: getAlerts(db, true, hostId),
     updates: getLatestUpdates(db, hostId),
@@ -300,18 +303,26 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
   };
 }
 
-function getLatestContainers(db: Database.Database, hostId: string, showInternal: boolean = false): ContainerRow[] {
-  // Only return containers seen in the last 15 minutes — drops "ghost" entries
-  // for containers that were once reported but have since been deleted or
-  // filtered out (e.g. completed K8s Job pods, removed Docker containers).
-  // Historical snapshots stay in the DB for the timeline view; this only
-  // affects the current host detail view.
+function getLatestContainers(db: Database.Database, hostId: string, onlineThresholdMinutes: number, showInternal: boolean = false): ContainerRow[] {
+  // Return the latest snapshot for every container currently present on the
+  // host, per the `containers` registry. Containers whose latest batch no
+  // longer lists them (Docker rm, k8s pod delete, completed Job pods) have
+  // `removed_at` set by `ingestContainers` and are excluded here. Historical
+  // snapshots stay in the DB for the timeline view.
+  //
+  // `is_stale=1` when the host hasn't reported within the offline threshold —
+  // the snapshot below is the last known state, not current truth.
   const rows = db.prepare(`
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
-           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at
+           cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
+           CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+             THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs
+    INNER JOIN containers c
+      ON c.host_id = cs.host_id AND c.container_name = cs.container_name
+    INNER JOIN hosts h ON h.host_id = cs.host_id
     INNER JOIN (
       SELECT host_id, container_name, MAX(collected_at) as max_at
       FROM container_snapshots WHERE host_id = ?
@@ -319,9 +330,9 @@ function getLatestContainers(db: Database.Database, hostId: string, showInternal
     ) latest ON cs.host_id = latest.host_id
       AND cs.container_name = latest.container_name
       AND cs.collected_at = latest.max_at
-    WHERE cs.collected_at > datetime('now', '-15 minutes')
+    WHERE c.host_id = ? AND c.removed_at IS NULL
     ORDER BY cs.container_name
-  `).all(hostId) as ContainerRow[];
+  `).all(onlineThresholdMinutes, hostId, hostId) as ContainerRow[];
   if (showInternal) return rows;
   return rows.filter(r => {
     if (!r.labels) return true;
@@ -389,6 +400,8 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
   const allContainers = db.prepare(`
     SELECT cs.status, cs.labels
     FROM container_snapshots cs
+    INNER JOIN containers c
+      ON c.host_id = cs.host_id AND c.container_name = cs.container_name
     INNER JOIN (
       SELECT host_id as h, container_name as cn, MAX(collected_at) as max_at
       FROM container_snapshots
@@ -396,7 +409,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     ) latest ON cs.host_id = latest.h
       AND cs.container_name = latest.cn
       AND cs.collected_at = latest.max_at
-    WHERE cs.collected_at > datetime('now', '-15 minutes')
+    WHERE c.removed_at IS NULL
   `).all() as ContainerStatusRow[];
   const filtered = showInternal ? allContainers : allContainers.filter(c => {
     if (!c.labels) return true;
@@ -449,15 +462,14 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     groups = groupQueries.getGroups(db, showInternal);
   } catch { /* group queries not available */ }
 
-  // 24h availability per container — only for containers still being reported.
-  // Two-pass to avoid a correlated EXISTS over the snapshot table: first get
-  // the set of (host,name) pairs active in the last 15 min, then aggregate
-  // 24h stats filtered to that set. Joining via a temp table is much cheaper
-  // than re-evaluating EXISTS for every matching row.
+  // 24h availability per container — only for containers still present in
+  // the registry. Two-pass to avoid a correlated EXISTS over the snapshot
+  // table: first get the set of active (host,name) pairs, then aggregate
+  // 24h stats filtered to that set.
   const activePairs = db.prepare(`
-    SELECT DISTINCT host_id, container_name
-    FROM container_snapshots
-    WHERE collected_at > datetime('now', '-15 minutes')
+    SELECT host_id, container_name
+    FROM containers
+    WHERE removed_at IS NULL
   `).all() as Array<{ host_id: string; container_name: string }>;
   const availRows: AvailabilityRow[] = [];
   if (activePairs.length > 0) {
@@ -508,18 +520,17 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     if (!c.labels) return true;
     try { return JSON.parse(c.labels)['insightd.internal'] !== 'true'; } catch { return true; }
   });
+  // Per-container retrospective downtime used to surface here as an acute
+  // "Downtime" row in the dashboard feed. That duplicated the `availability`
+  // insight (same event, same container) in two columns, making recovered
+  // dips look like active problems. The fleet-wide `overallPercent` still
+  // needs the totals, but individual entries now live only in the Insights
+  // feed via getTopInsights + the `had downtime` insight row.
   let totalSnapshots = 0, totalRunning = 0;
-  const downContainers: Array<{ hostId: string; name: string; uptimePercent: number; downMinutes: number }> = [];
   for (const r of availFiltered) {
     totalSnapshots += r.total;
     totalRunning += r.running;
-    const pct = Math.round((r.running / r.total) * 1000) / 10;
-    if (pct < 100) {
-      const downMinutes = Math.round((r.total - r.running) * 5);
-      downContainers.push({ hostId: r.host_id, name: r.container_name, uptimePercent: pct, downMinutes });
-    }
   }
-  downContainers.sort((a, b) => a.uptimePercent - b.uptimePercent);
   const overallAvailability = totalSnapshots > 0 ? Math.round((totalRunning / totalSnapshots) * 1000) / 10 : null;
 
   const result = {
@@ -539,7 +550,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     groups,
     systemHealthScore: getSystemHealthScore(db),
     topInsights: getTopInsights(db),
-    availability: { overallPercent: overallAvailability, downContainers },
+    availability: { overallPercent: overallAvailability },
   };
 
   _dashboardCache.data = result;
@@ -626,7 +637,7 @@ function getSystemHealthScore(db: Database.Database): { score: number; factors: 
 function getTopInsights(db: Database.Database): InsightRow[] {
   try {
     return db.prepare(`
-      SELECT entity_type, entity_id, category, severity, title, message FROM insights
+      SELECT entity_type, entity_id, category, severity, title, message, evidence FROM insights
       ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END
       LIMIT 5
     `).all() as InsightRow[];
@@ -681,16 +692,19 @@ function getContainerAlerts(db: Database.Database, hostId: string, containerName
   `).all(hostId, containerName) as ContainerAlertRow[];
 }
 
-function getLatestContainer(db: Database.Database, hostId: string, containerName: string): ContainerRow | null {
+function getLatestContainer(db: Database.Database, hostId: string, containerName: string, onlineThresholdMinutes: number): ContainerRow | null {
   return (db.prepare(`
     SELECT cs.container_name, cs.container_id, cs.status,
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
-           cs.health_status, cs.health_check_output, cs.labels, cs.collected_at
+           cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
+           CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+             THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs
+    INNER JOIN hosts h ON h.host_id = cs.host_id
     WHERE cs.host_id = ? AND cs.container_name = ?
     ORDER BY cs.collected_at DESC LIMIT 1
-  `).get(hostId, containerName) as ContainerRow | undefined) ?? null;
+  `).get(onlineThresholdMinutes, hostId, containerName) as ContainerRow | undefined) ?? null;
 }
 
 function getContainerId(db: Database.Database, hostId: string, containerName: string): string | null {
@@ -702,12 +716,19 @@ function getContainerId(db: Database.Database, hostId: string, containerName: st
   return row?.container_id || null;
 }
 
+function getHostRuntimeType(db: Database.Database, hostId: string): string {
+  const row = db.prepare('SELECT runtime_type FROM hosts WHERE host_id = ?')
+    .get(hostId) as { runtime_type?: string } | undefined;
+  return row?.runtime_type ?? 'docker';
+}
+
 function getUptimeTimeline(db: Database.Database, hostId: string, days: number): Array<{ name: string; slots: string[]; uptimePercent: number | null }> {
   const rows = db.prepare(`
-    SELECT container_name, status, collected_at
-    FROM container_snapshots
-    WHERE host_id = ? AND collected_at >= datetime('now', '-' || ? || ' days')
-    ORDER BY container_name, collected_at
+    SELECT cs.container_name, cs.status, cs.collected_at
+    FROM container_snapshots cs
+    INNER JOIN containers c ON c.host_id = cs.host_id AND c.container_name = cs.container_name AND c.removed_at IS NULL
+    WHERE cs.host_id = ? AND cs.collected_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY cs.container_name, cs.collected_at
   `).all(hostId, days) as UptimeSnapshotRow[];
 
   const containers: Record<string, UptimeSnapshotRow[]> = {};
@@ -745,9 +766,9 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
   });
 }
 
-function getResourceRankings(db: Database.Database, limit: number): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
+function getResourceRankings(db: Database.Database, limit: number, showInternal: boolean = false): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
   const query = `
-    SELECT cs.host_id, cs.container_name, cs.cpu_percent, cs.memory_mb
+    SELECT cs.host_id, cs.container_name, cs.cpu_percent, cs.memory_mb, cs.labels
     FROM container_snapshots cs
     INNER JOIN (
       SELECT host_id as h, container_name as cn, MAX(collected_at) as max_at
@@ -755,9 +776,17 @@ function getResourceRankings(db: Database.Database, limit: number): { byCpu: Res
     ) latest ON cs.host_id = latest.h AND cs.container_name = latest.cn AND cs.collected_at = latest.max_at
     WHERE cs.status = 'running'
   `;
-  const byCpu = db.prepare(query + ' AND cs.cpu_percent IS NOT NULL ORDER BY cs.cpu_percent DESC LIMIT ?').all(limit) as ResourceRow[];
-  const byMemory = db.prepare(query + ' AND cs.memory_mb IS NOT NULL ORDER BY cs.memory_mb DESC LIMIT ?').all(limit) as ResourceRow[];
-  return { byCpu, byMemory };
+  const rawByCpu = db.prepare(query + ' AND cs.cpu_percent IS NOT NULL ORDER BY cs.cpu_percent DESC LIMIT ?').all(limit * 4) as Array<ResourceRow & { labels: string | null }>;
+  const rawByMemory = db.prepare(query + ' AND cs.memory_mb IS NOT NULL ORDER BY cs.memory_mb DESC LIMIT ?').all(limit * 4) as Array<ResourceRow & { labels: string | null }>;
+  const filter = (rows: Array<ResourceRow & { labels: string | null }>): ResourceRow[] => {
+    const filtered = showInternal ? rows : rows.filter(r => {
+      if (!r.labels) return true;
+      try { return JSON.parse(r.labels)['insightd.internal'] !== 'true'; } catch { return true; }
+    });
+    // Strip labels — callers don't need them in the ranking response.
+    return filtered.slice(0, limit).map(({ labels: _labels, ...rest }) => rest);
+  };
+  return { byCpu: filter(rawByCpu), byMemory: filter(rawByMemory) };
 }
 
 function getTrends(db: Database.Database, hostId: string): { containers: any[]; host: any } {
@@ -1009,4 +1038,4 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };

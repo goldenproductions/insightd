@@ -4,13 +4,13 @@ import type { Finding, Neighbor } from '@/types/api';
 import { timeAgo } from '@/lib/formatters';
 import { DiagnosisCard, severityStyles } from '@/components/DiagnosisCard';
 import { Button } from '@/components/FormField';
+import { splitContainerEntityId } from '@/lib/containers';
 
 export interface LiveSnapshot {
   status?: string | null;
   healthStatus?: string | null;
   cpuPercent?: number | null;
   memoryMb?: number | null;
-  restartCount?: number | null;
 }
 
 export interface FindingPrimaryAction {
@@ -77,16 +77,15 @@ function formatMem(v: number | null | undefined): string {
 }
 
 function neighborLink(entityId: string): string {
-  const parts = entityId.split('/');
-  if (parts.length === 2) {
-    return `/hosts/${encodeURIComponent(parts[0]!)}/containers/${encodeURIComponent(parts[1]!)}`;
+  const split = splitContainerEntityId(entityId);
+  if (split) {
+    return `/hosts/${encodeURIComponent(split.hostId)}/containers/${encodeURIComponent(split.containerName)}`;
   }
   return `/hosts/${encodeURIComponent(entityId)}`;
 }
 
 function neighborLabel(entityId: string): string {
-  const parts = entityId.split('/');
-  return parts.length === 2 ? parts[1]! : entityId;
+  return splitContainerEntityId(entityId)?.containerName ?? entityId;
 }
 
 export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAction, feedback }: Props) {
@@ -113,8 +112,7 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
     liveSnapshot.status != null ||
     liveSnapshot.healthStatus != null ||
     liveSnapshot.cpuPercent != null ||
-    liveSnapshot.memoryMb != null ||
-    liveSnapshot.restartCount != null
+    liveSnapshot.memoryMb != null
   );
 
   const pills = (
@@ -286,9 +284,6 @@ export function FindingCard({ finding, technicalDetails, liveSnapshot, primaryAc
               )}
               {liveSnapshot!.memoryMb != null && (
                 <><span className="text-muted">Memory (now)</span><span>{formatMem(liveSnapshot!.memoryMb)}</span></>
-              )}
-              {liveSnapshot!.restartCount != null && (
-                <><span className="text-muted">Restart count</span><span>{liveSnapshot!.restartCount}</span></>
               )}
             </div>
           )}

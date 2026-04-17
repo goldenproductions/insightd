@@ -8,6 +8,16 @@ interface ContainerSnapshotSeed {
   netRx?: number | null; netTx?: number | null;
   blkRead?: number | null; blkWrite?: number | null;
   health?: string | null; at: string;
+  exitCode?: number | null;
+  // When true, skip upserting into the `containers` registry — use this to
+  // simulate a container that has been removed (Docker rm, k8s pod delete)
+  // but whose historical snapshots are still in the DB.
+  removed?: boolean;
+}
+
+interface ContainerRegistrySeed {
+  hostId?: string; name: string;
+  firstSeen?: string; lastSeen?: string; removedAt?: string | null;
 }
 
 interface HostSnapshotSeed {
@@ -76,13 +86,51 @@ function createTestDb(): Database.Database {
 function seedContainerSnapshots(db: Database.Database, rows: ContainerSnapshotSeed[]): void {
   const insert = db.prepare(`
     INSERT INTO container_snapshots
-    (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, exit_code, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  // Production ingest always pairs snapshot inserts with a registry upsert.
+  // Mirror that here so tests that call seedContainerSnapshots get a live
+  // `containers` row for free — otherwise every query that joins the
+  // registry returns empty. Pass `removed: true` on a seed row to simulate
+  // a container whose last snapshot is frozen but whose registry row is
+  // either absent or marked removed_at.
+  const upsert = db.prepare(`
+    INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
+    VALUES (?, ?, ?, ?, NULL)
+    ON CONFLICT(host_id, container_name) DO UPDATE SET
+      last_seen = MAX(containers.last_seen, excluded.last_seen),
+      first_seen = MIN(containers.first_seen, excluded.first_seen),
+      removed_at = NULL
   `);
   for (const r of rows) {
-    insert.run(r.hostId || 'local', r.name, r.id || 'abc123', r.status || 'running', r.cpu ?? null, r.mem ?? null, r.restarts ?? 0,
-      r.netRx ?? null, r.netTx ?? null, r.blkRead ?? null, r.blkWrite ?? null, r.health ?? null, r.at);
+    const hostId = r.hostId || 'local';
+    insert.run(hostId, r.name, r.id || 'abc123', r.status || 'running', r.cpu ?? null, r.mem ?? null, r.restarts ?? 0,
+      r.netRx ?? null, r.netTx ?? null, r.blkRead ?? null, r.blkWrite ?? null, r.health ?? null, r.exitCode ?? null, r.at);
+    if (!r.removed) {
+      upsert.run(hostId, r.name, r.at, r.at);
+    }
   }
+}
+
+function seedContainers(db: Database.Database, rows: ContainerRegistrySeed[]): void {
+  const insert = db.prepare(`
+    INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(host_id, container_name) DO UPDATE SET
+      first_seen = excluded.first_seen,
+      last_seen = excluded.last_seen,
+      removed_at = excluded.removed_at
+  `);
+  for (const r of rows) {
+    const at = r.lastSeen || r.firstSeen || "datetime('now')";
+    insert.run(r.hostId || 'local', r.name, r.firstSeen || at, r.lastSeen || at, r.removedAt ?? null);
+  }
+}
+
+function markContainerRemoved(db: Database.Database, hostId: string, name: string, removedAt?: string): void {
+  db.prepare("UPDATE containers SET removed_at = ? WHERE host_id = ? AND container_name = ?")
+    .run(removedAt || new Date().toISOString().slice(0, 19).replace('T', ' '), hostId, name);
 }
 
 function seedHostSnapshots(db: Database.Database, rows: HostSnapshotSeed[]): void {
@@ -204,4 +252,4 @@ function seedHealthScores(db: Database.Database, rows: HealthScoreSeed[]): void 
   }
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks, seedServiceGroups, seedGroupMembers, seedBaselines, seedHealthScores };
+module.exports = { createTestDb, seedContainerSnapshots, seedContainers, markContainerRemoved, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks, seedServiceGroups, seedGroupMembers, seedBaselines, seedHealthScores };

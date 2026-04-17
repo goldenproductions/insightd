@@ -61,7 +61,7 @@ export const TimeSeriesChart = memo(function TimeSeriesChart({
   height = 180,
 }: TimeSeriesChartProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const [width, setWidth] = useState(600);
+  const [width, setWidth] = useState(0);
 
   useEffect(() => {
     const el = wrapperRef.current;
@@ -141,12 +141,12 @@ export const TimeSeriesChart = memo(function TimeSeriesChart({
   }, [series, width, height, unit]);
 
   return (
-    <div>
+    <div className="min-w-0">
       {title && (
         <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-secondary">{title}</h3>
       )}
-      <div ref={wrapperRef} className="uplot-wrapper rounded-lg bg-surface">
-        <UplotReact options={options} data={data} />
+      <div ref={wrapperRef} className="uplot-wrapper overflow-hidden rounded-lg bg-surface">
+        {width > 0 && <UplotReact options={options} data={data} />}
       </div>
     </div>
   );
