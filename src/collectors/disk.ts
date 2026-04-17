@@ -1,4 +1,5 @@
 import fs = require('fs');
+import path = require('path');
 import logger = require('../utils/logger');
 
 interface DiskConfig {
@@ -13,48 +14,75 @@ interface DiskResult {
   usedPercent: number;
 }
 
+function decodeMountField(value: string): string {
+  return value.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+}
+
+function isBlockDeviceSource(source: string): boolean {
+  return /^\/dev\/(?:mapper\/\S+|dm-\d+|sd[a-z]+\d*|nvme\d+n\d+(?:p\d+)?|vd[a-z]+\d*|xvd[a-z]+\d*|md\d+|mmcblk\d+(?:p\d+)?|root)$/.test(source);
+}
+
+function getStatPath(hostRoot: string, mountPoint: string): string {
+  if (mountPoint === '/') return hostRoot;
+  return path.join(hostRoot, mountPoint.replace(/^\/+/, ''));
+}
+
+function readMountTargets(mountsPath: string, hostRoot?: string): Array<{ mountPoint: string; statPath: string }> {
+  const mounts = fs.readFileSync(mountsPath, 'utf8');
+  const seen = new Set<string>();
+  const mountsToCheck: Array<{ mountPoint: string; statPath: string }> = [];
+
+  for (const line of mounts.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 2) continue;
+
+    const source = decodeMountField(parts[0]);
+    if (!isBlockDeviceSource(source)) continue;
+
+    const mountPoint = decodeMountField(parts[1]);
+    if (seen.has(mountPoint)) continue;
+    seen.add(mountPoint);
+
+    mountsToCheck.push({
+      mountPoint,
+      statPath: hostRoot ? getStatPath(hostRoot, mountPoint) : mountPoint,
+    });
+  }
+
+  return mountsToCheck;
+}
+
 /**
  * Collect disk usage stats.
- * Returns plain data array — no DB writes.
+ * Returns plain data array â€” no DB writes.
  */
 function collectDisk(config: DiskConfig): DiskResult[] {
   const hostRoot = config.hostRoot;
-  const useHostMount = fs.existsSync(hostRoot) && fs.statSync(hostRoot).isDirectory();
 
-  const mountsToCheck: Array<{ mountPoint: string; statPath: string }> = [];
+  let useHostMount = false;
+  try {
+    useHostMount = fs.existsSync(hostRoot) && fs.statSync(hostRoot).isDirectory();
+  } catch {
+    useHostMount = false;
+  }
 
-  if (useHostMount) {
-    mountsToCheck.push({ mountPoint: '/', statPath: hostRoot });
-
-    try {
-      const hostStat = fs.statfsSync(hostRoot);
-      const hostFsId = `${hostStat.type}:${hostStat.blocks}`;
-
-      for (const dir of ['home', 'mnt', 'opt', 'var', 'srv']) {
-        const fullPath = `${hostRoot}/${dir}`;
-        try {
-          if (!fs.statSync(fullPath).isDirectory()) continue;
-          const dirStat = fs.statfsSync(fullPath);
-          const dirFsId = `${dirStat.type}:${dirStat.blocks}`;
-          if (dirFsId !== hostFsId) {
-            mountsToCheck.push({ mountPoint: `/${dir}`, statPath: fullPath });
-          }
-        } catch { /* dir doesn't exist or can't stat */ }
-      }
-    } catch { /* can't stat host root */ }
-  } else {
-    logger.warn('disk', 'Host root not mounted — reading container filesystem instead');
-    const mounts = fs.readFileSync('/proc/mounts', 'utf8');
-    const seen = new Set<string>();
-
-    for (const line of mounts.split('\n')) {
-      if (!/^\/dev\/(sd|nvme|vd|xvd|loop|mapper\/)/.test(line)) continue;
-      const parts = line.split(/\s+/);
-      const mountPoint = parts[1];
-      if (seen.has(mountPoint)) continue;
-      seen.add(mountPoint);
-      mountsToCheck.push({ mountPoint, statPath: mountPoint });
+  let mountsToCheck: Array<{ mountPoint: string; statPath: string }> = [];
+  try {
+    mountsToCheck = useHostMount
+      ? readMountTargets(path.join(hostRoot, 'proc', 'mounts'), hostRoot)
+      : readMountTargets('/proc/mounts');
+  } catch (err) {
+    if (!useHostMount) {
+      logger.warn('disk', `Failed to read /proc/mounts: ${(err as Error).message}`);
+      return [];
     }
+
+    logger.warn('disk', `Failed to read host mounts from ${path.join(hostRoot, 'proc', 'mounts')}: ${(err as Error).message}`);
+    return [];
+  }
+
+  if (!useHostMount) {
+    logger.warn('disk', 'Host root not mounted â€” reading container filesystem instead');
   }
 
   const results: DiskResult[] = [];
@@ -69,7 +97,7 @@ function collectDisk(config: DiskConfig): DiskResult[] {
 
       results.push({ mountPoint, totalGb, usedGb, usedPercent });
 
-      const warn = usedPercent >= (config.diskWarnPercent || 85) ? ' \u26a0\ufe0f' : '';
+      const warn = usedPercent >= (config.diskWarnPercent ?? 85) ? ' ⚠️' : '';
       logger.info('disk', `${mountPoint}: ${usedGb}/${totalGb}GB (${usedPercent}%)${warn}`);
     } catch (err) {
       logger.warn('disk', `Failed to stat ${mountPoint}: ${(err as Error).message}`);
