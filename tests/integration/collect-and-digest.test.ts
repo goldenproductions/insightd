@@ -1,6 +1,7 @@
 import { describe, it, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 const fs = require('fs');
+const path = require('path');
 const { createTestDb } = require('../helpers/db');
 const { createMockDocker, suppressConsole } = require('../helpers/mocks');
 
@@ -22,12 +23,18 @@ describe('integration: collect and digest', () => {
   it('full pipeline: collect → ingest → build digest → render', async () => {
     const docker = createMockDocker();
     const config = { hostRoot: '/host', diskWarnPercent: 85 };
+    const originalReadFileSync = fs.readFileSync.bind(fs);
+    const hostMountsPath = path.join(config.hostRoot, 'proc', 'mounts');
 
     mock.method(fs, 'existsSync', (p: string) => p === '/host');
     mock.method(fs, 'statSync', () => ({ isDirectory: () => true }));
     mock.method(fs, 'statfsSync', () => ({
       bsize: 4096, blocks: 25000000, bavail: 12500000, type: 0xEF53,
     }));
+    mock.method(fs, 'readFileSync', (p: string, ...args: unknown[]) => {
+      if (p === hostMountsPath) return '/dev/sda1 / ext4 rw 0 0\n';
+      return originalReadFileSync(p, ...(args as []));
+    });
 
     // Load modules fresh
     delete require.cache[require.resolve('../../src/collectors/containers')];
