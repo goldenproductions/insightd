@@ -10,7 +10,7 @@ import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
 import { fmtPercent, fmtUptime, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
 import { getAnalogy, findBaseline } from '@/lib/analogies';
-import { isInternalContainer, getContainerNamespace, getContainerDisplayName } from '@/lib/containers';
+import { isInternalContainer, getContainerNamespace, getContainerDisplayName, deriveContainerDisplayStatus } from '@/lib/containers';
 import { useNamespaceFilter } from '@/hooks/useNamespaceFilter';
 import { NamespaceFilterBar } from '@/components/NamespaceFilterBar';
 
@@ -89,24 +89,31 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
   );
 
   const { namespaces, hidden, filtered, toggle, showAll, isKubernetes } = useNamespaceFilter(data.containers, hostId);
-  const running = filtered.filter(c => c.status === 'running').length;
-  const total = filtered.length;
+  // Successfully-completed one-shots (exit_code === 0) aren't meant to keep
+  // running, so excluding them from the running/total count keeps the "X/Y
+  // running" readout meaningful.
+  const activeForCount = filtered.filter(c => !(c.status === 'exited' && c.exit_code === 0));
+  const running = activeForCount.filter(c => c.status === 'running').length;
+  const total = activeForCount.length;
   const totalUnfiltered = data.containers.length;
 
   const containerCols: Column<ContainerSnapshot>[] = [
     { header: 'Name', accessor: r => {
       const ns = getContainerNamespace(r.container_name);
       const display = getContainerDisplayName(r.container_name);
+      const derived = deriveContainerDisplayStatus(r.status, r.exit_code);
       return (
         <span className={`flex items-center gap-2 ${r.is_stale ? 'opacity-60' : ''}`}>
-          <StatusDot status={r.is_stale ? 'stale' : r.status} />
+          <StatusDot status={r.is_stale ? 'stale' : derived.dot} />
           {ns ? <span><span className="text-muted">{ns}/</span>{display}</span> : r.container_name}
         </span>
       );
     } },
-    { header: 'Status', accessor: r => r.is_stale
-      ? <Badge text="stale" color="gray" />
-      : <Badge text={r.status} color={r.status === 'running' ? 'green' : 'red'} /> },
+    { header: 'Status', accessor: r => {
+      if (r.is_stale) return <Badge text="stale" color="gray" />;
+      const derived = deriveContainerDisplayStatus(r.status, r.exit_code);
+      return <Badge text={derived.label} color={derived.color} />;
+    } },
     { header: 'CPU', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{fmtPercent(r.cpu_percent)}</span> },
     { header: 'Memory', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-'}</span> },
     { header: 'Restarts', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.restart_count}</span> },

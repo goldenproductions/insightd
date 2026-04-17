@@ -84,6 +84,32 @@ describe('evaluateAlerts', () => {
       const downs = triggered.filter((a: any) => a.type === 'container_down');
       assert.equal(downs.length, 0);
     });
+
+    it('does not trigger for successfully-completed one-shot containers (exit_code=0)', () => {
+      const t1 = ts(new Date(NOW - 600000));
+      const t2 = ts(NOW);
+      seedContainerSnapshots(db, [
+        { name: 'bootstrap', status: 'running', at: t1 },
+        { name: 'bootstrap', status: 'exited', exitCode: 0, at: t2 },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const downs = triggered.filter((a: any) => a.type === 'container_down');
+      assert.equal(downs.length, 0, 'exit 0 is a clean completion, not a failure');
+    });
+
+    it('still triggers for non-zero exit codes', () => {
+      const t1 = ts(new Date(NOW - 600000));
+      const t2 = ts(NOW);
+      seedContainerSnapshots(db, [
+        { name: 'crasher', status: 'running', at: t1 },
+        { name: 'crasher', status: 'exited', exitCode: 137, at: t2 },
+      ]);
+
+      const { triggered } = evaluateAlerts(db, { alerts: alertsConfig });
+      const downs = triggered.filter((a: any) => a.type === 'container_down');
+      assert.equal(downs.length, 1);
+    });
   });
 
   describe('high_cpu', () => {

@@ -13,7 +13,7 @@ import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
 import { fmtDurationMs, timeAgo } from '@/lib/formatters';
-import { sumPositiveRestartDeltas } from '@/lib/containers';
+import { sumPositiveRestartDeltas, deriveContainerDisplayStatus } from '@/lib/containers';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
 import { CardSkeleton } from '@/components/Skeleton';
@@ -341,7 +341,7 @@ export function ContainerDetailPage() {
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
-            <StatusDot status={data.is_stale ? 'stale' : data.status} size="lg" />
+            <StatusDot status={data.is_stale ? 'stale' : deriveContainerDisplayStatus(data.status, data.exit_code).dot} size="lg" />
             <h1 className="truncate text-xl font-bold text-fg">{data.container_name}</h1>
           </div>
           {isAuthenticated && !data.is_stale && (
@@ -375,7 +375,7 @@ export function ContainerDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             {data.is_stale
               ? <Badge text="stale" color="gray" />
-              : <Badge text={data.status} color={data.status === 'running' ? 'green' : 'red'} />}
+              : (() => { const d = deriveContainerDisplayStatus(data.status, data.exit_code); return <Badge text={d.label} color={d.color} />; })()}
             {!data.is_stale && healthPillText && (
               <span title="Docker runs a health check command inside the container. This is a probe signal — the service may still be responding.">
                 <Badge text={healthPillText} color={healthPillColor} />

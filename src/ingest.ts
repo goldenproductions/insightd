@@ -9,6 +9,7 @@ interface ContainerSnapshot {
   memoryMb?: number | null;
   restartCount: number;
   labels?: Record<string, string> | string | null;
+  exitCode?: number | null;
 }
 
 interface DiskResult {
@@ -38,8 +39,8 @@ interface UpdateResult {
  */
 function ingestContainers(db: Database.Database, hostId: string, containers: ContainerSnapshot[]): void {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, labels, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, labels, exit_code, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const upsertRegistry = db.prepare(`
     INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
@@ -58,7 +59,7 @@ function ingestContainers(db: Database.Database, hostId: string, containers: Con
     const batchAt = (db.prepare("SELECT datetime('now') AS t").get() as { t: string }).t;
     for (const c of items) {
       const labels = typeof c.labels === 'object' ? JSON.stringify(c.labels) : (c.labels || null);
-      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount, labels, batchAt);
+      insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount, labels, c.exitCode ?? null, batchAt);
       upsertRegistry.run(hostId, c.name, batchAt, batchAt);
     }
     markRemoved.run(batchAt, hostId, batchAt);

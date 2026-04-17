@@ -14,6 +14,7 @@ interface ContainerData {
   networkTxBytes?: number | null;
   blkioReadBytes?: number | null;
   blkioWriteBytes?: number | null;
+  exitCode?: number | null;
 }
 
 // In-memory restart tracking state
@@ -63,6 +64,12 @@ async function collectContainers(docker: Dockerode): Promise<ContainerData[]> {
 
       // Health status
       p.healthStatus = info.State?.Health?.Status || null;
+
+      // Exit code for non-running containers — distinguishes completed (0)
+      // one-shots from actual failures.
+      if (!info.State?.Running && typeof info.State?.ExitCode === 'number') {
+        p.exitCode = info.State.ExitCode;
+      }
 
       // Update state
       restartState.set(p.name, {
