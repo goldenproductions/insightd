@@ -1,4 +1,26 @@
 /**
+ * Derive how a container's status should be presented in the UI, accounting
+ * for exit codes. A one-shot container that exited with code 0 is "completed"
+ * (grey), not a failure (red). Non-zero exits stay "exited" (red). Running
+ * containers are unchanged.
+ */
+export function deriveContainerDisplayStatus(
+  status: string,
+  exitCode: number | null | undefined,
+): { label: string; color: 'green' | 'red' | 'gray' | 'yellow'; dot: string } {
+  if (status === 'running') return { label: 'running', color: 'green', dot: 'running' };
+  if (status === 'exited' && exitCode === 0) {
+    return { label: 'completed', color: 'gray', dot: 'none' };
+  }
+  if (status === 'exited' && exitCode != null && exitCode !== 0) {
+    return { label: `exited (${exitCode})`, color: 'red', dot: 'exited' };
+  }
+  // Fallback: status string as-is. Covers 'created', 'paused', 'restarting',
+  // or a pre-v28 snapshot with no exit_code.
+  return { label: status, color: 'red', dot: status };
+}
+
+/**
  * Check if a container is insightd infrastructure based on its labels.
  */
 export function isInternalContainer(labels: string | null | undefined): boolean {

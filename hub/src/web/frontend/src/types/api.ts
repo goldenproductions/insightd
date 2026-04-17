@@ -145,6 +145,10 @@ export interface ContainerSnapshot {
   health_status: string | null;
   health_check_output: string | null;
   labels: string | null;
+  // Exit code for non-running containers. Null for running containers or
+  // when the runtime didn't report one. 0 = completed successfully, non-zero
+  // = failed.
+  exit_code: number | null;
   collected_at: string;
   // 1 when the owning host hasn't reported within the offline threshold —
   // the snapshot is last-known state, not current truth.

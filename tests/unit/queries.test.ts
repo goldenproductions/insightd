@@ -22,7 +22,7 @@ describe('queries', () => {
     it('returns status ok with schema version', () => {
       const health = getHealth(db);
       assert.equal(health.status, 'ok');
-      assert.equal(health.schemaVersion, 27);
+      assert.equal(health.schemaVersion, 28);
       assert.equal(typeof health.uptime, 'number');
     });
   });
@@ -93,6 +93,20 @@ describe('queries', () => {
 
       const containers = getLatestContainers(db, 'h1', 15);
       assert.equal(containers[0].is_stale, 0);
+    });
+
+    it('exposes exit_code so completed oneshots can be distinguished from failures', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'bootstrap', status: 'exited', exitCode: 0, at: recent },
+        { hostId: 'h1', name: 'crasher', status: 'exited', exitCode: 137, at: recent },
+      ]);
+
+      const containers = getLatestContainers(db, 'h1', 15);
+      const bootstrap = containers.find((c: any) => c.container_name === 'bootstrap');
+      const crasher = containers.find((c: any) => c.container_name === 'crasher');
+      assert.equal(bootstrap.exit_code, 0);
+      assert.equal(crasher.exit_code, 137);
     });
   });
 

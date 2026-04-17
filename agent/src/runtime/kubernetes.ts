@@ -25,7 +25,7 @@ interface K8sMeta {
 interface K8sContainerState {
   running?: { startedAt?: string };
   waiting?: { reason?: string; message?: string };
-  terminated?: { reason?: string; message?: string };
+  terminated?: { reason?: string; message?: string; exitCode?: number };
 }
 
 interface K8sContainerStatus {
@@ -329,6 +329,9 @@ export class KubernetesRuntime implements ContainerRuntime {
           healthCheckOutput = (terminated.message ? `${terminated.reason}: ${terminated.message}` : terminated.reason).slice(0, 500);
         }
 
+        // K8s terminated state includes exitCode — surface it so the hub can
+        // tell completed (0) from failed (non-zero) pods.
+        const termCode = (cs.state?.terminated ?? cs.lastState?.terminated)?.exitCode;
         containers.push({
           name,
           id,
@@ -338,6 +341,7 @@ export class KubernetesRuntime implements ContainerRuntime {
           healthCheckOutput,
           labels: { ...podLabels }, // container-level labels don't exist in K8s
           image: cs.image,
+          exitCode: typeof termCode === 'number' ? termCode : null,
         });
       }
     }
