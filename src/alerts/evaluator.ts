@@ -21,6 +21,8 @@ interface AlertsConfig {
   cpuPercent: number;
   memoryMb: number;
   diskPercent: number;
+  hostOffline?: boolean;
+  hostOfflineMinutes?: number;
   endpointDown?: boolean;
   endpointFailureThreshold?: number;
   cooldownMinutes: number;
@@ -91,6 +93,13 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
     triggered.push(...checkDiskFull(db, alerts.diskPercent));
   }
 
+  // Host offline — fires when an agent stops reporting for longer than the
+  // configured window. Queries the `hosts` table directly (authoritative
+  // last_seen), not host_snapshots which can be pruned by retention.
+  if (alerts.hostOffline && (alerts.hostOfflineMinutes || 0) > 0) {
+    triggered.push(...checkHostOffline(db, alerts.hostOfflineMinutes || 15));
+  }
+
   // HTTP endpoints — hub-level checks
   if (alerts.endpointDown !== false) {
     triggered.push(...checkEndpointDown(db, alerts.endpointFailureThreshold || 3));
@@ -110,13 +119,15 @@ function checkContainerDown(db: Database.Database, hostId: string): AlertItem[] 
 
   for (const { container_name } of containers) {
     const rows = db.prepare(`
-      SELECT status, collected_at FROM container_snapshots
+      SELECT status, exit_code, collected_at FROM container_snapshots
       WHERE host_id = ? AND container_name = ?
       ORDER BY collected_at DESC LIMIT 2
-    `).all(hostId, container_name) as { status: string; collected_at: string }[];
+    `).all(hostId, container_name) as { status: string; exit_code: number | null; collected_at: string }[];
 
     if (rows.length < 2) continue;
     const [latest, previous] = rows;
+    // Successfully-completed one-shots (exited with code 0) aren't failures.
+    if (latest.status === 'exited' && latest.exit_code === 0) continue;
     if ((latest.status === 'exited' || latest.status === 'dead') && previous.status === 'running') {
       alerts.push({
         type: 'container_down',
@@ -218,6 +229,28 @@ function checkDiskFull(db: Database.Database, threshold: number): AlertItem[] {
     }));
 }
 
+/**
+ * Fire host_offline for any host whose agent hasn't reported in
+ * `thresholdMinutes`. Queries the `hosts` table directly so the check
+ * keeps working for hosts whose snapshot rows have aged out of retention.
+ */
+function checkHostOffline(db: Database.Database, thresholdMinutes: number): AlertItem[] {
+  const rows = db.prepare(
+    "SELECT host_id, last_seen, " +
+    " CAST((strftime('%s','now') - strftime('%s', last_seen)) / 60 AS INTEGER) AS offline_minutes " +
+    "FROM hosts WHERE last_seen < datetime('now', ?)"
+  ).all(`-${thresholdMinutes} minutes`) as Array<{ host_id: string; last_seen: string; offline_minutes: number }>;
+
+  return rows.map(r => ({
+    type: 'host_offline',
+    hostId: r.host_id,
+    target: 'system',
+    message: `Host "${r.host_id}" has not reported in ${r.offline_minutes} minutes (last seen ${r.last_seen})`,
+    value: r.offline_minutes,
+    threshold: thresholdMinutes,
+  }));
+}
+
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {
   let getEndpoints: any, getLastNChecks: any;
   try {
@@ -246,13 +279,76 @@ function checkEndpointDown(db: Database.Database, failureThreshold: number): Ale
   return alerts;
 }
 
+// Alert types whose target is a container name. Host-scoped and endpoint
+// alerts are excluded — their "stale" semantics are different (a host that
+// stops reporting has its own offline signal, and endpoints are always
+// polled by the hub).
+const CONTAINER_ALERT_TYPES = new Set<string>([
+  'container_down',
+  'restart_loop',
+  'high_cpu',
+  'high_memory',
+  'container_unhealthy',
+]);
+
+// Generous window for "is the agent itself still reporting?" — used as a
+// safety guard before auto-resolving container alerts on vanished targets.
+// If the whole agent went dark every container looks removed, and we want
+// the host-offline situation to stay visible instead.
+const HOST_REPORTING_MINUTES = 15;
+
 function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): AlertItem[] {
   const resolved: AlertItem[] = [];
   const activeAlerts = db.prepare(
     'SELECT id, host_id, alert_type, target, triggered_at FROM alert_state WHERE resolved_at IS NULL'
   ).all() as { id: number; host_id: string; alert_type: string; target: string; triggered_at: string }[];
 
+  const containerRemovedStmt = db.prepare(
+    'SELECT removed_at FROM containers WHERE host_id = ? AND container_name = ?'
+  );
+  const hostReportingStmt = db.prepare(
+    "SELECT 1 FROM hosts WHERE host_id = ? AND last_seen >= datetime('now', ?) LIMIT 1"
+  );
+
+  // Per-cycle cache of "is this host still reporting?" — one row lookup per
+  // unique host rather than per alert.
+  const hostReporting = new Map<string, boolean>();
+  const isHostReporting = (hostId: string): boolean => {
+    const cached = hostReporting.get(hostId);
+    if (cached !== undefined) return cached;
+    const row = hostReportingStmt.get(hostId, `-${HOST_REPORTING_MINUTES} minutes`);
+    const reporting = !!row;
+    hostReporting.set(hostId, reporting);
+    return reporting;
+  };
+
   for (const alert of activeAlerts) {
+    // Before running the type-specific resolver, auto-resolve any
+    // container-scoped alert whose target has been removed (Docker rm,
+    // k8s pod delete, completed Job pod). The `containers` registry is
+    // the source of truth: `removed_at IS NOT NULL`, or no row at all,
+    // means the container is no longer present.
+    //
+    // CRITICAL: only apply the stale auto-resolve path when the host
+    // itself is still reporting. If the whole agent went dark, we leave
+    // container alerts in their current state so the host-offline
+    // situation stays visible instead of being masked by mass resolutions.
+    if (CONTAINER_ALERT_TYPES.has(alert.alert_type) && isHostReporting(alert.host_id)) {
+      const row = containerRemovedStmt.get(alert.host_id, alert.target) as
+        { removed_at: string | null } | undefined;
+      if (!row || row.removed_at !== null) {
+        resolved.push({
+          type: alert.alert_type,
+          hostId: alert.host_id,
+          target: alert.target,
+          message: `Container "${alert.target}" on ${alert.host_id} is no longer reported by the agent (auto-resolved)`,
+          triggeredAt: alert.triggered_at,
+          isResolution: true,
+        });
+        continue;
+      }
+    }
+
     let isResolved = false;
 
     if (alert.alert_type === 'container_down') {
@@ -286,6 +382,12 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
       } catch {
         // http-monitor module not available
       }
+    } else if (alert.alert_type === 'host_offline') {
+      const windowMinutes = alertsConfig.hostOfflineMinutes || 15;
+      const row = db.prepare(
+        "SELECT 1 FROM hosts WHERE host_id = ? AND last_seen >= datetime('now', ?) LIMIT 1"
+      ).get(alert.host_id, `-${windowMinutes} minutes`);
+      isResolved = !!row;
     }
 
     if (isResolved) {
@@ -310,6 +412,7 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'high_cpu': return `Container "${target}"${on} CPU back to normal`;
     case 'high_memory': return `Container "${target}"${on} memory back to normal`;
     case 'disk_full': return `Disk "${target}"${on} usage back to normal`;
+    case 'host_offline': return `Host "${hostId}" is back online`;
     case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
     default: return `Alert resolved for ${target}${on}`;
   }

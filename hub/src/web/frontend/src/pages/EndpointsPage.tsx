@@ -22,7 +22,7 @@ export function EndpointsPage() {
       header: 'Name',
       accessor: r => {
         const isUp = r.lastCheck ? r.lastCheck.is_up : null;
-        const status = isUp === null ? 'none' : isUp ? 'running' : 'exited';
+        const status = isUp === null ? 'none' : isUp ? 'up' : 'down';
         return <span className="flex items-center gap-2"><StatusDot status={status} /> {r.name}</span>;
       },
     },

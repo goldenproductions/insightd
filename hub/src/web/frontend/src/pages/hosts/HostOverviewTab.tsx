@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { HostDetail, TimelineEntry, ContainerSnapshot, BaselineRow } from '@/types/api';
+import { useState, useMemo } from 'react';
+import type { HostDetail, HostMetricsSnapshot, TimelineEntry, ContainerSnapshot, BaselineRow } from '@/types/api';
 import { StatCard, StatsGrid } from '@/components/StatCard';
 import { Card } from '@/components/Card';
 import { DataTable, type Column } from '@/components/DataTable';
@@ -7,9 +7,60 @@ import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { LinkButton } from '@/components/FormField';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
+import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
 import { fmtPercent, fmtUptime, fmtBytesPerSec, fmtCelsius } from '@/lib/formatters';
 import { getAnalogy, findBaseline } from '@/lib/analogies';
-import { isInternalContainer } from '@/lib/containers';
+import { isInternalContainer, getContainerNamespace, getContainerDisplayName, deriveContainerDisplayStatus } from '@/lib/containers';
+import { useNamespaceFilter } from '@/hooks/useNamespaceFilter';
+import { NamespaceFilterBar } from '@/components/NamespaceFilterBar';
+
+interface HostChartDataset {
+  timestamps: number[];
+  cpu: (number | null)[];
+  memoryPct: (number | null)[];
+  load1: (number | null)[];
+  load5: (number | null)[];
+  load15: (number | null)[];
+  netRx: (number | null)[];
+  netTx: (number | null)[];
+  diskRead: (number | null)[];
+  diskWrite: (number | null)[];
+  hasCpu: boolean;
+  hasMemory: boolean;
+  hasLoad: boolean;
+  hasNetwork: boolean;
+  hasDisk: boolean;
+}
+
+function buildHostChartData(history: HostMetricsSnapshot[]): HostChartDataset {
+  const timestamps = history.map((h) =>
+    Math.floor(new Date(h.collected_at.includes('T') ? h.collected_at : h.collected_at.replace(' ', 'T') + 'Z').getTime() / 1000),
+  );
+  const cpu = history.map((h) => h.cpu_percent);
+  const memoryPct = history.map((h) =>
+    h.memory_total_mb && h.memory_total_mb > 0 && h.memory_used_mb != null
+      ? (h.memory_used_mb / h.memory_total_mb) * 100
+      : null,
+  );
+  const load1 = history.map((h) => h.load_1);
+  const load5 = history.map((h) => h.load_5);
+  const load15 = history.map((h) => h.load_15);
+  const netRx = history.map((h) => h.net_rx_bytes_per_sec);
+  const netTx = history.map((h) => h.net_tx_bytes_per_sec);
+  const diskRead = history.map((h) => h.disk_read_bytes_per_sec);
+  const diskWrite = history.map((h) => h.disk_write_bytes_per_sec);
+
+  const any = (xs: (number | null)[]) => xs.some((v) => v != null);
+
+  return {
+    timestamps, cpu, memoryPct, load1, load5, load15, netRx, netTx, diskRead, diskWrite,
+    hasCpu: any(cpu),
+    hasMemory: any(memoryPct),
+    hasLoad: any(load1),
+    hasNetwork: any(netRx) || any(netTx),
+    hasDisk: any(diskRead) || any(diskWrite),
+  };
+}
 
 interface Props {
   data: HostDetail;
@@ -22,48 +73,79 @@ interface Props {
   runAction: (containerName: string, action: string, needsConfirm?: boolean) => void;
   removeContainer: (containerName: string) => Promise<boolean>;
   baselines?: BaselineRow[];
+  metricsHistory?: HostMetricsSnapshot[];
 }
 
-export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthenticated, actionLoading, runAction, removeContainer, baselines }: Props) {
+export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthenticated, actionLoading, runAction, removeContainer, baselines, metricsHistory }: Props) {
   const hm = data.hostMetrics;
   const [showExtended, setShowExtended] = useState(false);
   // Don't show analogies until baselines have loaded (prevents flicker from static→baseline switch)
   const ready = baselines !== undefined;
   const bl = (metric: string) => findBaseline(baselines, metric);
 
+  const chartData = useMemo(
+    () => metricsHistory && metricsHistory.length > 0 ? buildHostChartData(metricsHistory) : null,
+    [metricsHistory],
+  );
+
+  const { namespaces, hidden, filtered, toggle, showAll, isKubernetes } = useNamespaceFilter(data.containers, hostId);
+  // Successfully-completed one-shots (exit_code === 0) aren't meant to keep
+  // running, so excluding them from the running/total count keeps the "X/Y
+  // running" readout meaningful.
+  const activeForCount = filtered.filter(c => !(c.status === 'exited' && c.exit_code === 0));
+  const running = activeForCount.filter(c => c.status === 'running').length;
+  const total = activeForCount.length;
+  const totalUnfiltered = data.containers.length;
+
   const containerCols: Column<ContainerSnapshot>[] = [
-    { header: 'Name', accessor: r => <span className="flex items-center gap-2"><StatusDot status={r.status} />{r.container_name}</span> },
-    { header: 'Status', accessor: r => <Badge text={r.status} color={r.status === 'running' ? 'green' : 'red'} /> },
-    { header: 'CPU', accessor: r => fmtPercent(r.cpu_percent) },
-    { header: 'Memory', accessor: r => r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-' },
-    { header: 'Restarts', accessor: r => r.restart_count },
+    { header: 'Name', accessor: r => {
+      const ns = getContainerNamespace(r.container_name);
+      const display = getContainerDisplayName(r.container_name);
+      const derived = deriveContainerDisplayStatus(r.status, r.exit_code);
+      return (
+        <span className={`flex items-center gap-2 ${r.is_stale ? 'opacity-60' : ''}`}>
+          <StatusDot status={r.is_stale ? 'stale' : derived.dot} />
+          {ns ? <span><span className="text-muted">{ns}/</span>{display}</span> : r.container_name}
+        </span>
+      );
+    } },
+    { header: 'Status', accessor: r => {
+      if (r.is_stale) return <Badge text="stale" color="gray" />;
+      const derived = deriveContainerDisplayStatus(r.status, r.exit_code);
+      return <Badge text={derived.label} color={derived.color} />;
+    } },
+    { header: 'CPU', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{fmtPercent(r.cpu_percent)}</span> },
+    { header: 'Memory', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-'}</span> },
+    { header: 'Restarts', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.restart_count}</span> },
     ...(isAuthenticated ? [{
       header: '',
       accessor: (r: ContainerSnapshot) => {
         const isInternal = isInternalContainer(r.labels);
         if (isInternal) return null;
+        // Actions require a live agent — hide them when data is stale.
+        if (r.is_stale) return null;
         const loading = actionLoading?.startsWith(`${r.container_name}:`);
         return (
           <span className="flex gap-1" onClick={e => e.stopPropagation()}>
             {r.status === 'running' ? (
               <>
                 <button onClick={() => runAction(r.container_name, 'restart')} disabled={!!loading}
-                  className="rounded px-2 py-0.5 text-xs text-slate-300 hover:bg-slate-700 disabled:opacity-50">
+                  className="rounded px-2 py-0.5 text-xs text-muted hover:bg-surface-hover disabled:opacity-50">
                   {loading && actionLoading === `${r.container_name}:restart` ? '...' : 'Restart'}
                 </button>
                 <button onClick={() => runAction(r.container_name, 'stop')} disabled={!!loading}
-                  className="rounded px-2 py-0.5 text-xs text-danger hover:bg-slate-700 disabled:opacity-50">
+                  className="rounded px-2 py-0.5 text-xs text-danger hover:bg-surface-hover disabled:opacity-50">
                   {loading && actionLoading === `${r.container_name}:stop` ? '...' : 'Stop'}
                 </button>
               </>
             ) : (
               <>
                 <button onClick={() => runAction(r.container_name, 'start')} disabled={!!loading}
-                  className="rounded px-2 py-0.5 text-xs text-success hover:bg-slate-700 disabled:opacity-50">
+                  className="rounded px-2 py-0.5 text-xs text-success hover:bg-surface-hover disabled:opacity-50">
                   {loading && actionLoading === `${r.container_name}:start` ? '...' : 'Start'}
                 </button>
                 <button onClick={() => removeContainer(r.container_name)} disabled={!!loading}
-                  className="rounded px-2 py-0.5 text-xs text-danger hover:bg-slate-700 disabled:opacity-50">
+                  className="rounded px-2 py-0.5 text-xs text-danger hover:bg-surface-hover disabled:opacity-50">
                   {loading && actionLoading === `${r.container_name}:remove` ? '...' : 'Remove'}
                 </button>
               </>
@@ -120,19 +202,98 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
         </>
       )}
 
-      {timeline && timeline.length > 0 && (
-        <Card title="Uptime (7 days)">
-          <UptimeTimeline containers={timeline} hostId={hostId} />
+      {chartData && (chartData.hasCpu || chartData.hasMemory || chartData.hasLoad || chartData.hasNetwork || chartData.hasDisk) && (
+        <Card title="Metrics (last 24h)">
+          <div className="grid gap-5 lg:grid-cols-2">
+            {chartData.hasCpu && (
+              <TimeSeriesChart
+                title="CPU"
+                timestamps={chartData.timestamps}
+                unit="%"
+                series={[{
+                  label: 'cpu',
+                  color: 'var(--color-success)',
+                  values: chartData.cpu,
+                  formatValue: (v) => `${v.toFixed(1)}%`,
+                }] satisfies ChartSeries[]}
+              />
+            )}
+            {chartData.hasMemory && (
+              <TimeSeriesChart
+                title="Memory"
+                timestamps={chartData.timestamps}
+                unit="%"
+                series={[{
+                  label: 'memory',
+                  color: 'var(--color-info)',
+                  values: chartData.memoryPct,
+                  formatValue: (v) => `${v.toFixed(1)}%`,
+                }] satisfies ChartSeries[]}
+              />
+            )}
+            {chartData.hasLoad && (
+              <TimeSeriesChart
+                title="Load Average"
+                timestamps={chartData.timestamps}
+                series={[
+                  { label: '1m', color: 'var(--color-warning)', values: chartData.load1, formatValue: (v) => v.toFixed(2) },
+                  { label: '5m', color: 'var(--color-info)', values: chartData.load5, formatValue: (v) => v.toFixed(2) },
+                  { label: '15m', color: '#a855f7', values: chartData.load15, formatValue: (v) => v.toFixed(2) },
+                ] satisfies ChartSeries[]}
+              />
+            )}
+            {chartData.hasNetwork && (
+              <TimeSeriesChart
+                title="Network I/O"
+                timestamps={chartData.timestamps}
+                series={[
+                  { label: 'rx', color: '#0ea5e9', values: chartData.netRx, formatValue: fmtBytesPerSec },
+                  { label: 'tx', color: '#f59e0b', values: chartData.netTx, formatValue: fmtBytesPerSec },
+                ] satisfies ChartSeries[]}
+              />
+            )}
+            {chartData.hasDisk && (
+              <TimeSeriesChart
+                title="Disk I/O"
+                timestamps={chartData.timestamps}
+                series={[
+                  { label: 'read', color: '#a855f7', values: chartData.diskRead, formatValue: fmtBytesPerSec },
+                  { label: 'write', color: '#ef4444', values: chartData.diskWrite, formatValue: fmtBytesPerSec },
+                ] satisfies ChartSeries[]}
+              />
+            )}
+          </div>
         </Card>
       )}
 
-      <Card title="Containers">
-        <div className="mb-3 flex justify-end">
-          <LinkButton to={`/hosts/${hid}/logs`} variant="ghost" size="sm">Split Logs</LinkButton>
-        </div>
+      {isKubernetes && (
+        <NamespaceFilterBar
+          namespaces={namespaces}
+          hidden={hidden}
+          onToggle={toggle}
+          onShowAll={showAll}
+          totalCount={totalUnfiltered}
+          visibleCount={total}
+        />
+      )}
+
+      {timeline && timeline.length > 0 && (
+        <Card title="Uptime (7 days)">
+          <UptimeTimeline
+            containers={hidden.size > 0 ? timeline.filter(t => { const ns = getContainerNamespace(t.name); return !ns || !hidden.has(ns); }) : timeline}
+            hostId={hostId}
+          />
+        </Card>
+      )}
+
+      <Card title="Containers" actions={<LinkButton to={`/hosts/${hid}/logs`} variant="ghost" size="sm">Split Logs</LinkButton>}>
+        <p className="mb-3 text-xs text-muted">
+          {running}/{total} running
+          {hidden.size > 0 && <span> (filtered from {totalUnfiltered})</span>}
+        </p>
         <DataTable
           columns={containerCols}
-          data={data.containers}
+          data={filtered}
           onRowClick={r => navigate(`/hosts/${hid}/containers/${encodeURIComponent(r.container_name)}`)}
           emptyText="No containers"
         />
