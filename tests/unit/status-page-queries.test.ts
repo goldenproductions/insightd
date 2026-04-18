@@ -5,13 +5,14 @@ const {
   seedContainerSnapshots,
   seedServiceGroups,
   seedGroupMembers,
+  seedHostSnapshots,
   seedHttpEndpoints,
   seedHttpChecks,
   seedAlertState,
 } = require('../helpers/db');
 const { ts } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
-const { getStackHistory, getEndpointHistory, getRecentIncidents } = require('../../hub/src/web/status-page-queries');
+const { getStackHistory, getHostHistory, getHostsForStatus, getEndpointHistory, getRecentIncidents } = require('../../hub/src/web/status-page-queries');
 
 function dayOffset(n: number): Date {
   return new Date(Date.now() - n * 86400000);
@@ -124,6 +125,43 @@ describe('status-page queries', () => {
       const d = hist.find((x: any) => x.date === todayUTC(10));
       assert.ok(d);
       assert.equal(d!.status, 'operational');
+    });
+  });
+
+  describe('getHostHistory', () => {
+    it('treats each hour with any sample as one hour up', () => {
+      const now = new Date();
+      // Seed 12 distinct hours today on host 'h1'.
+      for (let h = 0; h < 12; h++) {
+        const d = new Date(now);
+        d.setUTCHours(h, 30, 0, 0);
+        seedHostSnapshots(db, [{ hostId: 'h1', cpu: 5, at: ts(d) }]);
+      }
+      const hist = getHostHistory(db, 'h1');
+      const today = hist[hist.length - 1];
+      assert.equal(today.uptimePercent, 50); // 12 hours of 24
+      assert.equal(today.status, 'outage');  // <90%
+    });
+
+    it('returns no_data when the host never reported', () => {
+      const hist = getHostHistory(db, 'ghost');
+      assert.ok(hist.every((d: any) => d.status === 'no_data'));
+    });
+  });
+
+  describe('getHostsForStatus', () => {
+    it('returns hosts with correct online flag based on offline threshold', () => {
+      const now = new Date();
+      // Insert two hosts directly: one recently seen, one stale.
+      db.prepare('INSERT INTO hosts (host_id, last_seen) VALUES (?, ?)').run('fresh', ts(new Date(now.getTime() - 60_000)));
+      db.prepare('INSERT INTO hosts (host_id, last_seen) VALUES (?, ?)').run('stale', ts(new Date(now.getTime() - 60 * 60_000)));
+      const list = getHostsForStatus(db, 15);
+      assert.equal(list.length, 2);
+      const fresh = list.find((h: any) => h.host_id === 'fresh');
+      const stale = list.find((h: any) => h.host_id === 'stale');
+      assert.equal(fresh!.is_online, true);
+      assert.equal(stale!.is_online, false);
+      assert.equal(fresh!.history.length, 30);
     });
   });
 

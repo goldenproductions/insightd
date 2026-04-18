@@ -1010,52 +1010,86 @@ function handlePublicStatus(req: HandlerReq, res: ServerResponse, db: Database.D
 
   const statusQueries = require('./status-page-queries');
 
+  // Section visibility toggles. Default to true if the setting row is absent.
+  const isOn = (key: string): boolean => {
+    const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
+    return row ? row.value === 'true' : true;
+  };
+  const showStacks = isOn('statusPage.showStacks');
+  const showHosts = isOn('statusPage.showHosts');
+  const showEndpoints = isOn('statusPage.showEndpoints');
+  const showIncidents = isOn('statusPage.showIncidents');
+
   // Service groups with members + 30-day history
   let groups: any[] = [];
-  try {
-    const groupQueries = require('./group-queries');
-    groups = groupQueries.getGroups(db, false).map((g: any) => {
-      const detail = groupQueries.getGroupDetail(db, g.id);
-      return {
-        id: g.id, name: g.name, icon: g.icon, color: g.color,
-        running_count: g.running_count, member_count: g.member_count,
-        members: (detail?.members || []).map((m: any) => ({
-          container_name: m.container_name, host_id: m.host_id, status: m.status,
-        })),
-        history: statusQueries.getStackHistory(db, g.id),
-      };
-    });
-  } catch { /* no groups */ }
+  if (showStacks) {
+    try {
+      const groupQueries = require('./group-queries');
+      groups = groupQueries.getGroups(db, false).map((g: any) => {
+        const detail = groupQueries.getGroupDetail(db, g.id);
+        return {
+          id: g.id, name: g.name, icon: g.icon, color: g.color,
+          running_count: g.running_count, member_count: g.member_count,
+          members: (detail?.members || []).map((m: any) => ({
+            container_name: m.container_name, host_id: m.host_id, status: m.status,
+          })),
+          history: statusQueries.getStackHistory(db, g.id),
+        };
+      });
+    } catch { /* no groups */ }
+  }
+
+  // Hosts + 30-day history
+  let hosts: any[] = [];
+  if (showHosts) {
+    try {
+      hosts = statusQueries.getHostsForStatus(db, offlineThresholdMinutes());
+    } catch { /* no hosts */ }
+  }
 
   // HTTP endpoints + 30-day history
   let endpoints: any[] = [];
-  try {
-    const httpQueries = require('../http-monitor/queries');
-    const summaries = httpQueries.getEndpointsSummary(db);
-    endpoints = summaries.map((e: any) => ({
-      id: e.id,
-      name: e.name, url: e.url,
-      is_up: e.lastCheck ? e.lastCheck.is_up === 1 : null,
-      uptimePercent24h: e.uptimePercent24h,
-      avgResponseMs: e.avgResponseMs,
-      lastCheckedAt: e.lastCheck?.checked_at || null,
-      history: statusQueries.getEndpointHistory(db, e.id),
-    }));
-  } catch { /* no endpoints */ }
+  if (showEndpoints) {
+    try {
+      const httpQueries = require('../http-monitor/queries');
+      const summaries = httpQueries.getEndpointsSummary(db);
+      endpoints = summaries.map((e: any) => ({
+        id: e.id,
+        name: e.name, url: e.url,
+        is_up: e.lastCheck ? e.lastCheck.is_up === 1 : null,
+        uptimePercent24h: e.uptimePercent24h,
+        avgResponseMs: e.avgResponseMs,
+        lastCheckedAt: e.lastCheck?.checked_at || null,
+        history: statusQueries.getEndpointHistory(db, e.id),
+      }));
+    } catch { /* no endpoints */ }
+  }
 
   // Past incidents (resolved alerts in the last 30 days)
   let incidents: any[] = [];
-  try {
-    incidents = statusQueries.getRecentIncidents(db);
-  } catch { /* no alerts table yet */ }
+  if (showIncidents) {
+    try {
+      incidents = statusQueries.getRecentIncidents(db);
+    } catch { /* no alerts table yet */ }
+  }
 
-  // Overall status
-  const allContainersOk = groups.every((g: any) => g.running_count === g.member_count);
-  const allEndpointsOk = endpoints.every((e: any) => e.is_up !== false);
-  const anyData = groups.length > 0 || endpoints.length > 0;
-  const overallStatus = !anyData ? 'operational' : (allContainersOk && allEndpointsOk) ? 'operational' : 'degraded';
+  // Overall status — only consider visible sections so a hidden section can't
+  // drag the badge into "degraded".
+  const allContainersOk = !showStacks || groups.every((g: any) => g.running_count === g.member_count);
+  const allHostsOk = !showHosts || hosts.every((h: any) => h.is_online);
+  const allEndpointsOk = !showEndpoints || endpoints.every((e: any) => e.is_up !== false);
+  const anyData = groups.length > 0 || hosts.length > 0 || endpoints.length > 0;
+  const overallStatus = !anyData ? 'operational'
+    : (allContainersOk && allHostsOk && allEndpointsOk) ? 'operational' : 'degraded';
 
-  return { title, overallStatus, groups, endpoints, incidents, updatedAt: new Date().toISOString() };
+  // Only include sections that are toggled on, so the frontend can distinguish
+  // "section disabled" from "section enabled but empty" (e.g. zero incidents).
+  const payload: Record<string, any> = { title, overallStatus, updatedAt: new Date().toISOString() };
+  if (showStacks) payload.groups = groups;
+  if (showHosts) payload.hosts = hosts;
+  if (showEndpoints) payload.endpoints = endpoints;
+  if (showIncidents) payload.incidents = incidents;
+  return payload;
 }
 
 /** Extract an opaque audit identifier from the request's auth header. */

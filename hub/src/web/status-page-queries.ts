@@ -102,6 +102,49 @@ export function getStackHistory(db: Database.Database, groupId: number): DayStat
   return fillDays(rows);
 }
 
+/** 30-day daily uptime for one host. A day is "up" in proportion to how many
+ * of its 24 hours produced any sample (raw snapshot or rollup). */
+export function getHostHistory(db: Database.Database, hostId: string): DayStatus[] {
+  const rows = db.prepare(`
+    SELECT day, COUNT(*) AS up, 24 AS total FROM (
+      SELECT DISTINCT substr(collected_at, 1, 13) AS hour, substr(collected_at, 1, 10) AS day
+      FROM host_snapshots
+      WHERE host_id = ? AND collected_at >= date('now', '-${HISTORY_DAYS} days')
+      UNION
+      SELECT DISTINCT substr(bucket, 1, 13) AS hour, substr(bucket, 1, 10) AS day
+      FROM host_rollups
+      WHERE host_id = ? AND bucket >= date('now', '-${HISTORY_DAYS} days')
+    )
+    GROUP BY day
+  `).all(hostId, hostId) as DayCountRow[];
+
+  return fillDays(rows);
+}
+
+export interface PublicHost {
+  host_id: string;
+  is_online: boolean;
+  last_seen: string | null;
+  history: DayStatus[];
+}
+
+/** Hosts known to the hub, with online status + 30-day uptime. */
+export function getHostsForStatus(db: Database.Database, offlineMinutes: number): PublicHost[] {
+  const rows = db.prepare(`
+    SELECT host_id, last_seen,
+           CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now') THEN 1 ELSE 0 END AS is_online
+    FROM hosts
+    ORDER BY host_id
+  `).all(offlineMinutes) as { host_id: string; last_seen: string | null; is_online: number }[];
+
+  return rows.map(r => ({
+    host_id: r.host_id,
+    is_online: r.is_online === 1,
+    last_seen: r.last_seen,
+    history: getHostHistory(db, r.host_id),
+  }));
+}
+
 /** 30-day daily uptime for one HTTP endpoint. */
 export function getEndpointHistory(db: Database.Database, endpointId: number): DayStatus[] {
   const rows = db.prepare(`

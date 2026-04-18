@@ -60,7 +60,7 @@ export function StatusPage() {
         <Legend />
 
         {/* Stacks */}
-        {data.groups.length > 0 && (
+        {data.groups && data.groups.length > 0 && (
           <Section title="Stacks">
             {data.groups.map(g => (
               <HistoryRow
@@ -74,8 +74,23 @@ export function StatusPage() {
           </Section>
         )}
 
+        {/* Hosts */}
+        {data.hosts && data.hosts.length > 0 && (
+          <Section title="Hosts">
+            {data.hosts.map(h => (
+              <HistoryRow
+                key={`h-${h.host_id}`}
+                name={h.host_id}
+                meta={h.is_online ? 'online' : 'offline'}
+                metaOk={h.is_online}
+                history={h.history}
+              />
+            ))}
+          </Section>
+        )}
+
         {/* Endpoints */}
-        {data.endpoints.length > 0 && (
+        {data.endpoints && data.endpoints.length > 0 && (
           <Section title="Endpoints">
             {data.endpoints.map(e => (
               <HistoryRow
@@ -90,9 +105,11 @@ export function StatusPage() {
         )}
 
         {/* Past incidents */}
-        <Section title="Past incidents" subtitle="Last 30 days">
-          <IncidentsList incidents={data.incidents} />
-        </Section>
+        {data.incidents && (
+          <Section title="Past incidents" subtitle="Last 30 days">
+            <IncidentsList incidents={data.incidents} />
+          </Section>
+        )}
 
         {/* Footer */}
         <div className="text-center text-xs text-muted">

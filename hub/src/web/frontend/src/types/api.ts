@@ -305,18 +305,27 @@ export interface PublicIncident {
   durationMinutes: number;
 }
 
+export interface PublicHost {
+  host_id: string;
+  is_online: boolean;
+  last_seen: string | null;
+  history: DayStatus[];
+}
+
 export interface PublicStatus {
   title: string;
   overallStatus: 'operational' | 'degraded' | 'outage';
-  groups: { id: number; name: string; icon: string | null; color: string | null;
+  // Section arrays are present only when their `statusPage.show*` toggle is on.
+  groups?: { id: number; name: string; icon: string | null; color: string | null;
     members: { container_name: string; host_id: string; status: string | null }[];
     running_count: number; member_count: number;
     history: DayStatus[] }[];
-  endpoints: { id: number; name: string; url: string; is_up: boolean | null;
+  hosts?: PublicHost[];
+  endpoints?: { id: number; name: string; url: string; is_up: boolean | null;
     uptimePercent24h: number | null; avgResponseMs: number | null;
     lastCheckedAt: string | null;
     history: DayStatus[] }[];
-  incidents: PublicIncident[];
+  incidents?: PublicIncident[];
   updatedAt: string;
 }
 
