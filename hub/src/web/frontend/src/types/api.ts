@@ -286,15 +286,37 @@ export interface ContainerAvailability {
 }
 
 // Public Status Page
+export type DayStatusKind = 'operational' | 'degraded' | 'outage' | 'no_data';
+
+export interface DayStatus {
+  date: string; // YYYY-MM-DD UTC
+  uptimePercent: number | null;
+  status: DayStatusKind;
+}
+
+export interface PublicIncident {
+  id: number;
+  alert_type: string;
+  target: string;
+  host_id: string;
+  message: string | null;
+  triggered_at: string;
+  resolved_at: string;
+  durationMinutes: number;
+}
+
 export interface PublicStatus {
   title: string;
   overallStatus: 'operational' | 'degraded' | 'outage';
   groups: { id: number; name: string; icon: string | null; color: string | null;
     members: { container_name: string; host_id: string; status: string | null }[];
-    running_count: number; member_count: number }[];
-  endpoints: { name: string; url: string; is_up: boolean | null;
+    running_count: number; member_count: number;
+    history: DayStatus[] }[];
+  endpoints: { id: number; name: string; url: string; is_up: boolean | null;
     uptimePercent24h: number | null; avgResponseMs: number | null;
-    lastCheckedAt: string | null }[];
+    lastCheckedAt: string | null;
+    history: DayStatus[] }[];
+  incidents: PublicIncident[];
   updatedAt: string;
 }
 

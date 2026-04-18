@@ -1008,7 +1008,9 @@ function handlePublicStatus(req: HandlerReq, res: ServerResponse, db: Database.D
   const titleRow = db.prepare("SELECT value FROM settings WHERE key = 'statusPage.title'").get() as { value: string } | undefined;
   const title = titleRow?.value || 'System Status';
 
-  // Service groups with members
+  const statusQueries = require('./status-page-queries');
+
+  // Service groups with members + 30-day history
   let groups: any[] = [];
   try {
     const groupQueries = require('./group-queries');
@@ -1020,23 +1022,32 @@ function handlePublicStatus(req: HandlerReq, res: ServerResponse, db: Database.D
         members: (detail?.members || []).map((m: any) => ({
           container_name: m.container_name, host_id: m.host_id, status: m.status,
         })),
+        history: statusQueries.getStackHistory(db, g.id),
       };
     });
   } catch { /* no groups */ }
 
-  // HTTP endpoints
+  // HTTP endpoints + 30-day history
   let endpoints: any[] = [];
   try {
     const httpQueries = require('../http-monitor/queries');
     const summaries = httpQueries.getEndpointsSummary(db);
     endpoints = summaries.map((e: any) => ({
+      id: e.id,
       name: e.name, url: e.url,
       is_up: e.lastCheck ? e.lastCheck.is_up === 1 : null,
       uptimePercent24h: e.uptimePercent24h,
       avgResponseMs: e.avgResponseMs,
       lastCheckedAt: e.lastCheck?.checked_at || null,
+      history: statusQueries.getEndpointHistory(db, e.id),
     }));
   } catch { /* no endpoints */ }
+
+  // Past incidents (resolved alerts in the last 30 days)
+  let incidents: any[] = [];
+  try {
+    incidents = statusQueries.getRecentIncidents(db);
+  } catch { /* no alerts table yet */ }
 
   // Overall status
   const allContainersOk = groups.every((g: any) => g.running_count === g.member_count);
@@ -1044,7 +1055,7 @@ function handlePublicStatus(req: HandlerReq, res: ServerResponse, db: Database.D
   const anyData = groups.length > 0 || endpoints.length > 0;
   const overallStatus = !anyData ? 'operational' : (allContainersOk && allEndpointsOk) ? 'operational' : 'degraded';
 
-  return { title, overallStatus, groups, endpoints, updatedAt: new Date().toISOString() };
+  return { title, overallStatus, groups, endpoints, incidents, updatedAt: new Date().toISOString() };
 }
 
 /** Extract an opaque audit identifier from the request's auth header. */
