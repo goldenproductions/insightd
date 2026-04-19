@@ -1,12 +1,12 @@
 import type { DashboardData } from '@/types/api';
 import { HeroStatCard, type PillColor } from './HeroStatCard';
 
-function availabilityPill(pct: number | null): { text: string; color: PillColor } | undefined {
+function uptimePill(pct: number | null): { text: string; color: PillColor } | undefined {
   if (pct == null) return undefined;
-  if (pct >= 99.5) return { text: '💚 Thriving', color: 'green' };
-  if (pct >= 99) return { text: '💛 Coping', color: 'yellow' };
-  if (pct >= 95) return { text: '🧡 Struggling', color: 'yellow' };
-  return { text: '❤️ Life support', color: 'red' };
+  if (pct >= 99.5) return { text: 'Stable', color: 'green' };
+  if (pct >= 99) return { text: 'Recovering', color: 'yellow' };
+  if (pct >= 95) return { text: 'Degraded', color: 'yellow' };
+  return { text: 'Critical', color: 'red' };
 }
 
 function formatRelative(iso: string): string {
@@ -25,14 +25,11 @@ function formatRelative(iso: string): string {
 export function StatsRow({ data }: { data: DashboardData }) {
   const pct = data.availability.overallPercent;
   const uptimeValue = pct != null ? `${pct}%` : '—';
-  const uptimePill = availabilityPill(pct);
 
   const activeAlerts = data.activeAlerts;
-  const incidentsValue = activeAlerts;
-  const incidentsPill: { text: string; color: PillColor } | undefined = activeAlerts > 0
+  const incidentsPill: { text: string; color: PillColor } = activeAlerts > 0
     ? { text: `${activeAlerts} open`, color: 'red' }
     : { text: 'all clear', color: 'green' };
-
   const firstAlert = data.activeAlertsList[0];
   const incidentsSub = firstAlert
     ? <>{firstAlert.target} &middot; {formatRelative(firstAlert.triggered_at)}</>
@@ -43,12 +40,12 @@ export function StatsRow({ data }: { data: DashboardData }) {
       <HeroStatCard
         title="Uptime"
         value={uptimeValue}
-        pill={uptimePill}
+        pill={uptimePill(pct)}
         sub={pct != null ? 'Last 24h' : 'No data yet'}
       />
       <HeroStatCard
         title="Incidents"
-        value={incidentsValue}
+        value={activeAlerts}
         pill={incidentsPill}
         sub={incidentsSub}
         to={activeAlerts > 0 ? '/alerts' : undefined}

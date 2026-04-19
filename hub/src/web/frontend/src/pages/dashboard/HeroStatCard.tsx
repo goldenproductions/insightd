@@ -19,7 +19,7 @@ export function HeroStatCard({ title, value, pill, sub, to }: HeroStatCardProps)
         <h3 className="text-xs font-semibold uppercase tracking-wide text-secondary">{title}</h3>
         {pill && <Badge text={pill.text} color={pill.color} />}
       </div>
-      <div className="mt-2 text-[26px] font-bold leading-tight tabular-nums tracking-tight text-fg">
+      <div className="mt-2 text-2xl font-bold leading-tight tabular-nums tracking-tight text-fg">
         {value}
       </div>
       {sub && <div className="mt-1 text-xs text-muted">{sub}</div>}

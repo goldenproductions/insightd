@@ -33,7 +33,7 @@ export function DashboardStacks({ groups }: { groups: ServiceGroupSummary[] }) {
               <div className="mt-3 grid grid-cols-3 gap-2 text-center">
                 <Metric label="Running" value={`${g.running_count}/${g.member_count}`} />
                 <Metric label="CPU" value={g.total_cpu != null ? `${Math.round(g.total_cpu)}%` : '—'} />
-                <Metric label="Mem" value={g.total_memory != null ? `${Math.round(g.total_memory)}` : '—'} />
+                <Metric label="Mem" value={g.total_memory != null ? `${Math.round(g.total_memory)} MB` : '—'} />
               </div>
             </Link>
           );
