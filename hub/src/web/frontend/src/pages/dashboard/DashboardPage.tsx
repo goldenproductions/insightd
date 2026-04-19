@@ -11,7 +11,9 @@ import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { queryKeys } from '@/lib/queryKeys';
 import { getAnalogy, type MetricType } from '@/lib/analogies';
 import { StatusRow } from './StatusRow';
+import { StatsRow } from './StatsRow';
 import { FeedCard } from './FeedCard';
+import { DashboardStacks } from './DashboardStacks';
 
 export function DashboardPage() {
   const { showInternal } = useShowInternal();
@@ -65,17 +67,28 @@ export function DashboardPage() {
         <StatusRow data={data} />
       </div>
 
-      {/* Feed cards — 24px from summary unit, 16px between peer cards */}
-      <div id="needs-attention" className="scroll-mt-4">
-        <FeedCard className="mt-6" title="Needs Attention" items={acuteItems} />
+      <div className="mt-6">
+        <StatsRow data={data} />
       </div>
-      <FeedCard
-        className={acuteItems.length > 0 ? 'mt-4' : 'mt-6'}
-        title="Insights"
-        subtitle="Trends and predictions worth knowing"
-        items={insightItems}
-        viewAllHref="/insights"
-      />
+
+      {/* Feed cards — side-by-side at lg+, stacked below */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <div id="needs-attention" className="scroll-mt-4">
+          <FeedCard title="Needs Attention" items={acuteItems} />
+        </div>
+        <FeedCard
+          title="Insights"
+          subtitle="Trends and predictions worth knowing"
+          items={insightItems}
+          viewAllHref="/insights"
+        />
+      </div>
+
+      {data.groups.length > 0 && (
+        <div className="mt-4">
+          <DashboardStacks groups={data.groups} />
+        </div>
+      )}
 
       {/* Peripheral footer */}
       <div className="mt-6">
@@ -216,22 +229,22 @@ function HealthHero({ systemHealthScore, availability, concernCount }: { systemH
   };
 
   return (
-    <div className="py-2">
-      <div className="flex items-start gap-5">
-        {systemHealthScore && <HealthBadge score={systemHealthScore.score} size="lg" />}
+    <div className="py-1">
+      <div className="flex items-center gap-3">
+        {systemHealthScore && <HealthBadge score={systemHealthScore.score} size="sm" />}
         <div className="min-w-0 flex-1">
           {concernCount > 0 ? (
             <button
               type="button"
               onClick={scrollToNeedsAttention}
-              className="rounded text-left text-xl font-semibold text-warning transition-opacity hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+              className="rounded text-left text-lg font-bold text-warning transition-opacity hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
             >
               {stateLabel}
             </button>
           ) : (
-            <div className="text-xl font-semibold text-fg">{stateLabel}</div>
+            <div className="text-lg font-bold text-fg">{stateLabel}</div>
           )}
-          <div className={`mt-0.5 text-sm ${availColor}`}>
+          <div className={`mt-0.5 text-xs ${availColor}`}>
             {availText}
           </div>
           {systemHealthScore && (
