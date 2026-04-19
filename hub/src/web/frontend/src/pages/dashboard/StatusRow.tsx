@@ -28,7 +28,7 @@ export function StatusRow({ data }: { data: DashboardData }) {
       <StatusItem label="Alerts" value={data.activeAlerts} to="/alerts"
         color={data.activeAlerts > 0 ? 'var(--color-danger)' : 'var(--color-success)'} />
       <Dot />
-      <StatusItem label="Disk" value={data.diskWarnings} to="/hosts"
+      <StatusItem label="Disk warnings" value={data.diskWarnings} to="/hosts"
         color={data.diskWarnings > 0 ? 'var(--color-warning)' : 'var(--color-success)'} />
       <Dot />
       <StatusItem label="Updates" value={data.updatesAvailable} to="/updates"

@@ -1,0 +1,1 @@
+import{i as e}from"./api-CXqkJEZx.js";import{n as t}from"./chunk-QFMPRPBF-CU_oPolb.js";var n=e();function r({to:e,label:r}){return(0,n.jsxs)(t,{to:e,className:`text-sm text-info hover:underline`,children:[`← `,r]})}export{r as t};

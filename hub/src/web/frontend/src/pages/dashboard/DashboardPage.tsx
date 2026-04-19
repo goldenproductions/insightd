@@ -62,7 +62,7 @@ export function DashboardPage() {
   return (
     <div className="animate-fade-in">
       {/* Hero + StatusRow form a summary unit — tight 16px gap */}
-      <HealthHero systemHealthScore={data.systemHealthScore} availability={data.availability} concernCount={concernCount} />
+      <HealthHero systemHealthScore={data.systemHealthScore} concernCount={concernCount} />
       <div className="mt-4">
         <StatusRow data={data} />
       </div>
@@ -120,7 +120,7 @@ function formatUptime(seconds: number): string {
 function DashboardFooter({ lastUpdatedAt, isFetching, health }: { lastUpdatedAt: number; isFetching: boolean; health: HealthData | undefined }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    const t = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(t);
   }, []);
 
@@ -198,7 +198,7 @@ function Chevron({ expanded, className = '' }: { expanded: boolean; className?: 
   );
 }
 
-function HealthHero({ systemHealthScore, availability, concernCount }: { systemHealthScore: DashboardData['systemHealthScore']; availability: DashboardData['availability']; concernCount: number }) {
+function HealthHero({ systemHealthScore, concernCount }: { systemHealthScore: DashboardData['systemHealthScore']; concernCount: number }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const expanded = searchParams.get('hero') === 'expanded';
   const setExpanded = (next: boolean) => {
@@ -214,14 +214,6 @@ function HealthHero({ systemHealthScore, availability, concernCount }: { systemH
   const stateLabel = concernCount === 0
     ? 'All clear'
     : `${concernCount} item${concernCount === 1 ? '' : 's'} need${concernCount === 1 ? 's' : ''} attention`;
-
-  const availText = availability.overallPercent != null
-    ? `${availability.overallPercent}% availability over the last 24h`
-    : 'Availability unavailable';
-  const availColor = availability.overallPercent == null ? 'text-muted'
-    : availability.overallPercent >= 99 ? 'text-success'
-    : availability.overallPercent >= 95 ? 'text-warning'
-    : 'text-danger';
 
   const scrollToNeedsAttention = () => {
     const el = document.getElementById('needs-attention');
@@ -244,9 +236,6 @@ function HealthHero({ systemHealthScore, availability, concernCount }: { systemH
           ) : (
             <div className="text-lg font-bold text-fg">{stateLabel}</div>
           )}
-          <div className={`mt-0.5 text-xs ${availColor}`}>
-            {availText}
-          </div>
           {systemHealthScore && (
             <button
               type="button"
