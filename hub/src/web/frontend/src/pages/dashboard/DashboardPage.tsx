@@ -10,10 +10,12 @@ import { useFeedItems } from '@/hooks/useFeedItems';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { queryKeys } from '@/lib/queryKeys';
 import { getAnalogy, type MetricType } from '@/lib/analogies';
+import { Topbar } from '@/components/Topbar';
 import { StatusRow } from './StatusRow';
 import { StatsRow } from './StatsRow';
 import { FeedCard } from './FeedCard';
 import { DashboardStacks } from './DashboardStacks';
+import { RecentActivity } from './RecentActivity';
 
 export function DashboardPage() {
   const { showInternal } = useShowInternal();
@@ -61,11 +63,10 @@ export function DashboardPage() {
 
   return (
     <div className="animate-fade-in">
-      {/* Hero + StatusRow form a summary unit — tight 16px gap */}
-      <HealthHero systemHealthScore={data.systemHealthScore} concernCount={concernCount} />
-      <div className="mt-4">
-        <StatusRow data={data} />
-      </div>
+      <Topbar leftContent={<HealthHeroSummary systemHealthScore={data.systemHealthScore} concernCount={concernCount} />} />
+      {data.systemHealthScore && <HealthHeroBreakdown systemHealthScore={data.systemHealthScore} />}
+
+      <StatusRow data={data} />
 
       <div className="mt-6">
         <StatsRow data={data} />
@@ -74,19 +75,31 @@ export function DashboardPage() {
       {/* Feed cards — side-by-side at lg+, stacked below */}
       <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <div id="needs-attention" className="scroll-mt-4">
-          <FeedCard title="Needs Attention" items={acuteItems} />
+          <FeedCard
+            title="Needs Attention"
+            items={acuteItems}
+            emptyMessage="Nothing needs attention. All clear."
+          />
         </div>
         <FeedCard
           title="Insights"
           subtitle="Trends and predictions worth knowing"
           items={insightItems}
           viewAllHref="/insights"
+          emptyMessage="No new insights right now."
         />
       </div>
 
-      {data.groups.length > 0 && (
-        <div className="mt-4">
+      {/* Stacks + Recent activity — side-by-side at lg+, stacked below.
+          When there are no stacks, Recent activity stretches full-width. */}
+      {data.groups.length > 0 ? (
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
           <DashboardStacks groups={data.groups} />
+          <RecentActivity items={data.recentActivity ?? []} />
+        </div>
+      ) : (
+        <div className="mt-4">
+          <RecentActivity items={data.recentActivity ?? []} />
         </div>
       )}
 
@@ -198,7 +211,8 @@ function Chevron({ expanded, className = '' }: { expanded: boolean; className?: 
   );
 }
 
-function HealthHero({ systemHealthScore, concernCount }: { systemHealthScore: DashboardData['systemHealthScore']; concernCount: number }) {
+// Hero `expanded` state lives in the URL so deep links and refreshes preserve it.
+function useHeroExpanded(): [boolean, (next: boolean) => void] {
   const [searchParams, setSearchParams] = useSearchParams();
   const expanded = searchParams.get('hero') === 'expanded';
   const setExpanded = (next: boolean) => {
@@ -209,7 +223,11 @@ function HealthHero({ systemHealthScore, concernCount }: { systemHealthScore: Da
       return p;
     }, { replace: true });
   };
-  const [showAllFactors, setShowAllFactors] = useState(false);
+  return [expanded, setExpanded];
+}
+
+function HealthHeroSummary({ systemHealthScore, concernCount }: { systemHealthScore: DashboardData['systemHealthScore']; concernCount: number }) {
+  const [expanded, setExpanded] = useHeroExpanded();
 
   const stateLabel = concernCount === 0
     ? 'All clear'
@@ -221,92 +239,96 @@ function HealthHero({ systemHealthScore, concernCount }: { systemHealthScore: Da
   };
 
   return (
-    <div className="py-1">
-      <div className="flex items-center gap-3">
-        {systemHealthScore && <HealthBadge score={systemHealthScore.score} size="sm" />}
-        <div className="min-w-0 flex-1">
-          {concernCount > 0 ? (
-            <button
-              type="button"
-              onClick={scrollToNeedsAttention}
-              className="rounded text-left text-lg font-bold text-warning transition-opacity hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
-            >
-              {stateLabel}
-            </button>
-          ) : (
-            <div className="text-lg font-bold text-fg">{stateLabel}</div>
-          )}
-          {systemHealthScore && (
-            <button
-              type="button"
-              onClick={() => setExpanded(!expanded)}
-              className="mt-1 flex items-center gap-1 rounded text-xs text-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-border"
-              aria-expanded={expanded}
-              aria-controls="health-breakdown"
-            >
-              <span>{expanded ? 'Hide score breakdown' : 'Show health score breakdown'}</span>
-              <Chevron expanded={expanded} />
-            </button>
-          )}
-        </div>
+    <div className="flex items-center gap-3">
+      {systemHealthScore && <HealthBadge score={systemHealthScore.score} size="sm" />}
+      <div className="min-w-0 flex-1">
+        {concernCount > 0 ? (
+          <button
+            type="button"
+            onClick={scrollToNeedsAttention}
+            className="rounded text-left text-xl font-bold text-warning transition-opacity hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-warning/40"
+          >
+            {stateLabel}
+          </button>
+        ) : (
+          <div className="text-xl font-bold text-fg">{stateLabel}</div>
+        )}
+        {systemHealthScore && (
+          <button
+            type="button"
+            onClick={() => setExpanded(!expanded)}
+            className="mt-1 flex items-center gap-1 rounded text-xs text-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-border"
+            aria-expanded={expanded}
+            aria-controls="health-breakdown"
+          >
+            <span>{expanded ? 'Hide score breakdown' : 'Show health score breakdown'}</span>
+            <Chevron expanded={expanded} />
+          </button>
+        )}
       </div>
+    </div>
+  );
+}
 
-      {expanded && systemHealthScore?.hostBreakdown && (
-        <div id="health-breakdown" className="mt-4 rounded-xl border border-border bg-surface p-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-secondary">Health Breakdown by Host</h3>
-          <div className="space-y-3">
-            {systemHealthScore.hostBreakdown
-              .sort((a, b) => a.score - b.score)
-              .map(host => {
-                const worstFactors = Object.entries(host.factors)
-                  .filter(([, f]) => f.rating !== 'normal')
-                  .sort(([, a], [, b]) => a.score - b.score);
-                const visibleFactors = showAllFactors ? worstFactors : worstFactors.slice(0, 2);
-                const hiddenCount = worstFactors.length - visibleFactors.length;
-                return (
-                  <Link key={host.hostId} to={`/hosts/${encodeURIComponent(host.hostId)}`}
-                    className="flex items-center gap-3 rounded-lg px-3 py-2 hover-surface">
-                    <HealthBadge score={host.score} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-fg">{host.hostId}</div>
-                      {visibleFactors.length > 0 ? (
-                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-                          {visibleFactors.map(([key, f]) => {
-                            const analogy = METRIC_FACTORS.has(key as MetricType) && typeof f.value === 'number'
-                              ? getAnalogy(key as MetricType, f.value)
-                              : null;
-                            return (
-                              <span key={key} className={`text-xs ${RATING_COLORS[f.rating] || 'text-muted'}`}>
-                                {FACTOR_LABELS[key] || key}:{' '}
-                                {analogy
-                                  ? <>{analogy.emoji} {analogy.label} <span className="text-muted">({formatFactorValue(key, f.value)})</span></>
-                                  : <>{formatFactorValue(key, f.value)}</>}
-                              </span>
-                            );
-                          })}
-                          {hiddenCount > 0 && <span className="text-xs text-muted">+{hiddenCount} more</span>}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-success">All factors normal</span>
-                      )}
+function HealthHeroBreakdown({ systemHealthScore }: { systemHealthScore: NonNullable<DashboardData['systemHealthScore']> }) {
+  const [expanded] = useHeroExpanded();
+  const [showAllFactors, setShowAllFactors] = useState(false);
+  if (!expanded || !systemHealthScore.hostBreakdown) return null;
+
+  return (
+    <div id="health-breakdown" className="mt-4 rounded-xl border border-border bg-surface p-4">
+      <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-secondary">Health Breakdown by Host</h3>
+      <div className="space-y-3">
+        {systemHealthScore.hostBreakdown
+          .sort((a, b) => a.score - b.score)
+          .map(host => {
+            const worstFactors = Object.entries(host.factors)
+              .filter(([, f]) => f.rating !== 'normal')
+              .sort(([, a], [, b]) => a.score - b.score);
+            const visibleFactors = showAllFactors ? worstFactors : worstFactors.slice(0, 2);
+            const hiddenCount = worstFactors.length - visibleFactors.length;
+            return (
+              <Link key={host.hostId} to={`/hosts/${encodeURIComponent(host.hostId)}`}
+                className="flex items-center gap-3 rounded-lg px-3 py-2 hover-surface">
+                <HealthBadge score={host.score} size="sm" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-fg">{host.hostId}</div>
+                  {visibleFactors.length > 0 ? (
+                    <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                      {visibleFactors.map(([key, f]) => {
+                        const analogy = METRIC_FACTORS.has(key as MetricType) && typeof f.value === 'number'
+                          ? getAnalogy(key as MetricType, f.value)
+                          : null;
+                        return (
+                          <span key={key} className={`text-xs ${RATING_COLORS[f.rating] || 'text-muted'}`}>
+                            {FACTOR_LABELS[key] || key}:{' '}
+                            {analogy
+                              ? <>{analogy.emoji} {analogy.label} <span className="text-muted">({formatFactorValue(key, f.value)})</span></>
+                              : <>{formatFactorValue(key, f.value)}</>}
+                          </span>
+                        );
+                      })}
+                      {hiddenCount > 0 && <span className="text-xs text-muted">+{hiddenCount} more</span>}
                     </div>
-                    <span className="text-lg font-bold" style={{ color: host.score >= 90 ? 'var(--color-success)' : host.score >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }}>
-                      {host.score}
-                    </span>
-                  </Link>
-                );
-              })}
-          </div>
-          {systemHealthScore.hostBreakdown.some(h => Object.values(h.factors).filter(f => f.rating !== 'normal').length > 2) && (
-            <button
-              onClick={e => { e.stopPropagation(); setShowAllFactors(!showAllFactors); }}
-              className="mt-2 flex items-center gap-1 text-xs text-muted hover:text-fg"
-            >
-              <Chevron expanded={showAllFactors} />
-              <span>{showAllFactors ? 'Show less' : 'Show all factors'}</span>
-            </button>
-          )}
-        </div>
+                  ) : (
+                    <span className="text-xs text-success">All factors normal</span>
+                  )}
+                </div>
+                <span className="text-lg font-bold" style={{ color: host.score >= 90 ? 'var(--color-success)' : host.score >= 70 ? 'var(--color-warning)' : 'var(--color-danger)' }}>
+                  {host.score}
+                </span>
+              </Link>
+            );
+          })}
+      </div>
+      {systemHealthScore.hostBreakdown.some(h => Object.values(h.factors).filter(f => f.rating !== 'normal').length > 2) && (
+        <button
+          onClick={e => { e.stopPropagation(); setShowAllFactors(!showAllFactors); }}
+          className="mt-2 flex items-center gap-1 text-xs text-muted hover:text-fg"
+        >
+          <Chevron expanded={showAllFactors} />
+          <span>{showAllFactors ? 'Show less' : 'Show all factors'}</span>
+        </button>
       )}
     </div>
   );

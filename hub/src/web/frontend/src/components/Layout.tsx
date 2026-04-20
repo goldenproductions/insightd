@@ -143,7 +143,7 @@ export function Layout() {
         </header>
 
         <main id="main-content" className="flex-1 overflow-auto p-4 lg:p-6">
-          <div className="mx-auto max-w-6xl">
+          <div className="mx-auto max-w-7xl 2xl:max-w-[1600px]">
             <UpdateBanner />
             <div key={location.pathname} className="animate-page-enter">
               <Outlet />

@@ -19,6 +19,15 @@ export interface DashboardInsight {
   evidence?: string | null;
 }
 
+export interface RecentActivityItem {
+  time: string;
+  type: 'alert_triggered' | 'alert_resolved' | 'insight';
+  host_id: string;
+  target: string;
+  message: string;
+  tone: 'danger' | 'warning' | 'success' | 'info' | 'muted';
+}
+
 export interface DashboardData {
   hostCount: number;
   hostsOnline: number;
@@ -42,6 +51,7 @@ export interface DashboardData {
   } | null;
   topInsights: DashboardInsight[];
   availability: { overallPercent: number | null };
+  recentActivity: RecentActivityItem[];
 }
 
 export interface RankingItem {
