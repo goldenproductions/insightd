@@ -389,6 +389,38 @@ describe('queries', () => {
       assert.equal(ev.downMinutes, 5);
       assert.equal(ev.uptimePct, 98.9);
     });
+
+    it('returns recent activity sorted newest-first across alert fires/resolves and insights', () => {
+      seedHost(db, 'h1', recent);
+
+      // Alert fired ~2h ago, resolved 30m later. Both events should surface.
+      seedAlertState(db, [
+        { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: '2026-04-19 12:00:00', resolvedAt: '2026-04-19 12:30:00' },
+      ]);
+
+      // Two insights, one fresh (4h ago) and one stale (>24h ago) — only the
+      // fresh one should appear.
+      db.prepare(`
+        INSERT INTO insights (entity_type, entity_id, category, severity, title, message, computed_at)
+        VALUES
+          ('container', 'h1/nginx', 'health', 'warning', 'Memory trending up', 'msg', datetime('now', '-4 hours')),
+          ('host',      'h1',       'trend',  'info',    'Old insight',         'msg', datetime('now', '-2 days'))
+      `).run();
+
+      const dash = getDashboard(db, 10);
+      assert.ok(Array.isArray(dash.recentActivity), 'recentActivity must be an array');
+
+      const types = dash.recentActivity.map((r: any) => r.type);
+      assert.ok(types.includes('alert_triggered'), 'expected alert_triggered in feed');
+      assert.ok(types.includes('alert_resolved'), 'expected alert_resolved in feed');
+      assert.ok(types.includes('insight'), 'expected insight in feed');
+      assert.ok(!dash.recentActivity.some((r: any) => r.message.includes('Old insight')), 'stale (>24h) insight must be filtered out');
+
+      // Sorted newest-first
+      for (let i = 1; i < dash.recentActivity.length; i++) {
+        assert.ok(dash.recentActivity[i - 1].time >= dash.recentActivity[i].time, 'recentActivity must be sorted DESC');
+      }
+    });
   });
 
   describe('getContainerHistory', () => {

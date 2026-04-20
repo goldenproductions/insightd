@@ -34,9 +34,11 @@ interface FeedCardProps {
   items: FeedItem[];
   viewAllHref?: string;
   className?: string;
+  /** Calm message shown when there are no items. Required so empty-state copy stays page-specific. */
+  emptyMessage: string;
 }
 
-export function FeedCard({ title, subtitle, items, viewAllHref, className }: FeedCardProps) {
+export function FeedCard({ title, subtitle, items, viewAllHref, className, emptyMessage }: FeedCardProps) {
   const [dismissed, setDismissed] = useState(loadDismissed);
   const [lastDismissed, setLastDismissed] = useState<FeedItem | null>(null);
 
@@ -75,8 +77,6 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className }: Fee
   const dismissedCount = items.filter(item =>
     item.kind === 'insight' && item.insight && dismissed.has(insightKey(item.insight))
   ).length;
-
-  if (visible.length === 0 && dismissedCount === 0) return null;
 
   return (
     <Card className={className}>
@@ -130,8 +130,10 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className }: Fee
             />
           ))}
         </div>
-      ) : (
+      ) : dismissedCount > 0 ? (
         <p className="py-2 text-center text-xs text-muted">All insights dismissed for this session</p>
+      ) : (
+        <p className="py-6 text-center text-sm text-muted">{emptyMessage}</p>
       )}
     </Card>
   );

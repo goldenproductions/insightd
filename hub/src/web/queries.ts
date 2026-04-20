@@ -551,6 +551,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     systemHealthScore: getSystemHealthScore(db),
     topInsights: getTopInsights(db),
     availability: { overallPercent: overallAvailability },
+    recentActivity: getRecentActivity(db, 8),
   };
 
   _dashboardCache.data = result;
@@ -642,6 +643,86 @@ function getTopInsights(db: Database.Database): InsightRow[] {
       LIMIT 5
     `).all() as InsightRow[];
   } catch { return []; }
+}
+
+interface RecentActivityRow {
+  time: string;
+  type: 'alert_triggered' | 'alert_resolved' | 'insight';
+  host_id: string;
+  target: string;
+  message: string;
+  tone: 'danger' | 'warning' | 'success' | 'info' | 'muted';
+}
+
+// Cross-fleet activity feed for the dashboard. Pulls alert fires,
+// alert resolutions, and recent insights from the last 24h. Older items are
+// ignored — recency matters more than count, and the design renders ~5 rows.
+function getRecentActivity(db: Database.Database, limit: number): RecentActivityRow[] {
+  const out: RecentActivityRow[] = [];
+
+  try {
+    const fires = db.prepare(`
+      SELECT host_id, alert_type, target, triggered_at AS time, message
+      FROM alert_state
+      WHERE triggered_at >= datetime('now', '-1 day')
+      ORDER BY triggered_at DESC
+      LIMIT ?
+    `).all(limit * 2) as Array<{ host_id: string; alert_type: string; target: string; time: string; message: string | null }>;
+    for (const a of fires) {
+      const tone: RecentActivityRow['tone'] = a.alert_type.includes('critical') || a.alert_type.includes('down') ? 'danger' : 'warning';
+      out.push({
+        time: a.time,
+        type: 'alert_triggered',
+        host_id: a.host_id,
+        target: a.target,
+        message: a.message ?? `${a.alert_type.replace(/_/g, ' ')} on ${a.target}`,
+        tone,
+      });
+    }
+
+    const resolves = db.prepare(`
+      SELECT host_id, alert_type, target, resolved_at AS time
+      FROM alert_state
+      WHERE resolved_at IS NOT NULL AND resolved_at >= datetime('now', '-1 day')
+      ORDER BY resolved_at DESC
+      LIMIT ?
+    `).all(limit * 2) as Array<{ host_id: string; alert_type: string; target: string; time: string }>;
+    for (const r of resolves) {
+      out.push({
+        time: r.time,
+        type: 'alert_resolved',
+        host_id: r.host_id,
+        target: r.target,
+        message: `${r.alert_type.replace(/_/g, ' ')} resolved`,
+        tone: 'success',
+      });
+    }
+  } catch { /* alert_state may not exist on bootstrap */ }
+
+  try {
+    const insights = db.prepare(`
+      SELECT entity_type, entity_id, category, severity, title, computed_at AS time
+      FROM insights
+      WHERE computed_at >= datetime('now', '-1 day')
+      ORDER BY computed_at DESC
+      LIMIT ?
+    `).all(limit * 2) as Array<{ entity_type: string; entity_id: string; category: string; severity: string; title: string; time: string }>;
+    for (const i of insights) {
+      const hostId = i.entity_type === 'container' ? i.entity_id.split('/')[0] : i.entity_id;
+      const tone: RecentActivityRow['tone'] = i.severity === 'critical' ? 'danger' : i.severity === 'warning' ? 'warning' : 'info';
+      out.push({
+        time: i.time,
+        type: 'insight',
+        host_id: hostId,
+        target: i.entity_id,
+        message: i.title,
+        tone,
+      });
+    }
+  } catch { /* insights may not exist on bootstrap */ }
+
+  out.sort((a, b) => b.time.localeCompare(a.time));
+  return out.slice(0, limit);
 }
 
 function getLatestHostMetrics(db: Database.Database, hostId: string): HostMetricsRow | null {
