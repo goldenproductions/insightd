@@ -394,8 +394,12 @@ describe('queries', () => {
       seedHost(db, 'h1', recent);
 
       // Alert fired ~2h ago, resolved 30m later. Both events should surface.
+      // Use relative timestamps — the query has a 24h cutoff, so hardcoded
+      // dates become stale when the test date rolls forward.
+      const firedAt = ts(new Date(Date.now() - 2 * 60 * 60 * 1000));
+      const resolvedAt = ts(new Date(Date.now() - 90 * 60 * 1000));
       seedAlertState(db, [
-        { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: '2026-04-19 12:00:00', resolvedAt: '2026-04-19 12:30:00' },
+        { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: firedAt, resolvedAt },
       ]);
 
       // Two insights, one fresh (4h ago) and one stale (>24h ago) — only the
