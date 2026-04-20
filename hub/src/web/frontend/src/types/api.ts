@@ -256,6 +256,19 @@ export interface HostDetail extends Host {
 }
 
 // Alerts
+export type AlertLevel = 'critical' | 'error' | 'warning' | 'info';
+
+export interface AlertsExploreResponse {
+  total: number;
+  alerts: (Alert & { level: AlertLevel })[];
+  counts: {
+    byStatus: { active: number; resolved: number };
+    byLevel: { critical: number; error: number; warning: number; info: number };
+    byHost: { host_id: string; count: number }[];
+    byMuted: { muted: number; not_muted: number };
+  };
+}
+
 export interface Alert {
   id: number;
   host_id: string;

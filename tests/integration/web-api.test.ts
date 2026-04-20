@@ -142,14 +142,38 @@ describe('Web API integration', () => {
     assert.equal(data.containersRunning, 1);
   });
 
-  it('GET /api/alerts returns active alerts', async () => {
+  it('GET /api/alerts returns explore payload (total + alerts + facet counts)', async () => {
     seedAlertState(db, [
       { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: recent },
     ]);
     const res = await fetch(port, '/api/alerts');
     assert.equal(res.status, 200);
     const data = res.json();
-    assert.equal(data.length, 1);
+    assert.equal(data.total, 1);
+    assert.equal(data.alerts.length, 1);
+    assert.equal(data.alerts[0].level, 'critical'); // container_down → critical
+    assert.equal(data.counts.byStatus.active, 1);
+    assert.equal(data.counts.byLevel.critical, 1);
+  });
+
+  it('GET /api/alerts respects status + level filters + pagination', async () => {
+    seedAlertState(db, [
+      { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: recent },
+      { hostId: 'h1', type: 'high_cpu', target: 'redis', triggeredAt: recent },
+      { hostId: 'h2', type: 'host_offline', target: 'h2', triggeredAt: recent, resolvedAt: recent },
+    ]);
+
+    // Only critical + active
+    let res = await fetch(port, '/api/alerts?status=active&levels=critical');
+    let data = res.json();
+    assert.equal(data.total, 1);
+    assert.equal(data.alerts[0].alert_type, 'container_down');
+
+    // Pagination: limit=1 on 3 total alerts
+    res = await fetch(port, '/api/alerts?limit=1');
+    data = res.json();
+    assert.equal(data.total, 3);
+    assert.equal(data.alerts.length, 1);
   });
 
   it('GET /api/hosts/:hostId/containers/:name returns container detail', async () => {

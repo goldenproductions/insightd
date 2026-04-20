@@ -386,6 +386,159 @@ function getAlerts(db: Database.Database, activeOnly?: boolean, hostId?: string)
   return db.prepare(sql).all(...params) as AlertRow[];
 }
 
+/**
+ * Map `alert_type` to a severity "level". The design's Explore page groups
+ * alerts into four levels — our data model has alert types, not levels, so
+ * this derivation stays in one place.
+ *
+ * critical → something is down and users notice (container_down, host_offline, endpoint_down)
+ * error    → persistent failure (container_unhealthy, restart_loop, disk_full)
+ * warning  → resource pressure (high_cpu, high_memory, high_load, low_host_memory)
+ * info     → everything else (room for future types)
+ */
+const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'info'> = {
+  container_down: 'critical',
+  host_offline: 'critical',
+  endpoint_down: 'critical',
+  container_unhealthy: 'error',
+  restart_loop: 'error',
+  disk_full: 'error',
+  high_cpu: 'warning',
+  high_memory: 'warning',
+  high_host_cpu: 'warning',
+  low_host_memory: 'warning',
+  high_load: 'warning',
+};
+
+/** The CASE expression equivalent of LEVEL_BY_ALERT_TYPE — used in SQL filters/facets. */
+const LEVEL_CASE_SQL = `
+  CASE alert_type
+    WHEN 'container_down' THEN 'critical'
+    WHEN 'host_offline' THEN 'critical'
+    WHEN 'endpoint_down' THEN 'critical'
+    WHEN 'container_unhealthy' THEN 'error'
+    WHEN 'restart_loop' THEN 'error'
+    WHEN 'disk_full' THEN 'error'
+    WHEN 'high_cpu' THEN 'warning'
+    WHEN 'high_memory' THEN 'warning'
+    WHEN 'high_host_cpu' THEN 'warning'
+    WHEN 'low_host_memory' THEN 'warning'
+    WHEN 'high_load' THEN 'warning'
+    ELSE 'info'
+  END
+`;
+
+interface AlertsExploreFilters {
+  /** Page size, clamped server-side to [1, 200]. */
+  limit: number;
+  offset: number;
+  /** Filter to only active or only ended alerts. Omit for both. */
+  status?: 'active' | 'resolved';
+  /** OR'd across levels — empty list means "any level". */
+  levels?: Array<'critical' | 'error' | 'warning' | 'info'>;
+  /** OR'd across host_ids. */
+  hosts?: string[];
+  /** `true` = only silenced alerts, `false` = only not-silenced, undefined = both. */
+  muted?: boolean;
+  /** Case-insensitive substring match against alert_type, target, message, host_id. */
+  q?: string;
+}
+
+interface AlertsExploreResult {
+  total: number;
+  alerts: Array<AlertRow & { level: string }>;
+  counts: {
+    byStatus: { active: number; resolved: number };
+    byLevel: { critical: number; error: number; warning: number; info: number };
+    byHost: Array<{ host_id: string; count: number }>;
+    byMuted: { muted: number; not_muted: number };
+  };
+}
+
+/**
+ * Explore-style query for the Alerts page. Returns a page of alerts plus
+ * *pre-filter* facet counts so the rail can show "how many match if I add
+ * this filter" — consistent with Grafana / Explore-style UIs.
+ */
+function getAlertsExplore(db: Database.Database, filters: AlertsExploreFilters): AlertsExploreResult {
+  const limit = Math.min(200, Math.max(1, filters.limit));
+  const offset = Math.max(0, filters.offset);
+
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (filters.status === 'active') where.push('resolved_at IS NULL');
+  else if (filters.status === 'resolved') where.push('resolved_at IS NOT NULL');
+
+  if (filters.levels && filters.levels.length > 0) {
+    where.push(`(${LEVEL_CASE_SQL}) IN (${filters.levels.map(() => '?').join(',')})`);
+    params.push(...filters.levels);
+  }
+
+  if (filters.hosts && filters.hosts.length > 0) {
+    where.push(`host_id IN (${filters.hosts.map(() => '?').join(',')})`);
+    params.push(...filters.hosts);
+  }
+
+  if (filters.muted === true) where.push('silenced_until IS NOT NULL');
+  else if (filters.muted === false) where.push('silenced_until IS NULL');
+
+  if (filters.q && filters.q.trim()) {
+    const needle = `%${filters.q.trim().toLowerCase()}%`;
+    where.push(`(LOWER(alert_type) LIKE ? OR LOWER(target) LIKE ? OR LOWER(IFNULL(message, '')) LIKE ? OR LOWER(host_id) LIKE ?)`);
+    params.push(needle, needle, needle, needle);
+  }
+
+  const whereSql = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
+
+  const totalRow = db.prepare(`SELECT COUNT(*) as count FROM alert_state${whereSql}`).get(...params) as CountRow;
+
+  const alerts = db.prepare(`
+    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified,
+           notify_count, message, trigger_value, threshold,
+           silenced_until, silenced_by, silenced_at,
+           ${LEVEL_CASE_SQL} AS level
+    FROM alert_state${whereSql}
+    ORDER BY
+      CASE WHEN resolved_at IS NULL THEN 0 ELSE 1 END,
+      triggered_at DESC
+    LIMIT ? OFFSET ?
+  `).all(...params, limit, offset) as Array<AlertRow & { level: string }>;
+
+  // Facet counts are computed unfiltered — the rail shows "how many exist of
+  // each option", not "how many match the current filter". This matches the
+  // standard Explore / Discover UX.
+  const byStatus = { active: 0, resolved: 0 };
+  const statusRows = db.prepare(`
+    SELECT CASE WHEN resolved_at IS NULL THEN 'active' ELSE 'resolved' END AS k, COUNT(*) AS c
+    FROM alert_state GROUP BY k
+  `).all() as Array<{ k: 'active' | 'resolved'; c: number }>;
+  for (const r of statusRows) byStatus[r.k] = r.c;
+
+  const byLevel = { critical: 0, error: 0, warning: 0, info: 0 };
+  const levelRows = db.prepare(`
+    SELECT ${LEVEL_CASE_SQL} AS k, COUNT(*) AS c FROM alert_state GROUP BY k
+  `).all() as Array<{ k: keyof typeof byLevel; c: number }>;
+  for (const r of levelRows) if (r.k in byLevel) byLevel[r.k] = r.c;
+
+  const byMuted = { muted: 0, not_muted: 0 };
+  const mutedRows = db.prepare(`
+    SELECT CASE WHEN silenced_until IS NULL THEN 'not_muted' ELSE 'muted' END AS k, COUNT(*) AS c
+    FROM alert_state GROUP BY k
+  `).all() as Array<{ k: 'muted' | 'not_muted'; c: number }>;
+  for (const r of mutedRows) byMuted[r.k] = r.c;
+
+  const byHost = db.prepare(`
+    SELECT host_id, COUNT(*) AS count
+    FROM alert_state
+    GROUP BY host_id
+    ORDER BY count DESC, host_id ASC
+    LIMIT 20
+  `).all() as Array<{ host_id: string; count: number }>;
+
+  return { total: totalRow.count, alerts, counts: { byStatus, byLevel, byHost, byMuted } };
+}
+
 const _dashboardCache: { data: any; key: string | null; db: Database.Database | null; time: number } = { data: null, key: null, db: null, time: 0 };
 const DASHBOARD_CACHE_TTL = 30000; // 30 seconds
 
@@ -1112,4 +1265,4 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };
