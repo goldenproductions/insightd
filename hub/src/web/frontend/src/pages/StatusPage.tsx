@@ -59,21 +59,6 @@ export function StatusPage() {
 
         <Legend />
 
-        {/* Stacks */}
-        {data.groups && data.groups.length > 0 && (
-          <Section title="Stacks">
-            {data.groups.map(g => (
-              <HistoryRow
-                key={`g-${g.id}`}
-                name={<>{g.icon && <span className="mr-1.5">{g.icon}</span>}{g.name}</>}
-                meta={`${g.running_count}/${g.member_count} running`}
-                metaOk={g.running_count === g.member_count}
-                history={g.history}
-              />
-            ))}
-          </Section>
-        )}
-
         {/* Hosts */}
         {data.hosts && data.hosts.length > 0 && (
           <Section title="Hosts">

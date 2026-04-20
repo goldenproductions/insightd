@@ -90,7 +90,6 @@ async function handleDeleteHost(req: HandlerReq, res: ServerResponse, db: Databa
   db.prepare('DELETE FROM disk_snapshots WHERE host_id = ?').run(hostId);
   db.prepare('DELETE FROM update_checks WHERE host_id = ?').run(hostId);
   db.prepare('DELETE FROM alert_state WHERE host_id = ?').run(hostId);
-  db.prepare('DELETE FROM service_group_members WHERE host_id = ?').run(hostId);
   db.prepare("DELETE FROM baselines WHERE entity_id = ? OR entity_id LIKE ?").run(hostId, `${hostId}/%`);
   db.prepare("DELETE FROM health_scores WHERE entity_id = ? OR entity_id LIKE ?").run(hostId, `${hostId}/%`);
   db.prepare('DELETE FROM hosts WHERE host_id = ?').run(hostId);
@@ -118,6 +117,55 @@ function handleResetHostGroup(req: HandlerReq, res: ServerResponse, db: Database
   if (!exists) { res.statusCode = 404; return { error: 'Host not found' }; }
   db.prepare('UPDATE hosts SET host_group_override = NULL WHERE host_id = ?').run(hostId);
   return { hostId, reset: true };
+}
+
+/**
+ * Bulk-rename a host group: update every host whose effective group resolves
+ * to `oldName` (override matches, or override is NULL/empty and the
+ * agent-reported `host_group` matches) so it now overrides to `newName`.
+ *
+ * Pinning the agent-reported case as an override is intentional — without
+ * it, those hosts would silently snap back to the old name on the next
+ * agent report.
+ */
+async function handleRenameHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const oldName = decodeURIComponent(params.name);
+  if (!oldName) { res.statusCode = 400; return { error: 'Invalid group name' }; }
+  const body = await readBody(req);
+  const newName = typeof body?.name === 'string' ? body.name.trim() : '';
+  if (!newName) { res.statusCode = 400; return { error: 'Body must include a non-empty `name`' }; }
+  if (newName === oldName) return { renamed: 0, oldName, newName };
+
+  const result = db.prepare(`
+    UPDATE hosts
+    SET host_group_override = ?
+    WHERE host_group_override = ?
+       OR ((host_group_override IS NULL OR host_group_override = '') AND host_group = ?)
+  `).run(newName, oldName, oldName);
+
+  return { renamed: result.changes, oldName, newName };
+}
+
+/**
+ * Bulk-delete a host group: every host whose effective group resolves to
+ * `name` is moved to manually-ungrouped (override = empty string). Empty
+ * string is the "I explicitly don't want this in any group" state, so the
+ * next agent report won't re-create the deleted group.
+ */
+async function handleDeleteHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const name = decodeURIComponent(params.name);
+  if (!name) { res.statusCode = 400; return { error: 'Invalid group name' }; }
+
+  const result = db.prepare(`
+    UPDATE hosts
+    SET host_group_override = ''
+    WHERE host_group_override = ?
+       OR ((host_group_override IS NULL OR host_group_override = '') AND host_group = ?)
+  `).run(name, name);
+
+  return { deleted: true, name, affected: result.changes };
 }
 
 async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
@@ -165,7 +213,6 @@ async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: D
     db.prepare('DELETE FROM container_snapshots WHERE host_id = ? AND container_name = ?').run(hostId, containerName);
     db.prepare('DELETE FROM update_checks WHERE host_id = ? AND container_name = ?').run(hostId, containerName);
     db.prepare('DELETE FROM alert_state WHERE host_id = ? AND target = ?').run(hostId, containerName);
-    db.prepare('DELETE FROM service_group_members WHERE host_id = ? AND container_name = ?').run(hostId, containerName);
     db.prepare("DELETE FROM baselines WHERE entity_type = 'container' AND entity_id = ?").run(entityId);
     db.prepare("DELETE FROM health_scores WHERE entity_type = 'container' AND entity_id = ?").run(entityId);
   });
@@ -618,68 +665,6 @@ async function handleTestWebhookUnsaved(req: HandlerReq, res: ServerResponse, db
   return sendTestWebhook(body);
 }
 
-// --- Service Groups ---
-
-const groupQueries = require('./group-queries');
-
-function handleGetGroups(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const showInternal = url.searchParams.get('showInternal') === 'true';
-  return groupQueries.getGroups(db, showInternal);
-}
-
-async function handleCreateGroup(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
-  const body = await readBody(req);
-  if (!body.name || typeof body.name !== 'string' || body.name.length > 100) {
-    res.statusCode = 400; return { error: 'name is required (max 100 chars)' };
-  }
-  try {
-    res.statusCode = 201;
-    return groupQueries.createGroup(db, body);
-  } catch {
-    res.statusCode = 409; return { error: 'A group with this name already exists' };
-  }
-}
-
-function handleGetGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  const detail = groupQueries.getGroupDetail(db, parseInt(params.groupId, 10));
-  if (!detail) { res.statusCode = 404; return { error: 'Group not found' }; }
-  return detail;
-}
-
-async function handleUpdateGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
-  const id = parseInt(params.groupId, 10);
-  if (!groupQueries.getGroup(db, id)) { res.statusCode = 404; return { error: 'Group not found' }; }
-  const body = await readBody(req);
-  return groupQueries.updateGroup(db, id, body);
-}
-
-async function handleDeleteGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
-  const result = groupQueries.deleteGroup(db, parseInt(params.groupId, 10));
-  if (!result.deleted) { res.statusCode = 404; return { error: 'Group not found' }; }
-  return result;
-}
-
-async function handleAddGroupMember(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
-  const groupId = parseInt(params.groupId, 10);
-  if (!groupQueries.getGroup(db, groupId)) { res.statusCode = 404; return { error: 'Group not found' }; }
-  const body = await readBody(req);
-  if (!body.hostId || !body.containerName) { res.statusCode = 400; return { error: 'hostId and containerName are required' }; }
-  return groupQueries.addGroupMember(db, groupId, body.hostId, body.containerName);
-}
-
-async function handleRemoveGroupMember(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
-  const groupId = parseInt(params.groupId, 10);
-  const body = await readBody(req);
-  if (!body.hostId || !body.containerName) { res.statusCode = 400; return { error: 'hostId and containerName are required' }; }
-  return groupQueries.removeGroupMember(db, groupId, body.hostId, body.containerName);
-}
-
 // --- Insights ---
 
 const insightQueries = require('../insights/queries');
@@ -1015,29 +1000,9 @@ function handlePublicStatus(req: HandlerReq, res: ServerResponse, db: Database.D
     const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
     return row ? row.value === 'true' : true;
   };
-  const showStacks = isOn('statusPage.showStacks');
   const showHosts = isOn('statusPage.showHosts');
   const showEndpoints = isOn('statusPage.showEndpoints');
   const showIncidents = isOn('statusPage.showIncidents');
-
-  // Service groups with members + 30-day history
-  let groups: any[] = [];
-  if (showStacks) {
-    try {
-      const groupQueries = require('./group-queries');
-      groups = groupQueries.getGroups(db, false).map((g: any) => {
-        const detail = groupQueries.getGroupDetail(db, g.id);
-        return {
-          id: g.id, name: g.name, icon: g.icon, color: g.color,
-          running_count: g.running_count, member_count: g.member_count,
-          members: (detail?.members || []).map((m: any) => ({
-            container_name: m.container_name, host_id: m.host_id, status: m.status,
-          })),
-          history: statusQueries.getStackHistory(db, g.id),
-        };
-      });
-    } catch { /* no groups */ }
-  }
 
   // Hosts + 30-day history
   let hosts: any[] = [];
@@ -1075,17 +1040,15 @@ function handlePublicStatus(req: HandlerReq, res: ServerResponse, db: Database.D
 
   // Overall status — only consider visible sections so a hidden section can't
   // drag the badge into "degraded".
-  const allContainersOk = !showStacks || groups.every((g: any) => g.running_count === g.member_count);
   const allHostsOk = !showHosts || hosts.every((h: any) => h.is_online);
   const allEndpointsOk = !showEndpoints || endpoints.every((e: any) => e.is_up !== false);
-  const anyData = groups.length > 0 || hosts.length > 0 || endpoints.length > 0;
+  const anyData = hosts.length > 0 || endpoints.length > 0;
   const overallStatus = !anyData ? 'operational'
-    : (allContainersOk && allHostsOk && allEndpointsOk) ? 'operational' : 'degraded';
+    : (allHostsOk && allEndpointsOk) ? 'operational' : 'degraded';
 
   // Only include sections that are toggled on, so the frontend can distinguish
   // "section disabled" from "section enabled but empty" (e.g. zero incidents).
   const payload: Record<string, any> = { title, overallStatus, updatedAt: new Date().toISOString() };
-  if (showStacks) payload.groups = groups;
   if (showHosts) payload.hosts = hosts;
   if (showEndpoints) payload.endpoints = endpoints;
   if (showIncidents) payload.incidents = incidents;
@@ -1211,7 +1174,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetGroups, handleCreateGroup, handleGetGroup, handleUpdateGroup, handleDeleteGroup, handleAddGroupMember, handleRemoveGroupMember, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }

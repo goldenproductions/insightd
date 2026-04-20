@@ -81,10 +81,6 @@ function startScheduler({ db, docker, config, collectors, digest, alerts }: Sche
       safeCollect('ingest-containers', () => {
         ingestContainers(db, hostId, containers);
         upsertHost(db, hostId);
-        try {
-          const { autoAssignGroups } = require('../hub/src/web/group-queries');
-          autoAssignGroups(db, hostId, containers);
-        } catch { /* group-queries not available */ }
       });
     }
 

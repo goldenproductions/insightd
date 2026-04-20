@@ -250,8 +250,6 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
   upsertHost(db, hostId, payload.agent_version || null, payload.runtime_type || 'docker', payload.host_group ?? null);
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
-    const { autoAssignGroups } = require('./web/group-queries');
-    autoAssignGroups(db, hostId, containers);
 
     // Fire background log fetches for containers that just went unhealthy
     if (unhealthyTransitions.length > 0) {

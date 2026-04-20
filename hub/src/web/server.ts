@@ -48,6 +48,8 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('DELETE', '/api/hosts/:hostId', handlers.handleDeleteHost);
   router.add('PUT', '/api/hosts/:hostId/group', handlers.handleSetHostGroup);
   router.add('DELETE', '/api/hosts/:hostId/group', handlers.handleResetHostGroup);
+  router.add('PUT', '/api/host-groups/:name', handlers.handleRenameHostGroup);
+  router.add('DELETE', '/api/host-groups/:name', handlers.handleDeleteHostGroup);
   router.add('GET', '/api/hosts/:hostId', handlers.handleHostDetail);
   router.add('GET', '/api/hosts/:hostId/timeline', handlers.handleTimeline);
   router.add('GET', '/api/hosts/:hostId/trends', handlers.handleTrends);
@@ -87,13 +89,6 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/webhooks/:webhookId', handlers.handleGetWebhook);
   router.add('PUT', '/api/webhooks/:webhookId', handlers.handleUpdateWebhook);
   router.add('DELETE', '/api/webhooks/:webhookId', handlers.handleDeleteWebhook);
-  router.add('GET', '/api/groups', handlers.handleGetGroups);
-  router.add('POST', '/api/groups', handlers.handleCreateGroup);
-  router.add('GET', '/api/groups/:groupId', handlers.handleGetGroup);
-  router.add('PUT', '/api/groups/:groupId', handlers.handleUpdateGroup);
-  router.add('DELETE', '/api/groups/:groupId', handlers.handleDeleteGroup);
-  router.add('POST', '/api/groups/:groupId/members', handlers.handleAddGroupMember);
-  router.add('DELETE', '/api/groups/:groupId/members', handlers.handleRemoveGroupMember);
   router.add('GET', '/api/baselines/:entityType/:entityId', handlers.handleGetBaselines);
   router.add('GET', '/api/health-scores', handlers.handleGetAllHealthScores);
   router.add('GET', '/api/health-scores/:entityType/:entityId', handlers.handleGetHealthScore);

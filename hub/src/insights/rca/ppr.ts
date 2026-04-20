@@ -8,7 +8,7 @@
  *
  * Graph shape (see `rca/graph.ts`):
  *   - Nodes are entity IDs: `"host/container"` or `"host"` strings.
- *   - Edges have a type (`same_host` / `same_compose` / `same_group` /
+ *   - Edges have a type (`same_host` / `same_compose` /
  *     `metric_corr`) and a weight in [0,1]. Multiple edges can exist
  *     between the same pair — we aggregate their weight at walk time.
  *

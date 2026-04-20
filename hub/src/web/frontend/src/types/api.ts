@@ -42,7 +42,6 @@ export interface DashboardData {
   endpointsTotal: number;
   endpointsUp: number;
   endpointsDown: number;
-  groups: ServiceGroupSummary[];
   systemHealthScore: {
     score: number;
     factors: Record<string, unknown>;
@@ -481,42 +480,6 @@ export interface WebhookTestResult {
   ok: boolean;
   status?: number;
   error?: string;
-}
-
-// Service Groups
-export interface ServiceGroup {
-  id: number;
-  name: string;
-  description: string | null;
-  icon: string | null;
-  color: string | null;
-  source: 'manual' | 'compose' | 'label';
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ServiceGroupSummary extends ServiceGroup {
-  member_count: number;
-  running_count: number;
-  total_cpu: number | null;
-  total_memory: number | null;
-}
-
-export interface ServiceGroupMember {
-  host_id: string;
-  container_name: string;
-  source: 'manual' | 'compose' | 'label';
-  container_id: string | null;
-  status: string | null;
-  cpu_percent: number | null;
-  memory_mb: number | null;
-  restart_count: number | null;
-  health_status: string | null;
-  collected_at: string | null;
-}
-
-export interface ServiceGroupDetail extends ServiceGroup {
-  members: ServiceGroupMember[];
 }
 
 // Baselines

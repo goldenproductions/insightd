@@ -57,14 +57,6 @@ interface WebhookSeed {
   onAlert?: boolean; onDigest?: boolean; enabled?: boolean;
 }
 
-interface ServiceGroupSeed {
-  name: string; description?: string | null; icon?: string | null; color?: string | null; source?: string;
-}
-
-interface GroupMemberSeed {
-  groupId: number | bigint; hostId?: string; containerName: string; source?: string;
-}
-
 interface BaselineSeed {
   entityType: string; entityId: string; metric?: string; timeBucket?: string;
   p50?: number; p75?: number; p90?: number; p95?: number; p99?: number;
@@ -213,23 +205,6 @@ function seedWebhooks(db: Database.Database, rows: WebhookSeed[]): (number | big
   return ids;
 }
 
-function seedServiceGroups(db: Database.Database, rows: ServiceGroupSeed[]): (number | bigint)[] {
-  const insert = db.prepare('INSERT INTO service_groups (name, description, icon, color, source) VALUES (?, ?, ?, ?, ?)');
-  const ids: (number | bigint)[] = [];
-  for (const r of rows) {
-    const result = insert.run(r.name, r.description || null, r.icon || null, r.color || null, r.source || 'manual');
-    ids.push(result.lastInsertRowid);
-  }
-  return ids;
-}
-
-function seedGroupMembers(db: Database.Database, rows: GroupMemberSeed[]): void {
-  const insert = db.prepare('INSERT INTO service_group_members (group_id, host_id, container_name, source) VALUES (?, ?, ?, ?)');
-  for (const r of rows) {
-    insert.run(r.groupId, r.hostId || 'local', r.containerName, r.source || 'manual');
-  }
-}
-
 function seedBaselines(db: Database.Database, rows: BaselineSeed[]): void {
   const insert = db.prepare(`
     INSERT INTO baselines (entity_type, entity_id, metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, sample_count, computed_at)
@@ -252,4 +227,4 @@ function seedHealthScores(db: Database.Database, rows: HealthScoreSeed[]): void 
   }
 }
 
-module.exports = { createTestDb, seedContainerSnapshots, seedContainers, markContainerRemoved, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks, seedServiceGroups, seedGroupMembers, seedBaselines, seedHealthScores };
+module.exports = { createTestDb, seedContainerSnapshots, seedContainers, markContainerRemoved, seedDiskSnapshots, seedUpdateChecks, seedAlertState, seedHostSnapshots, seedHttpEndpoints, seedHttpChecks, seedWebhooks, seedBaselines, seedHealthScores };

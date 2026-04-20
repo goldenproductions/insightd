@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 28;
+const SCHEMA_VERSION = 29;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -162,30 +162,6 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_http_checks_endpoint_time
       ON http_checks (endpoint_id, checked_at);
-
-    CREATE TABLE IF NOT EXISTS service_groups (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      name        TEXT NOT NULL UNIQUE,
-      description TEXT,
-      icon        TEXT,
-      color       TEXT,
-      source      TEXT NOT NULL DEFAULT 'manual',
-      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-    );
-
-    CREATE TABLE IF NOT EXISTS service_group_members (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      group_id        INTEGER NOT NULL REFERENCES service_groups(id) ON DELETE CASCADE,
-      host_id         TEXT NOT NULL,
-      container_name  TEXT NOT NULL,
-      source          TEXT NOT NULL DEFAULT 'manual',
-      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(group_id, host_id, container_name)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_group_members_container
-      ON service_group_members (host_id, container_name);
 
     CREATE TABLE IF NOT EXISTS baselines (
       id               INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -619,6 +595,14 @@ function migrate(db: Database.Database, fromVersion: number): void {
     // "failed" (non-zero) so one-shot containers (bootstrap, k8s Jobs,
     // migration containers) don't all look like failures.
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN exit_code INTEGER'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 29) {
+    // Stacks (container-level service groups) were retired in favour of
+    // host-level grouping on the Hosts page — drop the now-orphaned tables.
+    try { db.exec('DROP TABLE IF EXISTS service_group_members'); } catch { /* not present */ }
+    try { db.exec('DROP TABLE IF EXISTS service_groups'); } catch { /* not present */ }
+    // Best-effort cleanup of the now-unused statusPage.showStacks setting.
+    try { db.prepare("DELETE FROM settings WHERE key = 'statusPage.showStacks'").run(); } catch { /* table not present */ }
   }
 }
 

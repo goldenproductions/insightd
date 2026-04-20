@@ -135,7 +135,6 @@ const SETTING_DEFS: SettingDef[] = [
   // Status Page
   { key: 'statusPage.enabled', env: 'INSIGHTD_STATUS_PAGE', type: 'bool', category: 'Status Page', label: 'Enable public status page', hotReload: true, default: 'false', description: 'Serve a public status page at /status (no login required)' },
   { key: 'statusPage.title', env: 'INSIGHTD_STATUS_PAGE_TITLE', type: 'string', category: 'Status Page', label: 'Page title', hotReload: true, default: 'System Status', description: 'Title shown on the public status page' },
-  { key: 'statusPage.showStacks', env: 'INSIGHTD_STATUS_PAGE_SHOW_STACKS', type: 'bool', category: 'Status Page', label: 'Show stacks section', hotReload: true, default: 'true', description: 'List service groups (stacks) and their 30-day uptime' },
   { key: 'statusPage.showHosts', env: 'INSIGHTD_STATUS_PAGE_SHOW_HOSTS', type: 'bool', category: 'Status Page', label: 'Show hosts section', hotReload: true, default: 'true', description: 'List monitored hosts and their 30-day uptime' },
   { key: 'statusPage.showEndpoints', env: 'INSIGHTD_STATUS_PAGE_SHOW_ENDPOINTS', type: 'bool', category: 'Status Page', label: 'Show endpoints section', hotReload: true, default: 'true', description: 'List HTTP endpoints and their 30-day uptime' },
   { key: 'statusPage.showIncidents', env: 'INSIGHTD_STATUS_PAGE_SHOW_INCIDENTS', type: 'bool', category: 'Status Page', label: 'Show past incidents', hotReload: true, default: 'true', description: 'List resolved alerts from the last 30 days' },

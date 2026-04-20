@@ -35,10 +35,7 @@ export const queryKeys = {
   endpoint: (endpointId?: string) => ['endpoint', endpointId] as const,
   endpointChecks: (endpointId?: string) => ['endpoint-checks', endpointId] as const,
 
-  // Services
-  groups: (showInternal?: boolean) => ['groups', showInternal] as const,
-  group: (groupId?: string) => ['group', groupId] as const,
-  groupEdit: (groupId?: string) => ['group-edit', groupId] as const,
+  // Containers (container listing keyed by host)
   allContainers: (hostKey?: string) => ['all-containers', hostKey] as const,
 
   // Webhooks

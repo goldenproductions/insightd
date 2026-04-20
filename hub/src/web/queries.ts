@@ -456,12 +456,6 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     WHERE hc.is_up = 1
   `).get() as CountRow | undefined;
 
-  let groups: any[] = [];
-  try {
-    const groupQueries = require('./group-queries');
-    groups = groupQueries.getGroups(db, showInternal);
-  } catch { /* group queries not available */ }
-
   // 24h availability per container — only for containers still present in
   // the registry. Two-pass to avoid a correlated EXISTS over the snapshot
   // table: first get the set of active (host,name) pairs, then aggregate
@@ -547,7 +541,6 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
     endpointsTotal: endpointTotal?.count || 0,
     endpointsUp: endpointsUp?.count || 0,
     endpointsDown: (endpointTotal?.count || 0) - (endpointsUp?.count || 0),
-    groups,
     systemHealthScore: getSystemHealthScore(db),
     topInsights: getTopInsights(db),
     availability: { overallPercent: overallAvailability },

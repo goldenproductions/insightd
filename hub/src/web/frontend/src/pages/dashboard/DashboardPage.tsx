@@ -14,7 +14,7 @@ import { Topbar } from '@/components/Topbar';
 import { StatusRow } from './StatusRow';
 import { StatsRow } from './StatsRow';
 import { FeedCard } from './FeedCard';
-import { DashboardStacks } from './DashboardStacks';
+import { DashboardHosts } from './DashboardHosts';
 import { RecentActivity } from './RecentActivity';
 
 export function DashboardPage() {
@@ -90,18 +90,11 @@ export function DashboardPage() {
         />
       </div>
 
-      {/* Stacks + Recent activity — side-by-side at lg+, stacked below.
-          When there are no stacks, Recent activity stretches full-width. */}
-      {data.groups.length > 0 ? (
-        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <DashboardStacks groups={data.groups} />
-          <RecentActivity items={data.recentActivity ?? []} />
-        </div>
-      ) : (
-        <div className="mt-4">
-          <RecentActivity items={data.recentActivity ?? []} />
-        </div>
-      )}
+      {/* Hosts overview + Recent activity — side-by-side at lg+, stacked below. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <DashboardHosts />
+        <RecentActivity items={data.recentActivity ?? []} />
+      </div>
 
       {/* Peripheral footer */}
       <div className="mt-6">
