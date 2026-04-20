@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const http = require('http');
-const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedUpdateChecks, seedServiceGroups, seedGroupMembers, seedBaselines, seedHealthScores } = require('../helpers/db');
+const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedUpdateChecks, seedBaselines, seedHealthScores } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 
 const recent = ts(new Date(NOW - 2 * 60 * 1000));
@@ -78,7 +78,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.status, 'ok');
-    assert.equal(data.schemaVersion, 28);
+    assert.equal(data.schemaVersion, 29);
   });
 
   it('GET /api/hosts returns host list', async () => {
@@ -219,8 +219,6 @@ describe('Web API integration', () => {
     seedAlertState(db, [
       { hostId: 'h1', type: 'container_down', target: 'old-test', triggeredAt: recent },
     ]);
-    const [groupId] = seedServiceGroups(db, [{ name: 'test-group' }]);
-    seedGroupMembers(db, [{ groupId, hostId: 'h1', containerName: 'old-test' }]);
     seedBaselines(db, [
       { entityType: 'container', entityId: 'h1/old-test' },
     ]);
@@ -242,7 +240,6 @@ describe('Web API integration', () => {
     assert.equal(db.prepare('SELECT COUNT(*) as c FROM container_snapshots WHERE container_name = ?').get('old-test').c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) as c FROM update_checks WHERE container_name = ?').get('old-test').c, 0);
     assert.equal(db.prepare('SELECT COUNT(*) as c FROM alert_state WHERE target = ?').get('old-test').c, 0);
-    assert.equal(db.prepare('SELECT COUNT(*) as c FROM service_group_members WHERE container_name = ?').get('old-test').c, 0);
     assert.equal(db.prepare("SELECT COUNT(*) as c FROM baselines WHERE entity_id = ?").get('h1/old-test').c, 0);
     assert.equal(db.prepare("SELECT COUNT(*) as c FROM health_scores WHERE entity_id = ?").get('h1/old-test').c, 0);
 
@@ -302,6 +299,53 @@ describe('Web API integration', () => {
   it('PUT host group returns 404 for unknown host', async () => {
     const res = await fetchMethod(port, 'PUT', '/api/hosts/nope/group', { host_group: 'foo' });
     assert.equal(res.status, 404);
+  });
+
+  // PUT /api/host-groups/:name — bulk-rename
+  it('PUT host-groups/:name renames every host whose effective group matches', async () => {
+    seedHost(db, 'h-override', recent);
+    seedHost(db, 'h-agent', recent);
+    seedHost(db, 'h-other', recent);
+    // h-override: explicit override === 'media'
+    // h-agent:    no override, agent reports 'media' (still resolves to media)
+    // h-other:    explicit override === 'web'  — must NOT be touched
+    db.prepare("UPDATE hosts SET host_group_override = ? WHERE host_id = ?").run('media', 'h-override');
+    db.prepare("UPDATE hosts SET host_group = ?, host_group_override = NULL WHERE host_id = ?").run('media', 'h-agent');
+    db.prepare("UPDATE hosts SET host_group_override = ? WHERE host_id = ?").run('web', 'h-other');
+
+    const res = await fetchMethod(port, 'PUT', '/api/host-groups/media', { name: 'Media' });
+    assert.equal(res.status, 200);
+    assert.equal(res.json().renamed, 2);
+
+    const list = await fetch(port, '/api/hosts');
+    const byId = Object.fromEntries(list.json().map((h: any) => [h.host_id, h]));
+    assert.equal(byId['h-override'].host_group_override, 'Media');
+    assert.equal(byId['h-agent'].host_group_override, 'Media');
+    assert.equal(byId['h-other'].host_group_override, 'web');
+  });
+
+  it('PUT host-groups/:name rejects empty new name', async () => {
+    const res = await fetchMethod(port, 'PUT', '/api/host-groups/media', { name: '' });
+    assert.equal(res.status, 400);
+  });
+
+  // DELETE /api/host-groups/:name — bulk-ungroup
+  it('DELETE host-groups/:name moves every matching host to manually-ungrouped', async () => {
+    seedHost(db, 'h-override', recent);
+    seedHost(db, 'h-agent', recent);
+    db.prepare("UPDATE hosts SET host_group_override = ? WHERE host_id = ?").run('media', 'h-override');
+    db.prepare("UPDATE hosts SET host_group = ?, host_group_override = NULL WHERE host_id = ?").run('media', 'h-agent');
+
+    const res = await fetchMethod(port, 'DELETE', '/api/host-groups/media');
+    assert.equal(res.status, 200);
+    assert.equal(res.json().affected, 2);
+
+    const list = await fetch(port, '/api/hosts');
+    for (const h of list.json()) {
+      // Empty string = manually ungrouped (won't snap back on next agent report)
+      assert.equal(h.host_group_override, '');
+      assert.equal(h.host_group, '');
+    }
   });
 
   // DELETE /api/hosts/:hostId/group — clear override, fall back to agent value
@@ -461,69 +505,6 @@ describe('Web API integration', () => {
     res = await fetch(port, `/api/endpoints/${id}/checks`);
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.json()));
-  });
-
-  // ----- Service Groups -----
-  it('groups: create → list → get → update → add member → remove member → delete', async () => {
-    seedHost(db, 'h1', recent);
-    seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
-
-    let res = await fetchMethod(port, 'POST', '/api/groups', {
-      name: 'Web', description: 'Web stack', icon: '🌐', color: '#3b82f6',
-    });
-    assert.equal(res.status, 201);
-    const id = res.json().id;
-    assert.ok(id);
-
-    res = await fetch(port, '/api/groups');
-    assert.equal(res.status, 200);
-    assert.ok(res.json().some((g: any) => g.id === id));
-
-    res = await fetch(port, `/api/groups/${id}`);
-    assert.equal(res.status, 200);
-    assert.equal(res.json().name, 'Web');
-
-    res = await fetchMethod(port, 'PUT', `/api/groups/${id}`, { description: 'Updated description' });
-    assert.equal(res.status, 200);
-
-    res = await fetchMethod(port, 'POST', `/api/groups/${id}/members`, {
-      hostId: 'h1', containerName: 'nginx',
-    });
-    assert.equal(res.status, 200);
-
-    res = await fetch(port, `/api/groups/${id}`);
-    assert.ok(res.json().members.some((m: any) => m.container_name === 'nginx'));
-
-    res = await fetchMethod(port, 'DELETE', `/api/groups/${id}/members`, {
-      hostId: 'h1', containerName: 'nginx',
-    });
-    assert.equal(res.status, 200);
-
-    res = await fetchMethod(port, 'DELETE', `/api/groups/${id}`);
-    assert.equal(res.status, 200);
-  });
-
-  it('POST /api/groups rejects empty name', async () => {
-    const res = await fetchMethod(port, 'POST', '/api/groups', { name: '' });
-    assert.equal(res.status, 400);
-  });
-
-  it('POST /api/groups returns 409 on duplicate name', async () => {
-    await fetchMethod(port, 'POST', '/api/groups', { name: 'Dup' });
-    const res = await fetchMethod(port, 'POST', '/api/groups', { name: 'Dup' });
-    assert.equal(res.status, 409);
-  });
-
-  it('POST /api/groups/:id/members rejects missing fields', async () => {
-    const create = await fetchMethod(port, 'POST', '/api/groups', { name: 'X' });
-    const id = create.json().id;
-    const res = await fetchMethod(port, 'POST', `/api/groups/${id}/members`, { hostId: 'h1' });
-    assert.equal(res.status, 400);
-  });
-
-  it('GET /api/groups/:id returns 404 for unknown id', async () => {
-    const res = await fetch(port, '/api/groups/9999');
-    assert.equal(res.status, 404);
   });
 
   // ----- Insights feedback -----

@@ -65,43 +65,6 @@ function fillDays(rows: { day: string; up: number; total: number }[]): DayStatus
 
 interface DayCountRow { day: string; up: number; total: number }
 
-/** 30-day daily uptime for one stack (aggregated across all member containers). */
-export function getStackHistory(db: Database.Database, groupId: number): DayStatus[] {
-  // Members of the stack (host_id, container_name pairs).
-  const members = db.prepare(`
-    SELECT host_id, container_name FROM service_group_members WHERE group_id = ?
-  `).all(groupId) as { host_id: string; container_name: string }[];
-  if (members.length === 0) return fillDays([]);
-
-  // Merge raw snapshots + hourly rollups for the last 30 days, group by UTC day.
-  // Raw status = 'running' counts as 1 up; rollup carries explicit up/total.
-  const placeholders = members.map(() => '(?, ?)').join(',');
-  const params: (string | number)[] = [];
-  for (const m of members) { params.push(m.host_id, m.container_name); }
-
-  const rows = db.prepare(`
-    WITH pairs(host_id, container_name) AS (VALUES ${placeholders})
-    SELECT day, SUM(up) AS up, SUM(total) AS total FROM (
-      SELECT substr(s.collected_at, 1, 10) AS day,
-             CASE WHEN s.status = 'running' THEN 1 ELSE 0 END AS up,
-             1 AS total
-      FROM container_snapshots s
-      JOIN pairs p ON p.host_id = s.host_id AND p.container_name = s.container_name
-      WHERE s.collected_at >= date('now', '-${HISTORY_DAYS} days')
-      UNION ALL
-      SELECT substr(r.bucket, 1, 10) AS day,
-             COALESCE(r.status_running, 0) AS up,
-             COALESCE(r.status_total, r.sample_count) AS total
-      FROM container_rollups r
-      JOIN pairs p ON p.host_id = r.host_id AND p.container_name = r.container_name
-      WHERE r.bucket >= date('now', '-${HISTORY_DAYS} days')
-    )
-    GROUP BY day
-  `).all(...params) as DayCountRow[];
-
-  return fillDays(rows);
-}
-
 /** 30-day daily uptime for one host. A day is "up" in proportion to how many
  * of its 24 hours produced any sample (raw snapshot or rollup). */
 export function getHostHistory(db: Database.Database, hostId: string): DayStatus[] {

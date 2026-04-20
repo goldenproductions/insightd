@@ -139,8 +139,6 @@ function startStandaloneScheduler(db: Database.Database, docker: Dockerode, conf
       safeCollect('ingest-containers', () => {
         ingestContainers(db, hostId, containers);
         upsertHost(db, hostId);
-        const { autoAssignGroups } = require('./web/group-queries');
-        autoAssignGroups(db, hostId, containers);
       });
     }
 

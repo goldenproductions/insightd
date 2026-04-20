@@ -83,22 +83,6 @@ describe('RCA graph builder', () => {
     assert.ok(composeEdges[0]!.weight > 0.5);
   });
 
-  it('emits same_group edges for service-group members', () => {
-    seedContainer(db, { hostId: 'h1', name: 'web', at: ts(NOW) });
-    seedContainer(db, { hostId: 'h2', name: 'api', at: ts(NOW) });
-
-    db.prepare('INSERT INTO service_groups (name) VALUES (?)').run('frontend');
-    const gid = db.prepare('SELECT id FROM service_groups WHERE name = ?').get('frontend').id;
-    const insMember = db.prepare('INSERT INTO service_group_members (group_id, host_id, container_name) VALUES (?, ?, ?)');
-    insMember.run(gid, 'h1', 'web');
-    insMember.run(gid, 'h2', 'api');
-
-    buildGraph(db);
-    const edges = loadEdges(db);
-    const groupEdges = edges.filter((e: any) => e.type === 'same_group');
-    assert.equal(groupEdges.length, 1);
-  });
-
   it('replaces rca_edges on rebuild (idempotent)', () => {
     seedContainer(db, { hostId: 'h1', name: 'a', at: ts(NOW) });
     seedContainer(db, { hostId: 'h1', name: 'b', at: ts(NOW) });

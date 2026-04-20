@@ -8,11 +8,12 @@
  *     present). Low weight since co-location alone is weak evidence.
  *   - `same_compose` — containers sharing a `com.docker.compose.project`
  *     label. Stronger signal: compose stacks typically depend on each other.
- *   - `same_group` — containers sharing a service_group (user-defined or
- *     compose-auto-assigned). Strongest static signal.
  *   - `metric_corr` — dynamic correlation between two containers' CPU/memory
  *     over the last 2 hours of hourly rollups. Only computed between pairs
  *     that already share a host OR compose project (pruning O(C²) to ≪1%).
+ *
+ * (The legacy `same_group` edge type, sourced from container service_groups,
+ * was removed when stacks were retired in favour of host-level groupings.)
  *
  * This module is the producer. Phase 3's correlation diagnoser (via
  * `ppr.ts`) reads from `rca_edges` at diagnosis time.
@@ -29,19 +30,12 @@ const CORR_MIN_STRENGTH = 0.4;
 const BASE_WEIGHTS = {
   same_host: 0.3,
   same_compose: 0.6,
-  same_group: 0.7,
 } as const;
 
 interface ContainerRow {
   host_id: string;
   container_name: string;
   labels: string | null;
-}
-
-interface MemberRow {
-  group_id: number;
-  host_id: string;
-  container_name: string;
 }
 
 interface RollupRow {
@@ -72,12 +66,6 @@ function loadLiveContainers(db: Database.Database): ContainerRow[] {
     SELECT DISTINCT host_id, container_name, labels FROM container_snapshots
     WHERE collected_at >= datetime('now', '-1 hour')
   `).all() as ContainerRow[];
-}
-
-function loadGroupMembers(db: Database.Database): MemberRow[] {
-  return db.prepare(`
-    SELECT group_id, host_id, container_name FROM service_group_members
-  `).all() as MemberRow[];
 }
 
 function loadCorrelationSeries(
@@ -136,17 +124,9 @@ export function buildGraph(db: Database.Database): number {
     }
   }
 
-  // Service-group membership (loaded once).
-  const members = loadGroupMembers(db);
-  const byGroup = new Map<number, MemberRow[]>();
-  for (const m of members) {
-    if (!byGroup.has(m.group_id)) byGroup.set(m.group_id, []);
-    byGroup.get(m.group_id)!.push(m);
-  }
-
   // Emit edges to a map keyed by (from,to,type). Same-host + same-compose
-  // + same-group are dense and cheap; metric correlation is limited to
-  // pairs that already share a static edge.
+  // are dense and cheap; metric correlation is limited to pairs that already
+  // share a static edge.
   const edges = new Map<string, { row: EdgeKey; weight: number }>();
   const addEdge = (from: string, to: string, type: string, weight: number) => {
     if (from === to) return;
@@ -184,18 +164,6 @@ export function buildGraph(db: Database.Database): number {
         const a = entityOf(list[i]!);
         const b = entityOf(list[j]!);
         addEdge(a, b, 'same_compose', BASE_WEIGHTS.same_compose);
-        correlationPairs.add(pairKey(a, b));
-      }
-    }
-  }
-
-  // Same-service-group edges.
-  for (const [, list] of byGroup) {
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = containerEntity(list[i]!.host_id, list[i]!.container_name);
-        const b = containerEntity(list[j]!.host_id, list[j]!.container_name);
-        addEdge(a, b, 'same_group', BASE_WEIGHTS.same_group);
         correlationPairs.add(pairKey(a, b));
       }
     }

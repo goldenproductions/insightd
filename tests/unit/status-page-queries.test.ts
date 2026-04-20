@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 const {
   createTestDb,
   seedContainerSnapshots,
-  seedServiceGroups,
-  seedGroupMembers,
   seedHostSnapshots,
   seedHttpEndpoints,
   seedHttpChecks,
@@ -12,7 +10,7 @@ const {
 } = require('../helpers/db');
 const { ts } = require('../helpers/fixtures');
 const { suppressConsole } = require('../helpers/mocks');
-const { getStackHistory, getHostHistory, getHostsForStatus, getEndpointHistory, getRecentIncidents } = require('../../hub/src/web/status-page-queries');
+const { getHostHistory, getHostsForStatus, getEndpointHistory, getRecentIncidents } = require('../../hub/src/web/status-page-queries');
 
 function dayOffset(n: number): Date {
   return new Date(Date.now() - n * 86400000);
@@ -34,73 +32,6 @@ describe('status-page queries', () => {
   afterEach(() => {
     db.close();
     restore();
-  });
-
-  describe('getStackHistory', () => {
-    it('returns 30 buckets even when no data exists', () => {
-      const [gid] = seedServiceGroups(db, [{ name: 'media' }]);
-      seedGroupMembers(db, [{ groupId: gid, hostId: 'h1', containerName: 'sonarr' }]);
-      const hist = getStackHistory(db, gid);
-      assert.equal(hist.length, 30);
-      assert.ok(hist.every((d: any) => d.status === 'no_data'));
-      assert.equal(hist[0].uptimePercent, null);
-    });
-
-    it('marks an all-running day as operational', () => {
-      const [gid] = seedServiceGroups(db, [{ name: 'media' }]);
-      seedGroupMembers(db, [{ groupId: gid, hostId: 'h1', containerName: 'sonarr' }]);
-      // 10 snapshots today, all running
-      for (let i = 0; i < 10; i++) {
-        seedContainerSnapshots(db, [{
-          hostId: 'h1', name: 'sonarr', id: 'c1',
-          status: 'running', at: ts(new Date(Date.now() - i * 60000)),
-        }]);
-      }
-      const hist = getStackHistory(db, gid);
-      const today = hist[hist.length - 1];
-      assert.equal(today.status, 'operational');
-      assert.equal(today.uptimePercent, 100);
-    });
-
-    it('marks a day with <90% uptime as outage', () => {
-      const [gid] = seedServiceGroups(db, [{ name: 'media' }]);
-      seedGroupMembers(db, [{ groupId: gid, hostId: 'h1', containerName: 'sonarr' }]);
-      const at = ts(new Date(Date.now() - 60000));
-      // 8 snapshots: 3 running, 5 exited — 37.5% uptime (outage)
-      for (let i = 0; i < 3; i++) {
-        seedContainerSnapshots(db, [{ hostId: 'h1', name: 'sonarr', id: 'c1', status: 'running', at }]);
-      }
-      for (let i = 0; i < 5; i++) {
-        seedContainerSnapshots(db, [{ hostId: 'h1', name: 'sonarr', id: 'c1', status: 'exited', at }]);
-      }
-      const hist = getStackHistory(db, gid);
-      const today = hist[hist.length - 1];
-      assert.equal(today.status, 'outage');
-      assert.ok(today.uptimePercent! < 50);
-    });
-
-    it('bridges raw snapshots and hourly rollups for the same stack', () => {
-      const [gid] = seedServiceGroups(db, [{ name: 'media' }]);
-      seedGroupMembers(db, [{ groupId: gid, hostId: 'h1', containerName: 'sonarr' }]);
-
-      // Recent: raw snapshot
-      seedContainerSnapshots(db, [{
-        hostId: 'h1', name: 'sonarr', id: 'c1',
-        status: 'running', at: ts(new Date(Date.now() - 60000)),
-      }]);
-
-      // 20 days ago: a rollup with 60 up / 60 total
-      const oldBucket = dayOffset(20).toISOString().slice(0, 13) + ':00:00';
-      db.prepare(`INSERT INTO container_rollups
-        (host_id, container_name, bucket, status_running, status_total, sample_count)
-        VALUES (?, ?, ?, ?, ?, ?)`).run('h1', 'sonarr', oldBucket, 60, 60, 60);
-
-      const hist = getStackHistory(db, gid);
-      const oldDay = hist.find((d: any) => d.date === todayUTC(20));
-      assert.ok(oldDay);
-      assert.equal(oldDay!.status, 'operational');
-      assert.equal(oldDay!.uptimePercent, 100);
-    });
   });
 
   describe('getEndpointHistory', () => {
