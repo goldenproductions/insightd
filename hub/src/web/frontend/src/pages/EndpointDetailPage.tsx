@@ -30,102 +30,69 @@ function buildResponseChart(checks: EndpointCheck[]): { timestamps: number[]; va
   return { timestamps, values };
 }
 
-interface Bucket {
-  startMs: number;
-  endMs: number;
-  total: number;
-  failed: number;
-  avgResponseMs: number | null;
-  /** Representative check for the tooltip — worst status in the bucket. */
-  worstCheck: EndpointCheck;
-}
+const MAX_STRIP_CHECKS = 100;
+const SLOW_RESPONSE_MS = 2000;
 
-const MAX_BUCKETS = 96; // ~15 min buckets for 24h
-
-function bucketChecks(checks: EndpointCheck[]): Bucket[] {
-  // Chronological order.
-  const sorted = [...checks].reverse();
-  if (sorted.length === 0) return [];
-
-  const startMs = parseCheckTime(sorted[0]!.checked_at).getTime();
-  const endMs = parseCheckTime(sorted[sorted.length - 1]!.checked_at).getTime();
-  const span = Math.max(endMs - startMs, 1);
-  const count = Math.min(MAX_BUCKETS, sorted.length);
-  const bucketMs = span / count;
-
-  const buckets: Bucket[] = [];
-  let bi = 0;
-  for (let i = 0; i < count; i++) {
-    const bStart = startMs + i * bucketMs;
-    const bEnd = startMs + (i + 1) * bucketMs;
-    let total = 0;
-    let failed = 0;
-    let rtSum = 0;
-    let rtCount = 0;
-    let worst: EndpointCheck | null = null;
-    while (bi < sorted.length) {
-      const t = parseCheckTime(sorted[bi]!.checked_at).getTime();
-      if (t >= bEnd && i < count - 1) break;
-      const c = sorted[bi]!;
-      total++;
-      if (!c.is_up) { failed++; worst = c; }
-      if (c.response_time_ms != null) { rtSum += c.response_time_ms; rtCount++; }
-      if (!worst) worst = c;
-      bi++;
-    }
-    if (total > 0) {
-      buckets.push({
-        startMs: bStart, endMs: bEnd, total, failed,
-        avgResponseMs: rtCount > 0 ? Math.round(rtSum / rtCount) : null,
-        worstCheck: worst!,
-      });
-    }
-  }
-  return buckets;
-}
-
-/** Compact status strip — checks bucketed into time slots with hover detail. */
+/**
+ * One-bar-per-check status strip. Each bar represents one of the most
+ * recent ~100 checks (chronological, left = older). Colour:
+ *   • red     — check failed
+ *   • amber   — check passed but response_time_ms > SLOW_RESPONSE_MS
+ *   • emerald — check passed
+ *
+ * The bar height also encodes severity (100% / 80% / 55%) so the strip
+ * reads at a glance even when colours wash out in bright monitors.
+ */
 function CheckStatusStrip({ checks }: { checks: EndpointCheck[] }) {
   const [hover, setHover] = useState<{ index: number; clientX: number; clientY: number } | null>(null);
-  const buckets = useMemo(() => bucketChecks(checks), [checks]);
 
-  if (buckets.length === 0) return null;
+  // `checks` comes newest-first from the API — reverse + trim to the
+  // latest N so the strip reads left-to-right old → new.
+  const strip = useMemo(() => {
+    const chronological = [...checks].reverse();
+    return chronological.slice(-MAX_STRIP_CHECKS);
+  }, [checks]);
 
-  const hovered = hover ? buckets[hover.index] : null;
+  if (strip.length === 0) return null;
 
-  const fmtTime = (ms: number) => {
-    const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    return new Date(ms).toLocaleString(undefined, opts);
+  const fmtTime = (raw: string) => {
+    const d = parseCheckTime(raw);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
+
+  const hovered = hover ? strip[hover.index] : null;
 
   return (
     <div className="relative">
       <div
-        className="relative flex h-[18px] gap-px"
+        className="relative flex h-11 items-stretch gap-[2px]"
         onMouseLeave={() => setHover(null)}
       >
-        {buckets.map((b, i) => {
-          const color = b.failed > 0 ? 'bg-[var(--color-danger)]' : 'bg-[var(--color-success)]';
+        {strip.map((c, i) => {
+          const isUp = c.is_up;
+          const slow = isUp && c.response_time_ms != null && c.response_time_ms > SLOW_RESPONSE_MS;
+          const color = !isUp ? 'bg-danger' : slow ? 'bg-warning' : 'bg-success';
+          const height = !isUp ? '100%' : slow ? '80%' : '55%';
           const active = hover?.index === i;
           return (
             <div
               key={i}
-              className={`flex-1 first:rounded-l-sm last:rounded-r-sm transition-[filter] ${color} ${active ? 'brightness-125' : ''}`}
+              className={`flex flex-1 items-end transition-[filter] ${active ? 'brightness-125' : ''}`}
               onMouseEnter={(e) => setHover({ index: i, clientX: e.clientX, clientY: e.clientY })}
               onMouseMove={(e) => {
                 if (hover?.index === i) return;
                 setHover({ index: i, clientX: e.clientX, clientY: e.clientY });
               }}
-            />
+            >
+              <span className={`w-full rounded-sm ${color}`} style={{ height }} />
+            </div>
           );
         })}
       </div>
-      {/* Time range labels */}
-      <div className="mt-1 flex justify-between text-[10px] font-medium text-muted">
-        <span>{timeAgo(checks[checks.length - 1]!.checked_at)}</span>
+      <div className="mt-2 flex justify-between text-[11px] text-muted">
+        <span>{strip.length} most recent</span>
         <span>now</span>
       </div>
-      {/* Hover tooltip */}
       {hovered && hover && (
         <div
           className="pointer-events-none fixed z-50 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] shadow-lg"
@@ -134,17 +101,18 @@ function CheckStatusStrip({ checks }: { checks: EndpointCheck[] }) {
           <div className="flex items-center gap-1.5 font-semibold text-fg">
             <span
               className="inline-block h-2 w-2 rounded-full"
-              style={{ background: hovered.failed > 0 ? 'var(--color-danger)' : 'var(--color-success)' }}
+              style={{ background: !hovered.is_up ? 'var(--color-danger)' : (hovered.response_time_ms != null && hovered.response_time_ms > SLOW_RESPONSE_MS) ? 'var(--color-warning)' : 'var(--color-success)' }}
             />
-            {hovered.failed > 0 ? `${hovered.failed}/${hovered.total} failed` : `${hovered.total} passed`}
+            {hovered.is_up ? (hovered.response_time_ms != null && hovered.response_time_ms > SLOW_RESPONSE_MS ? 'Slow' : 'OK') : 'Failed'}
+            {hovered.status_code != null && <span className="ml-1 font-mono text-muted">{hovered.status_code}</span>}
           </div>
-          {hovered.avgResponseMs != null && (
-            <div className="mt-0.5 text-muted">avg {hovered.avgResponseMs}ms</div>
+          {hovered.response_time_ms != null && (
+            <div className="mt-0.5 text-muted">{hovered.response_time_ms}ms</div>
           )}
-          {hovered.failed > 0 && hovered.worstCheck.error && (
-            <div className="mt-0.5 text-danger">{hovered.worstCheck.error}</div>
+          {!hovered.is_up && hovered.error && (
+            <div className="mt-0.5 text-danger">{hovered.error}</div>
           )}
-          <div className="mt-0.5 text-muted">{fmtTime(hovered.startMs)} → {fmtTime(hovered.endMs)}</div>
+          <div className="mt-0.5 text-muted">{fmtTime(hovered.checked_at)}</div>
         </div>
       )}
     </div>

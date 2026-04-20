@@ -186,7 +186,7 @@ function getEndpointSummary(db: Database.Database, endpointId: number): Endpoint
   };
 }
 
-function getEndpointsSummary(db: Database.Database): Array<HttpEndpoint & { lastCheck: HttpCheck | null; uptimePercent24h: number | null; avgResponseMs: number | null }> {
+function getEndpointsSummary(db: Database.Database): Array<HttpEndpoint & { lastCheck: HttpCheck | null; uptimePercent24h: number | null; avgResponseMs: number | null; recentChecks: { is_up: number; response_time_ms: number | null }[] }> {
   const endpoints = getEndpoints(db);
   return endpoints.map(ep => {
     const lastCheck = db.prepare(`
@@ -204,11 +204,18 @@ function getEndpointsSummary(db: Database.Database): Array<HttpEndpoint & { last
       FROM http_checks WHERE endpoint_id = ? AND checked_at >= datetime('now', '-24 hours') AND response_time_ms IS NOT NULL
     `).get(ep.id) as AvgRow;
 
+    // Newest-first from SQL → reverse so the sparkline reads left-to-right as old-to-new.
+    const recent = db.prepare(`
+      SELECT is_up, response_time_ms
+      FROM http_checks WHERE endpoint_id = ? ORDER BY checked_at DESC LIMIT 30
+    `).all(ep.id) as { is_up: number; response_time_ms: number | null }[];
+
     return {
       ...ep,
       lastCheck: lastCheck || null,
       uptimePercent24h: uptime24h.total > 0 ? Math.round((uptime24h.up_count / uptime24h.total) * 1000) / 10 : null,
       avgResponseMs: avgResponse.avg_ms ? Math.round(avgResponse.avg_ms) : null,
+      recentChecks: recent.reverse(),
     };
   });
 }

@@ -419,6 +419,8 @@ export interface EndpointSummary extends Endpoint {
   lastCheck: EndpointCheck | null;
   uptimePercent24h: number | null;
   avgResponseMs: number | null;
+  /** Last ~30 checks in chronological order (oldest → newest), for the row sparkline. */
+  recentChecks: { is_up: number; response_time_ms: number | null }[];
 }
 
 export interface EndpointDetail extends Endpoint {
