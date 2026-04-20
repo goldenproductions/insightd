@@ -264,12 +264,34 @@ function handleDashboard(req: HandlerReq, res: ServerResponse, db: Database.Data
 
 function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
-  // Default: return all alerts (active + resolved). Pass ?activeOnly=true to
-  // filter to currently-active. The legacy `?active=false` form is still
-  // accepted as an alias for "all" so cached frontend bundles keep working.
-  const activeOnly = url.searchParams.get('activeOnly') === 'true'
-    || (url.searchParams.has('active') && url.searchParams.get('active') === 'true');
-  return queries.getAlerts(db, activeOnly);
+  const p = url.searchParams;
+
+  // Parse new Explore-style params. Omitted filters mean "any".
+  const rawStatus = p.get('status');
+  const status: 'active' | 'resolved' | undefined =
+    rawStatus === 'active' || rawStatus === 'resolved' ? rawStatus : undefined;
+
+  const LEVEL_SET = new Set(['critical', 'error', 'warning', 'info']);
+  const levels = (p.get('levels') ?? '').split(',').map(s => s.trim()).filter(s => LEVEL_SET.has(s)) as Array<'critical' | 'error' | 'warning' | 'info'>;
+  const hosts = (p.get('hosts') ?? '').split(',').map(s => s.trim()).filter(Boolean);
+
+  const rawMuted = p.get('muted');
+  const muted = rawMuted === 'true' ? true : rawMuted === 'false' ? false : undefined;
+
+  const q = p.get('q') ?? undefined;
+
+  const limit = parseInt(p.get('limit') ?? '50', 10);
+  const offset = parseInt(p.get('offset') ?? '0', 10);
+
+  return queries.getAlertsExplore(db, {
+    limit: Number.isFinite(limit) ? limit : 50,
+    offset: Number.isFinite(offset) ? offset : 0,
+    status,
+    levels: levels.length > 0 ? levels : undefined,
+    hosts: hosts.length > 0 ? hosts : undefined,
+    muted,
+    q,
+  });
 }
 
 function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): any {
