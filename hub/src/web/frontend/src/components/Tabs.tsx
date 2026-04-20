@@ -24,7 +24,7 @@ export function Tabs({ tabs, active, onChange }: { tabs: Tab[]; active: string; 
             style={{ marginBottom: '-1px' }}
           >
             {tab.label}
-            {tab.count != null && (
+            {tab.count != null && tab.count > 0 && (
               <span className="ml-1.5 rounded-full bg-bg-secondary px-1.5 py-0.5 text-xs text-muted">
                 {tab.count}
               </span>
