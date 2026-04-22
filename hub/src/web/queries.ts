@@ -1298,6 +1298,242 @@ function getDisksOverview(db: Database.Database, onlineThresholdMinutes: number)
   };
 }
 
+interface ContainerStorageRow {
+  host_id: string;
+  container_name: string;
+  status: string;
+  labels: string | null;
+  collected_at: string;
+  size_rootfs_bytes: number | null;
+  size_rw_bytes: number | null;
+  image: string | null;
+  host_group: string | null;
+  online: number;
+}
+
+interface ContainerStorageItem {
+  name: string;
+  image: string | null;
+  status: string;
+  sizeRwBytes: number | null;
+  sizeRootfsBytes: number | null;
+  collectedAt: string;
+}
+
+interface ContainersStorageHost {
+  hostId: string;
+  hostGroup: string | null;
+  online: boolean;
+  containers: ContainerStorageItem[];
+}
+
+interface ContainersStorageResult {
+  totals: { containerCount: number; totalRwBytes: number; totalRootfsBytes: number };
+  hosts: ContainersStorageHost[];
+}
+
+function getContainersStorage(
+  db: Database.Database,
+  onlineThresholdMinutes: number,
+  showInternal: boolean = false,
+): ContainersStorageResult {
+  // Three CTEs: latest snapshot (for status/labels/collected_at), latest
+  // snapshot *with sizes* (sticks around if the newest snapshot happened to
+  // arrive without sizes), and latest image from update_checks.
+  const rows = db.prepare(`
+    WITH latest_meta AS (
+      SELECT host_id, container_name, status, labels, collected_at,
+             ROW_NUMBER() OVER (PARTITION BY host_id, container_name ORDER BY collected_at DESC) as rn
+      FROM container_snapshots
+    ),
+    latest_sized AS (
+      SELECT host_id, container_name, size_rootfs_bytes, size_rw_bytes,
+             ROW_NUMBER() OVER (PARTITION BY host_id, container_name ORDER BY collected_at DESC) as rn
+      FROM container_snapshots
+      WHERE size_rootfs_bytes IS NOT NULL OR size_rw_bytes IS NOT NULL
+    ),
+    latest_image AS (
+      SELECT host_id, container_name, image,
+             ROW_NUMBER() OVER (PARTITION BY host_id, container_name ORDER BY checked_at DESC) as rn
+      FROM update_checks
+    )
+    SELECT cn.host_id, cn.container_name,
+           lm.status, lm.labels, lm.collected_at,
+           ls.size_rootfs_bytes, ls.size_rw_bytes,
+           li.image,
+           COALESCE(h.host_group_override, h.host_group) AS host_group,
+           CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+             THEN 1 ELSE 0 END AS online
+    FROM containers cn
+    INNER JOIN hosts h ON h.host_id = cn.host_id
+    INNER JOIN latest_meta lm ON lm.host_id = cn.host_id AND lm.container_name = cn.container_name AND lm.rn = 1
+    LEFT JOIN latest_sized ls ON ls.host_id = cn.host_id AND ls.container_name = cn.container_name AND ls.rn = 1
+    LEFT JOIN latest_image li ON li.host_id = cn.host_id AND li.container_name = cn.container_name AND li.rn = 1
+    WHERE cn.removed_at IS NULL
+    ORDER BY cn.host_id,
+             (ls.size_rw_bytes IS NULL) ASC, ls.size_rw_bytes DESC,
+             (ls.size_rootfs_bytes IS NULL) ASC, ls.size_rootfs_bytes DESC,
+             cn.container_name
+  `).all(onlineThresholdMinutes) as ContainerStorageRow[];
+
+  const filtered = showInternal ? rows : rows.filter(r => {
+    if (!r.labels) return true;
+    try { return JSON.parse(r.labels)['insightd.internal'] !== 'true'; } catch { return true; }
+  });
+
+  let totalRwBytes = 0;
+  let totalRootfsBytes = 0;
+  const byHost = new Map<string, ContainersStorageHost>();
+
+  for (const r of filtered) {
+    totalRwBytes += r.size_rw_bytes ?? 0;
+    totalRootfsBytes += r.size_rootfs_bytes ?? 0;
+
+    let h = byHost.get(r.host_id);
+    if (!h) {
+      h = { hostId: r.host_id, hostGroup: r.host_group, online: r.online === 1, containers: [] };
+      byHost.set(r.host_id, h);
+    }
+    h.containers.push({
+      name: r.container_name,
+      image: r.image,
+      status: r.status,
+      sizeRwBytes: r.size_rw_bytes,
+      sizeRootfsBytes: r.size_rootfs_bytes,
+      collectedAt: r.collected_at,
+    });
+  }
+
+  return {
+    totals: {
+      containerCount: filtered.length,
+      totalRwBytes,
+      totalRootfsBytes,
+    },
+    hosts: Array.from(byHost.values()),
+  };
+}
+
+interface VolumeRow {
+  host_id: string;
+  volume_name: string;
+  driver: string;
+  mountpoint: string | null;
+  size_bytes: number | null;
+  ref_count: number | null;
+  created_at: string | null;
+  labels: string | null;
+  collected_at: string;
+}
+
+interface VolumeHostRow {
+  host_id: string;
+  runtime_type: string;
+  host_group: string | null;
+  online: number;
+}
+
+interface VolumeItem {
+  name: string;
+  driver: string;
+  mountpoint: string | null;
+  sizeBytes: number | null;
+  refCount: number | null;
+  createdAt: string | null;
+  collectedAt: string;
+}
+
+interface VolumesOverviewHost {
+  hostId: string;
+  runtimeType: string;
+  hostGroup: string | null;
+  online: boolean;
+  volumes: VolumeItem[];
+}
+
+interface VolumesOverviewResult {
+  totals: {
+    volumeCount: number;
+    totalSizeBytes: number;
+    orphanedCount: number;
+    orphanedSizeBytes: number;
+  };
+  hosts: VolumesOverviewHost[];
+}
+
+function getVolumesOverview(
+  db: Database.Database,
+  onlineThresholdMinutes: number,
+): VolumesOverviewResult {
+  const hosts = db.prepare(`
+    SELECT host_id, runtime_type,
+      COALESCE(host_group_override, host_group) AS host_group,
+      CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
+        THEN 1 ELSE 0 END AS online
+    FROM hosts
+    ORDER BY host_id
+  `).all(onlineThresholdMinutes) as VolumeHostRow[];
+
+  // Latest batch of volumes per host — agents publish a fresh inventory
+  // every cycle, so the newest collected_at per host is authoritative.
+  const vols = db.prepare(`
+    WITH latest_batch AS (
+      SELECT host_id, MAX(collected_at) AS max_at
+      FROM volume_snapshots
+      GROUP BY host_id
+    )
+    SELECT v.host_id, v.volume_name, v.driver, v.mountpoint,
+           v.size_bytes, v.ref_count, v.created_at, v.labels, v.collected_at
+    FROM volume_snapshots v
+    INNER JOIN latest_batch lb
+      ON lb.host_id = v.host_id AND v.collected_at = lb.max_at
+    ORDER BY v.host_id,
+             (v.size_bytes IS NULL) ASC, v.size_bytes DESC,
+             v.volume_name
+  `).all() as VolumeRow[];
+
+  const byHost = new Map<string, VolumeItem[]>();
+  for (const v of vols) {
+    let list = byHost.get(v.host_id);
+    if (!list) { list = []; byHost.set(v.host_id, list); }
+    list.push({
+      name: v.volume_name,
+      driver: v.driver,
+      mountpoint: v.mountpoint,
+      sizeBytes: v.size_bytes,
+      refCount: v.ref_count,
+      createdAt: v.created_at,
+      collectedAt: v.collected_at,
+    });
+  }
+
+  let volumeCount = 0;
+  let totalSizeBytes = 0;
+  let orphanedCount = 0;
+  let orphanedSizeBytes = 0;
+  for (const list of byHost.values()) {
+    for (const v of list) {
+      volumeCount++;
+      totalSizeBytes += v.sizeBytes ?? 0;
+      if (v.refCount === 0) {
+        orphanedCount++;
+        orphanedSizeBytes += v.sizeBytes ?? 0;
+      }
+    }
+  }
+
+  return {
+    totals: { volumeCount, totalSizeBytes, orphanedCount, orphanedSizeBytes },
+    hosts: hosts.map(h => ({
+      hostId: h.host_id,
+      runtimeType: h.runtime_type,
+      hostGroup: h.host_group,
+      online: h.online === 1,
+      volumes: byHost.get(h.host_id) ?? [],
+    })),
+  };
+}
+
 function getAllImageUpdates(db: Database.Database): ImageUpdateRow[] {
   return db.prepare(`
     SELECT uc.host_id, uc.container_name, uc.image, uc.checked_at
@@ -1388,4 +1624,4 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getAllImageUpdates, getContainerDowntime };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getContainersStorage, getVolumesOverview, getAllImageUpdates, getContainerDowntime };

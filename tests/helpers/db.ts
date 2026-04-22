@@ -9,6 +9,9 @@ interface ContainerSnapshotSeed {
   blkRead?: number | null; blkWrite?: number | null;
   health?: string | null; at: string;
   exitCode?: number | null;
+  labels?: string | null;
+  sizeRootfsBytes?: number | null;
+  sizeRwBytes?: number | null;
   // When true, skip upserting into the `containers` registry — use this to
   // simulate a container that has been removed (Docker rm, k8s pod delete)
   // but whose historical snapshots are still in the DB.
@@ -78,8 +81,8 @@ function createTestDb(): Database.Database {
 function seedContainerSnapshots(db: Database.Database, rows: ContainerSnapshotSeed[]): void {
   const insert = db.prepare(`
     INSERT INTO container_snapshots
-    (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, exit_code, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, labels, exit_code, size_rootfs_bytes, size_rw_bytes, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   // Production ingest always pairs snapshot inserts with a registry upsert.
   // Mirror that here so tests that call seedContainerSnapshots get a live
@@ -98,7 +101,8 @@ function seedContainerSnapshots(db: Database.Database, rows: ContainerSnapshotSe
   for (const r of rows) {
     const hostId = r.hostId || 'local';
     insert.run(hostId, r.name, r.id || 'abc123', r.status || 'running', r.cpu ?? null, r.mem ?? null, r.restarts ?? 0,
-      r.netRx ?? null, r.netTx ?? null, r.blkRead ?? null, r.blkWrite ?? null, r.health ?? null, r.exitCode ?? null, r.at);
+      r.netRx ?? null, r.netTx ?? null, r.blkRead ?? null, r.blkWrite ?? null, r.health ?? null, r.labels ?? null, r.exitCode ?? null,
+      r.sizeRootfsBytes ?? null, r.sizeRwBytes ?? null, r.at);
     if (!r.removed) {
       upsert.run(hostId, r.name, r.at, r.at);
     }

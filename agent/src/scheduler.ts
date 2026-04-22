@@ -72,12 +72,18 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     const diskIO = isK8s ? null : await safeCollect('disk-io', () => Promise.resolve(collectDiskIO(config)));
     const networkIO = isK8s ? null : await safeCollect('network-io', () => Promise.resolve(collectNetworkIO(config)));
 
+    // Volumes: only runtimes that opt in (Docker). k8s volumes are
+    // cluster-scoped and aren't visible per-node.
+    const volumes = runtime.listVolumes
+      ? (await safeCollect('volumes', () => runtime.listVolumes!())) ?? []
+      : [];
+
     logger.info('scheduler', 'Collection cycle complete');
 
     // Publish to MQTT
     if (containers) {
       await safeCollect('mqtt-publish', () =>
-        publishCollection(config.hostId, { containers, disk, host, gpu, temperature, diskIO, networkIO, runtimeName: runtime.name, hostGroup: config.hostGroup })
+        publishCollection(config.hostId, { containers, disk, volumes, host, gpu, temperature, diskIO, networkIO, runtimeName: runtime.name, hostGroup: config.hostGroup })
       );
     }
 

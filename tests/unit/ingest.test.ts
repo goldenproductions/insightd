@@ -2,9 +2,10 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const { createTestDb } = require('../helpers/db');
 
-const { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost } = require('../../hub/src/ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestUpdates, upsertHost, ingestHost } = require('../../hub/src/ingest') as {
   ingestContainers: (db: any, hostId: string, containers: any[]) => void;
   ingestDisk: (db: any, hostId: string, disk: any[]) => void;
+  ingestVolumes: (db: any, hostId: string, volumes: any[]) => void;
   ingestUpdates: (db: any, hostId: string, updates: any[]) => void;
   upsertHost: (db: any, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
   ingestHost: (db: any, hostId: string, hostData: any) => void;
@@ -31,6 +32,8 @@ describe('hub ingest', () => {
         blkioWriteBytes: 8192,
         healthStatus: 'healthy',
         labels: { app: 'web' },
+        sizeRootfsBytes: 142_000_000,
+        sizeRwBytes: 12_000_000,
       }]);
 
       const row = db.prepare('SELECT * FROM container_snapshots WHERE host_id = ?').get('h1');
@@ -46,6 +49,8 @@ describe('hub ingest', () => {
       assert.equal(row.blkio_write_bytes, 8192);
       assert.equal(row.health_status, 'healthy');
       assert.equal(row.labels, '{"app":"web"}');
+      assert.equal(row.size_rootfs_bytes, 142_000_000);
+      assert.equal(row.size_rw_bytes, 12_000_000);
     });
 
     it('coerces undefined optional fields to NULL', () => {
@@ -112,6 +117,41 @@ describe('hub ingest', () => {
   });
 
   describe('ingestUpdates', () => {
+    it('inserts volume snapshots with all fields', () => {
+      ingestVolumes(db, 'h1', [{
+        name: 'pg_data',
+        driver: 'local',
+        mountpoint: '/var/lib/docker/volumes/pg_data/_data',
+        sizeBytes: 1_073_741_824,
+        refCount: 2,
+        createdAt: '2026-01-01T00:00:00Z',
+        labels: { app: 'postgres' },
+      }]);
+      const row = db.prepare('SELECT * FROM volume_snapshots WHERE volume_name = ?').get('pg_data');
+      assert.equal(row.driver, 'local');
+      assert.equal(row.mountpoint, '/var/lib/docker/volumes/pg_data/_data');
+      assert.equal(row.size_bytes, 1_073_741_824);
+      assert.equal(row.ref_count, 2);
+      assert.equal(row.created_at, '2026-01-01T00:00:00Z');
+      assert.equal(row.labels, '{"app":"postgres"}');
+    });
+
+    it('persists nulls for volumes the runtime cannot size', () => {
+      ingestVolumes(db, 'h1', [{
+        name: 'sparse',
+        driver: 'local',
+        mountpoint: null,
+        sizeBytes: null,
+        refCount: null,
+        createdAt: null,
+        labels: null,
+      }]);
+      const row = db.prepare('SELECT * FROM volume_snapshots WHERE volume_name = ?').get('sparse');
+      assert.equal(row.size_bytes, null);
+      assert.equal(row.ref_count, null);
+      assert.equal(row.labels, null);
+    });
+
     it('inserts update checks and converts hasUpdate boolean to int', () => {
       ingestUpdates(db, 'h1', [
         { containerName: 'nginx', image: 'nginx:1.25', localDigest: 'sha:a', remoteDigest: 'sha:b', hasUpdate: true },

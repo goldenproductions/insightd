@@ -16,6 +16,8 @@ interface ContainerSnapshot {
   healthCheckOutput?: string | null;
   labels?: Record<string, string> | string | null;
   exitCode?: number | null;
+  sizeRootfsBytes?: number | null;
+  sizeRwBytes?: number | null;
 }
 
 interface DiskResult {
@@ -23,6 +25,16 @@ interface DiskResult {
   totalGb: number;
   usedGb: number;
   usedPercent: number;
+}
+
+interface VolumeResult {
+  name: string;
+  driver: string;
+  mountpoint: string | null;
+  sizeBytes: number | null;
+  refCount: number | null;
+  createdAt: string | null;
+  labels: string | Record<string, string> | null;
 }
 
 interface UpdateResult {
@@ -72,8 +84,8 @@ interface HostData {
  */
 function ingestContainers(db: Database.Database, hostId: string, containers: ContainerSnapshot[]): void {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, size_rootfs_bytes, size_rw_bytes, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const upsertRegistry = db.prepare(`
     INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
@@ -93,7 +105,8 @@ function ingestContainers(db: Database.Database, hostId: string, containers: Con
     for (const c of items) {
       const labels = typeof c.labels === 'object' ? JSON.stringify(c.labels) : (c.labels || null);
       insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount,
-        c.networkRxBytes ?? null, c.networkTxBytes ?? null, c.blkioReadBytes ?? null, c.blkioWriteBytes ?? null, c.healthStatus ?? null, c.healthCheckOutput ?? null, labels, c.exitCode ?? null, batchAt);
+        c.networkRxBytes ?? null, c.networkTxBytes ?? null, c.blkioReadBytes ?? null, c.blkioWriteBytes ?? null, c.healthStatus ?? null, c.healthCheckOutput ?? null, labels, c.exitCode ?? null,
+        c.sizeRootfsBytes ?? null, c.sizeRwBytes ?? null, batchAt);
       upsertRegistry.run(hostId, c.name, batchAt, batchAt);
     }
     markRemoved.run(batchAt, hostId, batchAt);
@@ -121,6 +134,33 @@ function ingestDisk(db: Database.Database, hostId: string, diskResults: DiskResu
   if (diskResults.length > 0) {
     insertMany(diskResults);
   }
+}
+
+/**
+ * Ingest Docker volume inventory into the database. One row per volume per
+ * cycle. Queries take the latest snapshot per (host, volume_name), so stale
+ * rows for volumes the host no longer has will naturally age out — but we
+ * don't try to "mark removed" the way containers do.
+ */
+function ingestVolumes(db: Database.Database, hostId: string, volumes: VolumeResult[]): void {
+  const insert = db.prepare(`
+    INSERT INTO volume_snapshots
+    (host_id, volume_name, driver, mountpoint, size_bytes, ref_count, created_at, labels, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
+  const insertMany = db.transaction((items: VolumeResult[]) => {
+    for (const v of items) {
+      const labels = typeof v.labels === 'object' && v.labels !== null
+        ? JSON.stringify(v.labels)
+        : (v.labels ?? null);
+      insert.run(
+        hostId, v.name, v.driver, v.mountpoint ?? null,
+        v.sizeBytes ?? null, v.refCount ?? null, v.createdAt ?? null, labels,
+      );
+    }
+  });
+  if (volumes.length > 0) insertMany(volumes);
+  logger.info('ingest', `Stored ${volumes.length} volume snapshots for ${hostId}`);
 }
 
 /**
@@ -207,4 +247,4 @@ function ingestHost(db: Database.Database, hostId: string, hostData: HostData | 
   );
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost };
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestUpdates, upsertHost, ingestHost };

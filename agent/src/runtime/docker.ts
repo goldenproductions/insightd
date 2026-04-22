@@ -4,7 +4,7 @@ import https = require('https');
 import type { IncomingMessage } from 'http';
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
-  LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
+  LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate, VolumeInfo,
 } from './types';
 
 const { safeCollect } = require('../../../shared/utils/errors') as {
@@ -30,6 +30,10 @@ export class DockerRuntime implements ContainerRuntime {
   private restartState = new Map<string, { restartCount: number; lastStartedAt: string | null }>();
   // In-memory state — only the two CPU fields needed for delta calculation
   private prevStats = new Map<string, { totalUsage: number; systemUsage: number }>();
+  // Fires once if Docker rejects size:true (old daemon, restricted socket).
+  private sizeListWarned = false;
+  // Fires once if docker df fails (rare — e.g. restricted socket).
+  private volumeDfWarned = false;
 
   constructor(options: { socketPath: string; allowActions: boolean }) {
     this.socketPath = options.socketPath;
@@ -51,7 +55,20 @@ export class DockerRuntime implements ContainerRuntime {
 
   async listContainers(): Promise<ContainerInfo[]> {
     const docker = this.getClient();
-    const raw = await docker.listContainers({ all: true });
+    // size:true asks Docker to return SizeRootFs + SizeRw per container.
+    // It walks the container filesystem, which can be slow on some setups —
+    // fall back to the cheap listing if it errors (restricted socket, old
+    // daemon) so we don't lose containers entirely.
+    let raw: any[];
+    try {
+      raw = await docker.listContainers({ all: true, size: true });
+    } catch (err) {
+      if (!this.sizeListWarned) {
+        logger.warn('containers', `listContainers(size:true) failed (${(err as Error).message}); falling back without sizes`);
+        this.sizeListWarned = true;
+      }
+      raw = await docker.listContainers({ all: true });
+    }
 
     const parsed: ContainerInfo[] = raw.map(c => {
       // Parse health status from list response Status string (e.g. "Up 2 hours (healthy)")
@@ -69,6 +86,8 @@ export class DockerRuntime implements ContainerRuntime {
         healthStatus,
         labels: c.Labels || {},
         image: c.Image,
+        sizeRootfsBytes: typeof c.SizeRootFs === 'number' ? c.SizeRootFs : null,
+        sizeRwBytes: typeof c.SizeRw === 'number' ? c.SizeRw : null,
       };
     });
 
@@ -219,6 +238,43 @@ export class DockerRuntime implements ContainerRuntime {
     }
 
     return result;
+  }
+
+  async listVolumes(): Promise<VolumeInfo[]> {
+    const docker = this.getClient();
+    // `docker.df()` hits GET /system/df, which returns volumes with
+    // UsageData.Size + UsageData.RefCount. Walking volume sizes can be slow
+    // on very large caches — if it fails, fall back to the cheap volume
+    // listing (no sizes) so we at least enumerate what's there.
+    let vols: any[];
+    let withSizes = true;
+    try {
+      const df = await (docker as any).df();
+      vols = Array.isArray(df?.Volumes) ? df.Volumes : [];
+    } catch (err) {
+      if (!this.volumeDfWarned) {
+        logger.warn('volumes', `docker df failed (${(err as Error).message}); falling back to volume list without sizes`);
+        this.volumeDfWarned = true;
+      }
+      withSizes = false;
+      try {
+        const listed = await docker.listVolumes();
+        vols = Array.isArray(listed.Volumes) ? listed.Volumes : [];
+      } catch (err2) {
+        logger.warn('volumes', `listVolumes also failed (${(err2 as Error).message}); returning empty list`);
+        return [];
+      }
+    }
+
+    return vols.map((v: any) => ({
+      name: v.Name || '',
+      driver: v.Driver || 'unknown',
+      mountpoint: v.Mountpoint || null,
+      sizeBytes: withSizes && typeof v?.UsageData?.Size === 'number' && v.UsageData.Size >= 0 ? v.UsageData.Size : null,
+      refCount: withSizes && typeof v?.UsageData?.RefCount === 'number' && v.UsageData.RefCount >= 0 ? v.UsageData.RefCount : null,
+      createdAt: v.CreatedAt || null,
+      labels: v.Labels || {},
+    }));
   }
 
   async fetchLogs(containerId: string, options: LogOptions): Promise<LogEntry[]> {

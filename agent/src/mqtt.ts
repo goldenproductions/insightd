@@ -29,12 +29,23 @@ interface CollectionData {
     healthCheckOutput?: string | null;
     labels?: Record<string, string>;
     exitCode?: number | null;
+    sizeRootfsBytes?: number | null;
+    sizeRwBytes?: number | null;
   }>;
   disk: Array<{
     mountPoint: string;
     totalGb: number;
     usedGb: number;
     usedPercent: number;
+  }>;
+  volumes?: Array<{
+    name: string;
+    driver: string;
+    mountpoint: string | null;
+    sizeBytes: number | null;
+    refCount: number | null;
+    createdAt: string | null;
+    labels: Record<string, string>;
   }>;
   host?: {
     cpuPercent?: number | null;
@@ -283,12 +294,23 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
       health_check_output: c.healthCheckOutput ?? null,
       labels: JSON.stringify(c.labels || {}),
       exit_code: c.exitCode ?? null,
+      size_rootfs_bytes: c.sizeRootfsBytes ?? null,
+      size_rw_bytes: c.sizeRwBytes ?? null,
     })),
     disk: data.disk.map(d => ({
       mount_point: d.mountPoint,
       total_gb: d.totalGb,
       used_gb: d.usedGb,
       used_percent: d.usedPercent,
+    })),
+    volumes: (data.volumes ?? []).map(v => ({
+      name: v.name,
+      driver: v.driver,
+      mountpoint: v.mountpoint,
+      size_bytes: v.sizeBytes,
+      ref_count: v.refCount,
+      created_at: v.createdAt,
+      labels: JSON.stringify(v.labels || {}),
     })),
   };
   if (data.host) {
