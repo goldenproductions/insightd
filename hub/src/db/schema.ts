@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 31;
+const SCHEMA_VERSION = 33;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -115,6 +115,55 @@ function bootstrap(db: Database.Database): void {
       ON volume_snapshots (host_id, collected_at);
     CREATE INDEX IF NOT EXISTS idx_volumes_host_name_time
       ON volume_snapshots (host_id, volume_name, collected_at);
+
+    -- Kubernetes PersistentVolume inventory (cluster-scoped, published by the
+    -- elected leader agent per cluster). cluster_id is typically the
+    -- INSIGHTD_HOST_GROUP of the publishing nodes.
+    CREATE TABLE IF NOT EXISTS pv_snapshots (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      cluster_id       TEXT NOT NULL,
+      pv_name          TEXT NOT NULL,
+      phase            TEXT NOT NULL,
+      capacity_bytes   INTEGER,
+      access_modes     TEXT,
+      reclaim_policy   TEXT,
+      storage_class    TEXT,
+      volume_mode      TEXT,
+      claim_namespace  TEXT,
+      claim_name       TEXT,
+      csi_driver       TEXT,
+      created_at       TEXT,
+      labels           TEXT,
+      collected_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pv_cluster_time
+      ON pv_snapshots (cluster_id, collected_at);
+    CREATE INDEX IF NOT EXISTS idx_pv_cluster_name_time
+      ON pv_snapshots (cluster_id, pv_name, collected_at);
+
+    -- Kubernetes PersistentVolumeClaim inventory.
+    CREATE TABLE IF NOT EXISTS pvc_snapshots (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      cluster_id       TEXT NOT NULL,
+      namespace        TEXT NOT NULL,
+      pvc_name         TEXT NOT NULL,
+      phase            TEXT NOT NULL,
+      storage_class    TEXT,
+      request_bytes    INTEGER,
+      capacity_bytes   INTEGER,
+      access_modes     TEXT,
+      volume_name      TEXT,
+      volume_mode      TEXT,
+      created_at       TEXT,
+      labels           TEXT,
+      collected_at     TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pvc_cluster_time
+      ON pvc_snapshots (cluster_id, collected_at);
+    CREATE INDEX IF NOT EXISTS idx_pvc_cluster_ns_name_time
+      ON pvc_snapshots (cluster_id, namespace, pvc_name, collected_at);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -652,6 +701,57 @@ function migrate(db: Database.Database, fromVersion: number): void {
         ON volume_snapshots (host_id, volume_name, collected_at);
     `);
   }
+  if (fromVersion < 32) {
+    // K8s PersistentVolume inventory (cluster-scoped).
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pv_snapshots (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_id       TEXT NOT NULL,
+        pv_name          TEXT NOT NULL,
+        phase            TEXT NOT NULL,
+        capacity_bytes   INTEGER,
+        access_modes     TEXT,
+        reclaim_policy   TEXT,
+        storage_class    TEXT,
+        volume_mode      TEXT,
+        claim_namespace  TEXT,
+        claim_name       TEXT,
+        csi_driver       TEXT,
+        created_at       TEXT,
+        labels           TEXT,
+        collected_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pv_cluster_time
+        ON pv_snapshots (cluster_id, collected_at);
+      CREATE INDEX IF NOT EXISTS idx_pv_cluster_name_time
+        ON pv_snapshots (cluster_id, pv_name, collected_at);
+    `);
+  }
+  if (fromVersion < 33) {
+    // K8s PersistentVolumeClaim inventory.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pvc_snapshots (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_id       TEXT NOT NULL,
+        namespace        TEXT NOT NULL,
+        pvc_name         TEXT NOT NULL,
+        phase            TEXT NOT NULL,
+        storage_class    TEXT,
+        request_bytes    INTEGER,
+        capacity_bytes   INTEGER,
+        access_modes     TEXT,
+        volume_name      TEXT,
+        volume_mode      TEXT,
+        created_at       TEXT,
+        labels           TEXT,
+        collected_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pvc_cluster_time
+        ON pvc_snapshots (cluster_id, collected_at);
+      CREATE INDEX IF NOT EXISTS idx_pvc_cluster_ns_name_time
+        ON pvc_snapshots (cluster_id, namespace, pvc_name, collected_at);
+    `);
+  }
 }
 
 /**
@@ -678,6 +778,8 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r5 = db.prepare(`DELETE FROM host_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const r7 = db.prepare(`DELETE FROM http_checks WHERE checked_at < ${rawCutoff}`).run();
   const r8 = db.prepare(`DELETE FROM insight_feedback WHERE created_at < ${rawCutoff}`).run();
+  const rPv  = db.prepare(`DELETE FROM pv_snapshots  WHERE collected_at < ${rawCutoff}`).run();
+  const rPvc = db.prepare(`DELETE FROM pvc_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const rC = db.prepare(`DELETE FROM containers WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
@@ -692,7 +794,8 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r12 = db.prepare(`DELETE FROM http_rollups WHERE bucket < ${rollupCutoff}`).run();
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
-    + r6.changes + r7.changes + r8.changes + rC.changes + r9.changes + r10.changes + r11.changes + r12.changes;
+    + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
+    + r9.changes + r10.changes + r11.changes + r12.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);

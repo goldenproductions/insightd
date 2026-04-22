@@ -4,7 +4,12 @@ import logger = require('../../shared/utils/logger');
 import type { ContainerRuntime } from './runtime/types';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
-const { publishCollection, publishUpdates } = require('./mqtt') as { publishCollection: (hostId: string, data: any) => Promise<void>; publishUpdates: (hostId: string, updates: any[]) => Promise<void> };
+const { publishCollection, publishUpdates, publishPvs, publishPvcs } = require('./mqtt') as {
+  publishCollection: (hostId: string, data: any) => Promise<void>;
+  publishUpdates: (hostId: string, updates: any[]) => Promise<void>;
+  publishPvs: (clusterId: string, publisherHostId: string, pvs: any[]) => Promise<void>;
+  publishPvcs: (clusterId: string, publisherHostId: string, pvcs: any[]) => Promise<void>;
+};
 
 interface SchedulerConfig {
   hostId: string;
@@ -14,6 +19,15 @@ interface SchedulerConfig {
   timezone: string;
   hostRoot: string;
   diskWarnPercent?: number;
+  podName?: string;
+  podNamespace?: string;
+  nodeName?: string;
+}
+
+interface ClusterPublisher {
+  clusterId: string;
+  client: import('./runtime/kubernetes').K8sClient;
+  leader: import('./runtime/k8s-lease').LeaderElector;
 }
 
 function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig): void {
@@ -23,6 +37,9 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
   const { collectTemperature } = require('./collectors/temperature') as { collectTemperature: (config: any) => any };
   const { collectDiskIO } = require('./collectors/disk-io') as { collectDiskIO: (config: any) => any };
   const { collectNetworkIO } = require('./collectors/network-io') as { collectNetworkIO: (config: any) => any };
+
+  const isK8s = runtime.name === 'kubernetes';
+  let clusterPublisher: ClusterPublisher | null = null;
 
   async function runCollection(): Promise<void> {
     logger.info('scheduler', 'Starting collection cycle');
@@ -66,7 +83,6 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     // In k8s mode they read the underlying machine's view, which is wrong
     // for the node we're reporting on. Skip them entirely — better to
     // emit NULL than a misleading value.
-    const isK8s = runtime.name === 'kubernetes';
     const gpu = isK8s ? null : await safeCollect('gpu', () => Promise.resolve(collectGpu()));
     const temperature = isK8s ? null : await safeCollect('temperature', () => Promise.resolve(collectTemperature(config)));
     const diskIO = isK8s ? null : await safeCollect('disk-io', () => Promise.resolve(collectDiskIO(config)));
@@ -77,6 +93,18 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     const volumes = runtime.listVolumes
       ? (await safeCollect('volumes', () => runtime.listVolumes!())) ?? []
       : [];
+
+    // K8s cluster-scoped inventory (PVs, PVCs) — only the elected leader publishes.
+    if (clusterPublisher && clusterPublisher.leader.isLeader()) {
+      const { collectPvs, collectPvcs } = require('./collectors/k8s-cluster') as {
+        collectPvs: (c: any) => Promise<any[]>;
+        collectPvcs: (c: any) => Promise<any[]>;
+      };
+      const pvs = await safeCollect('pvs', () => collectPvs(clusterPublisher!.client));
+      const pvcs = await safeCollect('pvcs', () => collectPvcs(clusterPublisher!.client));
+      if (pvs) await safeCollect('mqtt-pvs', () => publishPvs(clusterPublisher!.clusterId, config.hostId, pvs));
+      if (pvcs) await safeCollect('mqtt-pvcs', () => publishPvcs(clusterPublisher!.clusterId, config.hostId, pvcs));
+    }
 
     logger.info('scheduler', 'Collection cycle complete');
 
@@ -89,6 +117,34 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
 
     // Write health file for Docker HEALTHCHECK
     try { fs.writeFileSync('/tmp/insightd-healthy', ''); } catch { /* ignore */ }
+  }
+
+  // Set up the cluster-scoped publisher once per process (k8s only, leader-elected).
+  if (isK8s) {
+    const k8sRuntime = runtime as any as { coreApi?: import('./runtime/kubernetes').K8sClient | null };
+    if (!config.podNamespace || !config.podName) {
+      logger.warn('scheduler', 'POD_NAMESPACE or POD_NAME missing — skipping PV/PVC publisher (set via downward API)');
+    } else if (!k8sRuntime.coreApi) {
+      logger.warn('scheduler', 'K8s coreApi not available — skipping PV/PVC publisher');
+    } else {
+      const { createLeaderElector } = require('./runtime/k8s-lease') as typeof import('./runtime/k8s-lease');
+      const clusterId = config.hostGroup && config.hostGroup.length > 0
+        ? config.hostGroup
+        : `cluster-${config.nodeName || config.hostId}`;
+      const leader = createLeaderElector({
+        client: k8sRuntime.coreApi,
+        namespace: config.podNamespace,
+        leaseName: 'insightd-pv-publisher',
+        identity: config.podName,
+      });
+      leader.start();
+      clusterPublisher = { clusterId, client: k8sRuntime.coreApi, leader };
+      logger.info('scheduler', `Cluster publisher active — clusterId="${clusterId}", identity="${config.podName}"`);
+      // Best-effort release on SIGTERM so DaemonSet rollouts hand off instantly.
+      const onShutdown = async (): Promise<void> => { try { await leader.stop(); } catch { /* ignore */ } };
+      process.once('SIGTERM', onShutdown);
+      process.once('SIGINT',  onShutdown);
+    }
   }
 
   // Run immediately

@@ -1534,6 +1534,243 @@ function getVolumesOverview(
   };
 }
 
+// ───────────────────────── Kubernetes PV / PVC overview ─────────────────────────
+
+interface PvRow {
+  cluster_id: string;
+  pv_name: string;
+  phase: string;
+  capacity_bytes: number | null;
+  access_modes: string | null;
+  reclaim_policy: string | null;
+  storage_class: string | null;
+  volume_mode: string | null;
+  claim_namespace: string | null;
+  claim_name: string | null;
+  csi_driver: string | null;
+  created_at: string | null;
+  collected_at: string;
+}
+
+interface PvcRow {
+  cluster_id: string;
+  namespace: string;
+  pvc_name: string;
+  phase: string;
+  storage_class: string | null;
+  request_bytes: number | null;
+  capacity_bytes: number | null;
+  access_modes: string | null;
+  volume_name: string | null;
+  volume_mode: string | null;
+  created_at: string | null;
+  collected_at: string;
+}
+
+interface PvcItem {
+  namespace: string;
+  name: string;
+  phase: string;
+  storageClass: string | null;
+  requestBytes: number | null;
+  capacityBytes: number | null;
+  accessModes: string[];
+  volumeName: string | null;
+  volumeMode: string | null;
+  createdAt: string | null;
+}
+
+interface PvItem {
+  name: string;
+  phase: string;
+  capacityBytes: number | null;
+  accessModes: string[];
+  reclaimPolicy: string | null;
+  storageClass: string | null;
+  volumeMode: string | null;
+  claimRef: { namespace: string; name: string } | null;
+  csiDriver: string | null;
+  createdAt: string | null;
+  boundPvc: PvcItem | null;
+  orphaned: boolean;
+}
+
+interface PvsOverviewCluster {
+  clusterId: string;
+  online: boolean;                  // any data within stale window?
+  lastCollectedAt: string | null;
+  pvs: PvItem[];
+  pvcs: PvcItem[];
+}
+
+interface PvsOverviewResult {
+  totals: {
+    pvCount: number;
+    boundCount: number;
+    availableCount: number;
+    releasedCount: number;
+    failedCount: number;
+    totalCapacityBytes: number;
+    orphanedCount: number;
+    orphanedCapacityBytes: number;
+    pvcCount: number;
+    pvcPendingCount: number;
+    clusterCount: number;
+  };
+  clusters: PvsOverviewCluster[];
+}
+
+function safeJsonArray(s: string | null): string[] {
+  if (!s) return [];
+  try { const v = JSON.parse(s); return Array.isArray(v) ? v.filter(x => typeof x === 'string') : []; }
+  catch { return []; }
+}
+
+/**
+ * Aggregate PV + PVC inventory across all clusters. Each cluster's latest
+ * batch (newest collected_at) is used as authoritative — agents publish a
+ * fresh inventory every cycle, so older rows naturally age out.
+ *
+ * `staleMinutes` controls when a cluster is considered offline (no fresh
+ * publication within the window).
+ */
+function getPvsOverview(
+  db: Database.Database,
+  staleMinutes: number = 15,
+): PvsOverviewResult {
+  const pvs = db.prepare(`
+    WITH latest_batch AS (
+      SELECT cluster_id, MAX(collected_at) AS max_at
+      FROM pv_snapshots
+      GROUP BY cluster_id
+    )
+    SELECT p.cluster_id, p.pv_name, p.phase, p.capacity_bytes, p.access_modes,
+           p.reclaim_policy, p.storage_class, p.volume_mode,
+           p.claim_namespace, p.claim_name, p.csi_driver,
+           p.created_at, p.collected_at
+    FROM pv_snapshots p
+    INNER JOIN latest_batch lb
+      ON lb.cluster_id = p.cluster_id AND p.collected_at = lb.max_at
+    ORDER BY p.cluster_id,
+             (p.capacity_bytes IS NULL) ASC, p.capacity_bytes DESC,
+             p.pv_name
+  `).all() as PvRow[];
+
+  const pvcs = db.prepare(`
+    WITH latest_batch AS (
+      SELECT cluster_id, MAX(collected_at) AS max_at
+      FROM pvc_snapshots
+      GROUP BY cluster_id
+    )
+    SELECT p.cluster_id, p.namespace, p.pvc_name, p.phase, p.storage_class,
+           p.request_bytes, p.capacity_bytes, p.access_modes,
+           p.volume_name, p.volume_mode, p.created_at, p.collected_at
+    FROM pvc_snapshots p
+    INNER JOIN latest_batch lb
+      ON lb.cluster_id = p.cluster_id AND p.collected_at = lb.max_at
+    ORDER BY p.cluster_id, p.namespace, p.pvc_name
+  `).all() as PvcRow[];
+
+  // Index PVCs by (cluster, namespace, name) for the PV→PVC join
+  const pvcByKey = new Map<string, PvcItem>();
+  const pvcsByCluster = new Map<string, PvcItem[]>();
+  const lastSeenByCluster = new Map<string, string>();
+  for (const r of pvcs) {
+    const item: PvcItem = {
+      namespace: r.namespace,
+      name: r.pvc_name,
+      phase: r.phase,
+      storageClass: r.storage_class,
+      requestBytes: r.request_bytes,
+      capacityBytes: r.capacity_bytes,
+      accessModes: safeJsonArray(r.access_modes),
+      volumeName: r.volume_name,
+      volumeMode: r.volume_mode,
+      createdAt: r.created_at,
+    };
+    pvcByKey.set(`${r.cluster_id}/${r.namespace}/${r.pvc_name}`, item);
+    let list = pvcsByCluster.get(r.cluster_id);
+    if (!list) { list = []; pvcsByCluster.set(r.cluster_id, list); }
+    list.push(item);
+    const prev = lastSeenByCluster.get(r.cluster_id);
+    if (!prev || r.collected_at > prev) lastSeenByCluster.set(r.cluster_id, r.collected_at);
+  }
+
+  const pvsByCluster = new Map<string, PvItem[]>();
+  let pvCount = 0;
+  let boundCount = 0, availableCount = 0, releasedCount = 0, failedCount = 0;
+  let totalCapacityBytes = 0;
+  let orphanedCount = 0, orphanedCapacityBytes = 0;
+  for (const r of pvs) {
+    const orphaned = r.phase === 'Released';
+    const cap = r.capacity_bytes ?? 0;
+    pvCount++;
+    totalCapacityBytes += cap;
+    if (r.phase === 'Bound')          boundCount++;
+    else if (r.phase === 'Available') availableCount++;
+    else if (r.phase === 'Released')  releasedCount++;
+    else if (r.phase === 'Failed')    failedCount++;
+    if (orphaned) { orphanedCount++; orphanedCapacityBytes += cap; }
+
+    const boundPvc = (r.claim_namespace && r.claim_name)
+      ? pvcByKey.get(`${r.cluster_id}/${r.claim_namespace}/${r.claim_name}`) ?? null
+      : null;
+    const item: PvItem = {
+      name: r.pv_name,
+      phase: r.phase,
+      capacityBytes: r.capacity_bytes,
+      accessModes: safeJsonArray(r.access_modes),
+      reclaimPolicy: r.reclaim_policy,
+      storageClass: r.storage_class,
+      volumeMode: r.volume_mode,
+      claimRef: (r.claim_namespace && r.claim_name)
+        ? { namespace: r.claim_namespace, name: r.claim_name } : null,
+      csiDriver: r.csi_driver,
+      createdAt: r.created_at,
+      boundPvc,
+      orphaned,
+    };
+    let list = pvsByCluster.get(r.cluster_id);
+    if (!list) { list = []; pvsByCluster.set(r.cluster_id, list); }
+    list.push(item);
+    const prev = lastSeenByCluster.get(r.cluster_id);
+    if (!prev || r.collected_at > prev) lastSeenByCluster.set(r.cluster_id, r.collected_at);
+  }
+
+  const clusterIds = new Set<string>([...pvsByCluster.keys(), ...pvcsByCluster.keys()]);
+  const staleCutoffMs = Date.now() - staleMinutes * 60_000;
+  const clusters: PvsOverviewCluster[] = [];
+  for (const clusterId of [...clusterIds].sort()) {
+    const last = lastSeenByCluster.get(clusterId) ?? null;
+    const lastMs = last ? Date.parse(last + 'Z') : 0;
+    clusters.push({
+      clusterId,
+      online: lastMs >= staleCutoffMs,
+      lastCollectedAt: last,
+      pvs: pvsByCluster.get(clusterId) ?? [],
+      pvcs: pvcsByCluster.get(clusterId) ?? [],
+    });
+  }
+
+  let pvcCount = 0, pvcPendingCount = 0;
+  for (const list of pvcsByCluster.values()) {
+    for (const p of list) {
+      pvcCount++;
+      if (p.phase === 'Pending') pvcPendingCount++;
+    }
+  }
+
+  return {
+    totals: {
+      pvCount, boundCount, availableCount, releasedCount, failedCount,
+      totalCapacityBytes, orphanedCount, orphanedCapacityBytes,
+      pvcCount, pvcPendingCount,
+      clusterCount: clusters.length,
+    },
+    clusters,
+  };
+}
+
 function getAllImageUpdates(db: Database.Database): ImageUpdateRow[] {
   return db.prepare(`
     SELECT uc.host_id, uc.container_name, uc.image, uc.checked_at
@@ -1624,4 +1861,4 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getContainersStorage, getVolumesOverview, getAllImageUpdates, getContainerDowntime };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getContainersStorage, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime };

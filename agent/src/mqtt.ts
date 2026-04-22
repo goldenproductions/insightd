@@ -351,6 +351,107 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
   });
 }
 
+interface PvPayloadItem {
+  name: string;
+  phase: string;
+  capacityBytes: number | null;
+  accessModes: string[];
+  reclaimPolicy: string | null;
+  storageClass: string | null;
+  volumeMode: string | null;
+  claimRef: { namespace: string; name: string } | null;
+  csiDriver: string | null;
+  createdAt: string | null;
+  labels: Record<string, string>;
+}
+
+interface PvcPayloadItem {
+  namespace: string;
+  name: string;
+  phase: string;
+  storageClass: string | null;
+  requestBytes: number | null;
+  capacityBytes: number | null;
+  accessModes: string[];
+  volumeName: string | null;
+  volumeMode: string | null;
+  createdAt: string | null;
+  labels: Record<string, string>;
+}
+
+function publishPvs(clusterId: string, publisherHostId: string, pvs: PvPayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/pvs`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: pvs.map(p => ({
+      name: p.name,
+      phase: p.phase,
+      capacity_bytes: p.capacityBytes,
+      access_modes: p.accessModes,
+      reclaim_policy: p.reclaimPolicy,
+      storage_class: p.storageClass,
+      volume_mode: p.volumeMode,
+      claim_namespace: p.claimRef?.namespace ?? null,
+      claim_name: p.claimRef?.name ?? null,
+      csi_driver: p.csiDriver,
+      created_at: p.createdAt,
+      labels: JSON.stringify(p.labels || {}),
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${pvs.length} PVs for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
+function publishPvcs(clusterId: string, publisherHostId: string, pvcs: PvcPayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/pvcs`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: pvcs.map(p => ({
+      namespace: p.namespace,
+      name: p.name,
+      phase: p.phase,
+      storage_class: p.storageClass,
+      request_bytes: p.requestBytes,
+      capacity_bytes: p.capacityBytes,
+      access_modes: p.accessModes,
+      volume_name: p.volumeName,
+      volume_mode: p.volumeMode,
+      created_at: p.createdAt,
+      labels: JSON.stringify(p.labels || {}),
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${pvcs.length} PVCs for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -384,4 +485,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, disconnect };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, disconnect };

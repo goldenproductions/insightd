@@ -4,10 +4,12 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
+  ingestPvs: (db: Database.Database, clusterId: string, pvs: any[]) => void;
+  ingestPvcs: (db: Database.Database, clusterId: string, pvcs: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
   upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
@@ -153,6 +155,16 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         else logger.info('mqtt', 'Subscribed to insightd/+/updates');
       });
 
+      client!.subscribe('insightd/+/pvs', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pvs topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pvs');
+      });
+
+      client!.subscribe('insightd/+/pvcs', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pvcs topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pvcs');
+      });
+
       client!.subscribe('insightd/+/logs/response', { qos: 1 }, (err) => {
         if (err) logger.error('mqtt', 'Failed to subscribe to logs response topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
@@ -180,6 +192,16 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         const parts = topic.split('/');
         const hostId = parts[1];
         const type = parts[2];
+
+        // Cluster-scoped topics use `insightd/_cluster_<id>/pvs|pvcs`. The
+        // `_cluster_` prefix keeps them out of per-host routing: hostId here
+        // is really the cluster_id wrapped in a sentinel, which the PV/PVC
+        // handlers unwrap.
+        if (hostId.startsWith('_cluster_')) {
+          const clusterId = hostId.slice('_cluster_'.length);
+          if (type === 'pvs')  { handlePvs(db, clusterId, payload); return; }
+          if (type === 'pvcs') { handlePvcs(db, clusterId, payload); return; }
+        }
 
         if (type === 'collection') {
           handleCollection(db, hostId, payload);
@@ -324,6 +346,76 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
   }
 
   logger.info('mqtt', `Ingested from ${hostId}: ${containers.length} containers, ${disk.length} disk mounts${payload.host ? ', host metrics' : ''}`);
+}
+
+interface PvPayload {
+  items?: Array<{
+    name: string;
+    phase: string;
+    capacity_bytes?: number | null;
+    access_modes?: string[];
+    reclaim_policy?: string | null;
+    storage_class?: string | null;
+    volume_mode?: string | null;
+    claim_namespace?: string | null;
+    claim_name?: string | null;
+    csi_driver?: string | null;
+    created_at?: string | null;
+    labels?: string | null;
+  }>;
+}
+
+interface PvcPayload {
+  items?: Array<{
+    namespace: string;
+    name: string;
+    phase: string;
+    storage_class?: string | null;
+    request_bytes?: number | null;
+    capacity_bytes?: number | null;
+    access_modes?: string[];
+    volume_name?: string | null;
+    volume_mode?: string | null;
+    created_at?: string | null;
+    labels?: string | null;
+  }>;
+}
+
+function handlePvs(db: Database.Database, clusterId: string, payload: PvPayload): void {
+  const pvs = (payload.items || []).map(p => ({
+    name: p.name,
+    phase: p.phase,
+    capacityBytes: p.capacity_bytes ?? null,
+    accessModes: p.access_modes ?? [],
+    reclaimPolicy: p.reclaim_policy ?? null,
+    storageClass: p.storage_class ?? null,
+    volumeMode: p.volume_mode ?? null,
+    claimNamespace: p.claim_namespace ?? null,
+    claimName: p.claim_name ?? null,
+    csiDriver: p.csi_driver ?? null,
+    createdAt: p.created_at ?? null,
+    labels: p.labels ?? null,
+  }));
+  ingestPvs(db, clusterId, pvs);
+  logger.info('mqtt', `Ingested ${pvs.length} PVs for cluster ${clusterId}`);
+}
+
+function handlePvcs(db: Database.Database, clusterId: string, payload: PvcPayload): void {
+  const pvcs = (payload.items || []).map(p => ({
+    namespace: p.namespace,
+    name: p.name,
+    phase: p.phase,
+    storageClass: p.storage_class ?? null,
+    requestBytes: p.request_bytes ?? null,
+    capacityBytes: p.capacity_bytes ?? null,
+    accessModes: p.access_modes ?? [],
+    volumeName: p.volume_name ?? null,
+    volumeMode: p.volume_mode ?? null,
+    createdAt: p.created_at ?? null,
+    labels: p.labels ?? null,
+  }));
+  ingestPvcs(db, clusterId, pvcs);
+  logger.info('mqtt', `Ingested ${pvcs.length} PVCs for cluster ${clusterId}`);
 }
 
 function handleUpdates(db: Database.Database, hostId: string, payload: UpdatesPayload): void {

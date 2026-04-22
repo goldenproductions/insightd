@@ -107,8 +107,25 @@ The DaemonSet uses a ServiceAccount with these cluster permissions:
 - `nodes` — get, list (to verify the node exists, read capacity for total memory, read `creationTimestamp` for uptime)
 - `nodes/metrics`, `nodes/stats`, `nodes/proxy` — get (to query the kubelet's `/metrics/cadvisor` and `/stats/summary` endpoints)
 - `replicasets` (apps API group) — get, list (to walk pod owner references up to the parent Deployment for stable container names across rollouts)
+- `persistentvolumes`, `persistentvolumeclaims` — get, list, watch (cluster-scoped PV/PVC inventory for the Storage page's Kubernetes view)
 
-These are read-only permissions. The agent never modifies anything in the cluster.
+Namespace-scoped (in the agent's own namespace, `insightd` by default):
+
+- `coordination.k8s.io/leases` — get, create, update, patch (used to elect a single PV/PVC publisher per cluster so the hub doesn't receive duplicate inventory from every DaemonSet pod)
+
+These are read-only permissions over cluster state. The `leases` writes are confined to a single Lease object in the agent's own namespace.
+
+### Cluster identity (required if you run more than one cluster)
+
+The PV/PVC publisher uses `INSIGHTD_HOST_GROUP` as the cluster identifier
+when reporting to the hub. If you run more than one Kubernetes cluster
+against a single insightd hub, you **must** set a unique
+`INSIGHTD_HOST_GROUP` per cluster — otherwise PVs from both clusters will
+collide under the same `cluster_id` and overwrite each other.
+
+If `INSIGHTD_HOST_GROUP` is empty the agent falls back to a synthetic
+id derived from the node name (unique per node, but not aligned across
+leader handoffs). The agent logs a startup warning when this happens.
 
 ## Architecture
 
