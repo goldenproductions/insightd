@@ -165,27 +165,6 @@ export interface DisksOverview {
   warnings: DiskOverviewWarning[];
 }
 
-export interface ContainerStorageItem {
-  name: string;
-  image: string | null;
-  status: string;
-  sizeRwBytes: number | null;
-  sizeRootfsBytes: number | null;
-  collectedAt: string;
-}
-
-export interface ContainersStorageHost {
-  hostId: string;
-  hostGroup: string | null;
-  online: boolean;
-  containers: ContainerStorageItem[];
-}
-
-export interface ContainersStorage {
-  totals: { containerCount: number; totalRwBytes: number; totalRootfsBytes: number };
-  hosts: ContainersStorageHost[];
-}
-
 export interface VolumeItem {
   name: string;
   driver: string;
@@ -212,6 +191,59 @@ export interface VolumesOverview {
     orphanedSizeBytes: number;
   };
   hosts: VolumesOverviewHost[];
+}
+
+export interface PvcItem {
+  namespace: string;
+  name: string;
+  phase: string;
+  storageClass: string | null;
+  requestBytes: number | null;
+  capacityBytes: number | null;
+  accessModes: string[];
+  volumeName: string | null;
+  volumeMode: string | null;
+  createdAt: string | null;
+}
+
+export interface PvItem {
+  name: string;
+  phase: string;
+  capacityBytes: number | null;
+  accessModes: string[];
+  reclaimPolicy: string | null;
+  storageClass: string | null;
+  volumeMode: string | null;
+  claimRef: { namespace: string; name: string } | null;
+  csiDriver: string | null;
+  createdAt: string | null;
+  boundPvc: PvcItem | null;
+  orphaned: boolean;
+}
+
+export interface PvsOverviewCluster {
+  clusterId: string;
+  online: boolean;
+  lastCollectedAt: string | null;
+  pvs: PvItem[];
+  pvcs: PvcItem[];
+}
+
+export interface PvsOverview {
+  totals: {
+    pvCount: number;
+    boundCount: number;
+    availableCount: number;
+    releasedCount: number;
+    failedCount: number;
+    totalCapacityBytes: number;
+    orphanedCount: number;
+    orphanedCapacityBytes: number;
+    pvcCount: number;
+    pvcPendingCount: number;
+    clusterCount: number;
+  };
+  clusters: PvsOverviewCluster[];
 }
 
 export interface UpdateCheck {

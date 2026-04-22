@@ -6,15 +6,25 @@ import { useAuth } from '@/context/AuthContext';
 import { EmptyState } from '@/components/EmptyState';
 import { CardSkeleton } from '@/components/Skeleton';
 import { fmtBytes } from '@/lib/formatters';
-import type { VolumesOverview, VolumesOverviewHost } from '@/types/api';
+import type { VolumesOverview, VolumesOverviewHost, PvsOverview } from '@/types/api';
 import { FacetGroup } from './FacetGroup';
+import { K8sPvsTab } from './K8sPvsTab';
 
 export type VolumeStateFilter = 'all' | 'orphaned' | 'in-use';
+export type VolumeMode = 'docker' | 'k8s';
+export type PvPhaseFilter = 'all' | 'Bound' | 'Available' | 'Released' | 'Pending' | 'Failed';
+export type PvStateFilter = 'all' | 'orphaned';
 
 export interface VolumeFilters {
+  mode: VolumeMode;
   hosts: string[];
   drivers: string[];
   state: VolumeStateFilter;
+  // K8s-specific
+  clusters: string[];
+  phases: PvPhaseFilter[];
+  storageClasses: string[];
+  pvState: PvStateFilter;
 }
 
 interface Props {
@@ -26,7 +36,9 @@ interface Props {
 export function VolumesTab({ isActive, filters, onFiltersChange }: Props) {
   const { token } = useAuth();
 
-  const { data, isLoading } = useQuery({
+  // Fetch both so the mode toggle can show counts. Docker is always paid
+  // for by existing behaviour; /api/pvs is cheap when there are no PVs.
+  const { data: volumes, isLoading: volumesLoading } = useQuery({
     queryKey: queryKeys.volumes(),
     queryFn: () => apiAuth<VolumesOverview>('GET', '/volumes', undefined, token),
     enabled: isActive && !!token,
@@ -34,9 +46,80 @@ export function VolumesTab({ isActive, filters, onFiltersChange }: Props) {
     staleTime: 30_000,
   });
 
-  if (isLoading || !data) return <CardSkeleton lines={8} />;
+  const { data: pvs, isLoading: pvsLoading } = useQuery({
+    queryKey: queryKeys.pvs(),
+    queryFn: () => apiAuth<PvsOverview>('GET', '/pvs', undefined, token),
+    enabled: isActive && !!token,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
 
-  return <VolumesContent data={data} filters={filters} onFiltersChange={onFiltersChange} />;
+  if (volumesLoading || pvsLoading || !volumes || !pvs) return <CardSkeleton lines={8} />;
+
+  const dockerAvailable = volumes.totals.volumeCount > 0;
+  const k8sAvailable = pvs.totals.pvCount > 0;
+
+  // If the persisted mode has no data but the other side does, auto-swap.
+  // (Covers: bookmarked ?vMode=k8s URL where k8s later drained out, new
+  // fleets that only have Docker, etc.)
+  const effectiveMode: VolumeMode =
+    filters.mode === 'k8s' && !k8sAvailable && dockerAvailable ? 'docker'
+    : filters.mode === 'docker' && !dockerAvailable && k8sAvailable ? 'k8s'
+    : filters.mode;
+
+  const showToggle = dockerAvailable && k8sAvailable;
+
+  return (
+    <div className="space-y-4">
+      {showToggle && (
+        <ModeToggle
+          mode={effectiveMode}
+          dockerCount={volumes.totals.volumeCount}
+          k8sCount={pvs.totals.pvCount}
+          onChange={(m) => onFiltersChange({ mode: m })}
+        />
+      )}
+      {effectiveMode === 'docker'
+        ? <VolumesContent data={volumes} filters={filters} onFiltersChange={onFiltersChange} />
+        : <K8sPvsTab data={pvs} filters={filters} onFiltersChange={onFiltersChange} />}
+    </div>
+  );
+}
+
+function ModeToggle({
+  mode, dockerCount, k8sCount, onChange,
+}: {
+  mode: VolumeMode;
+  dockerCount: number;
+  k8sCount: number;
+  onChange: (m: VolumeMode) => void;
+}) {
+  const btn = (m: VolumeMode, label: string, count: number) => (
+    <button
+      type="button"
+      onClick={() => onChange(m)}
+      className={`relative flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+        mode === m
+          ? 'border-fg text-fg'
+          : 'border-transparent text-muted hover:text-fg'
+      }`}
+    >
+      {label}
+      {count > 0 && (
+        <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${
+          mode === m ? 'bg-fg/10 text-fg' : 'bg-border text-muted'
+        }`}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+  return (
+    <div role="tablist" className="flex items-center gap-1 border-b border-border">
+      {btn('docker', 'Docker volumes', dockerCount)}
+      {btn('k8s', 'Kubernetes PVs', k8sCount)}
+    </div>
+  );
 }
 
 function VolumesContent({
@@ -48,10 +131,6 @@ function VolumesContent({
 }) {
   const dockerHosts = useMemo(
     () => data.hosts.filter(h => h.runtimeType !== 'kubernetes'),
-    [data.hosts],
-  );
-  const k8sHosts = useMemo(
-    () => data.hosts.filter(h => h.runtimeType === 'kubernetes'),
     [data.hosts],
   );
 
@@ -169,8 +248,6 @@ function VolumesContent({
         {filteredHosts.map(h => (
           <VolumeHostSection key={h.hostId} host={h} />
         ))}
-
-        {k8sHosts.length > 0 && <KubernetesComingSoon hosts={k8sHosts} />}
       </div>
     </div>
   );
@@ -280,39 +357,6 @@ function VolumeHostSection({ host }: { host: VolumesOverviewHost }) {
           </li>
         ))}
       </ul>
-    </section>
-  );
-}
-
-function KubernetesComingSoon({ hosts }: { hosts: VolumesOverviewHost[] }) {
-  return (
-    <section className="overflow-hidden rounded-xl border border-dashed border-border bg-surface">
-      <header className="flex items-center justify-between gap-3 border-b border-border bg-bg-secondary px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold text-fg">Kubernetes volumes</span>
-          <span className="rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider text-info">
-            Coming soon
-          </span>
-        </div>
-        <span className="text-xs text-muted">
-          {hosts.length} k8s host{hosts.length === 1 ? '' : 's'}
-        </span>
-      </header>
-      <div className="p-4">
-        <p className="text-sm text-secondary">
-          PersistentVolumes are cluster-scoped — visible through the Kubernetes API server rather than the
-          per-node agent. A cluster-level collector will list PVs, PVCs, and the pods using them.
-        </p>
-        <ul className="mt-3 space-y-0.5 text-xs text-muted">
-          {hosts.map(h => (
-            <li key={h.hostId} className="flex items-center gap-2">
-              <span className={`h-1.5 w-1.5 rounded-full ${h.online ? 'bg-success' : 'bg-muted'}`} />
-              <span>{h.hostId}</span>
-              {h.hostGroup && <span className="text-muted">· {h.hostGroup}</span>}
-            </li>
-          ))}
-        </ul>
-      </div>
     </section>
   );
 }
