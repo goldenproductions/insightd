@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import { Outlet, NavLink, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
 import { useShowInternal } from '@/hooks/useShowInternal';
@@ -14,11 +14,13 @@ interface NavItem { to: string; label: string; icon: () => React.JSX.Element }
 interface NavGroup { label: string; items: NavItem[] }
 
 export function Layout() {
-  const { authEnabled, isHubMode } = useAuth();
+  const { authEnabled, isAuthenticated, isHubMode } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const { showInternal, toggleShowInternal } = useShowInternal();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
+
+  if (authEnabled && !isAuthenticated) return <Navigate to="/login" replace />;
 
   const navGroups = useMemo<NavGroup[]>(() => [
     { label: 'Monitor', items: [

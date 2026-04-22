@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate, Navigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -22,17 +22,16 @@ const typeHelp: Record<string, string> = {
 
 export function WebhookFormPage() {
   const { webhookId } = useParams();
-  const { isAuthenticated, token } = useAuth();
+  const { token } = useAuth();
   const isEdit = !!webhookId;
 
   const { data: existing, isLoading } = useQuery({
     queryKey: queryKeys.webhook(webhookId),
     queryFn: () => apiAuth<Webhook>('GET', `/webhooks/${webhookId}`, undefined, token),
-    enabled: isEdit && isAuthenticated,
+    enabled: isEdit,
     refetchInterval: false,
   });
 
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (isEdit && isLoading) return null;
 
   return <WebhookForm key={webhookId ?? 'new'} existing={existing} isEdit={isEdit} webhookId={webhookId} token={token} />;

@@ -9,10 +9,9 @@ import { DataTable } from '@/components/DataTable';
 import { Button } from '@/components/FormField';
 import { timeAgo } from '@/lib/formatters';
 import { PageTitle } from '@/components/PageTitle';
-import { EmptyState } from '@/components/EmptyState';
 
 export function ApiKeysPage() {
-  const { isAuthenticated, token } = useAuth();
+  const { token } = useAuth();
   const queryClient = useQueryClient();
   const [name, setName] = useState('');
   const [newKey, setNewKey] = useState<string | null>(null);
@@ -36,7 +35,6 @@ export function ApiKeysPage() {
   const { data: keys } = useQuery({
     queryKey: queryKeys.apiKeys(),
     queryFn: () => api<ApiKey[]>('/api-keys'),
-    enabled: isAuthenticated,
   });
 
   const create = async () => {
@@ -68,10 +66,6 @@ export function ApiKeysPage() {
       </button>
     )},
   ], [revoke]);
-
-  if (!isAuthenticated) {
-    return <EmptyState message="Log in to manage API keys." />;
-  }
 
   return (
     <div className="space-y-6">

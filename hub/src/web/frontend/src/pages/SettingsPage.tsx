@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { SettingItem, SettingsResponse, StorageInfo, VacuumResult } from '@/types/api';
@@ -68,13 +68,12 @@ function isDirty(s: SettingItem, edit: string | undefined): boolean {
 // ───────────────────────── Main page ─────────────────────────
 
 export function SettingsPage() {
-  const { isAuthenticated, token, logout } = useAuth();
+  const { token, logout } = useAuth();
   const queryClient = useQueryClient();
 
   const { data, error } = useQuery({
     queryKey: queryKeys.settings(),
     queryFn: () => apiAuth<SettingsResponse>('GET', '/settings', undefined, token),
-    enabled: isAuthenticated,
     refetchInterval: false,
   });
 
@@ -149,7 +148,6 @@ export function SettingsPage() {
     return () => clearTimeout(t);
   }, [msg]);
 
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (error) return <AlertBanner message={error instanceof Error ? error.message : 'Failed to load settings'} color="red" />;
   if (!data) return <LoadingState />;
 
@@ -674,7 +672,6 @@ function StorageBody({ token }: { token: string | null }) {
   const { data } = useQuery({
     queryKey: queryKeys.storage(),
     queryFn: () => apiAuth<StorageInfo>('GET', '/storage', undefined, token),
-    enabled: !!token,
     refetchInterval: 60_000,
   });
 

@@ -9,21 +9,19 @@ import { Badge } from '@/components/Badge';
 import { LinkButton } from '@/components/FormField';
 import { useState } from 'react';
 import { PageTitle } from '@/components/PageTitle';
-import { EmptyState } from '@/components/EmptyState';
 
 const typeLabels: Record<string, string> = {
   slack: 'Slack', discord: 'Discord', telegram: 'Telegram', ntfy: 'ntfy', generic: 'Generic',
 };
 
 export function WebhooksPage() {
-  const { isAuthenticated, token } = useAuth();
+  const { token } = useAuth();
   const queryClient = useQueryClient();
   const [testResult, setTestResult] = useState<Record<number, { ok: boolean; msg: string }>>({});
 
   const { data: webhooks } = useQuery({
     queryKey: queryKeys.webhooks(),
     queryFn: () => apiAuth<Webhook[]>('GET', '/webhooks', undefined, token),
-    enabled: isAuthenticated,
     refetchInterval: false,
   });
 
@@ -47,10 +45,6 @@ export function WebhooksPage() {
   });
 
   const dismissTestResult = (id: number) => setTestResult(prev => { const n = { ...prev }; delete n[id]; return n; });
-
-  if (!isAuthenticated) {
-    return <EmptyState message="Log in to manage webhooks." />;
-  }
 
   const columns: Column<Webhook>[] = [
     { header: 'Name', accessor: r => r.name },

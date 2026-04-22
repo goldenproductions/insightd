@@ -105,6 +105,7 @@ export function App() {
             <Suspense fallback={<PageLoading />}>
             <Routes>
               <Route path="/status" element={<StatusPage />} />
+              <Route path="/login" element={<LoginPage />} />
               <Route element={<Layout />}>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/hosts" element={<HostsPage />} />
@@ -128,7 +129,6 @@ export function App() {
                 <Route path="/add-agent" element={<AddAgentPage />} />
                 <Route path="/api-keys" element={<ApiKeysPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/login" element={<LoginPage />} />
               </Route>
             </Routes>
             </Suspense>
