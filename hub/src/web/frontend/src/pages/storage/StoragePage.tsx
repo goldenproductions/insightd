@@ -108,7 +108,6 @@ export function StoragePage() {
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: queryKeys.disks(),
     queryFn: () => apiAuth<DisksOverview>('GET', '/disks', undefined, token),
-    enabled: !!token,
     refetchInterval: 30_000,
     staleTime: 10_000,
   });

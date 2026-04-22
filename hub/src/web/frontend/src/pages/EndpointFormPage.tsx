@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate, Navigate } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
@@ -14,7 +14,7 @@ import { BackLink } from '@/components/BackLink';
 
 export function EndpointFormPage() {
   const { endpointId } = useParams();
-  const { isAuthenticated, token } = useAuth();
+  const { token } = useAuth();
   const isEdit = !!endpointId;
 
   const { data: existing, isLoading } = useQuery({
@@ -24,7 +24,6 @@ export function EndpointFormPage() {
     refetchInterval: false,
   });
 
-  if (!isAuthenticated) return <Navigate to="/login" replace />;
   if (isEdit && isLoading) return null;
 
   return <EndpointForm key={endpointId ?? 'new'} existing={existing} isEdit={isEdit} endpointId={endpointId} token={token} />;
