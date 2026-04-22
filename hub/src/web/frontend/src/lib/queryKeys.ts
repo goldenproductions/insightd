@@ -57,11 +57,11 @@ export const queryKeys = {
   // Disks (fleet disk overview)
   disks: () => ['disks'] as const,
 
-  // Per-container storage (Storage → Containers tab)
-  containersStorage: (showInternal?: boolean) => ['containers-storage', showInternal] as const,
-
   // Volume inventory (Storage → Volumes tab)
   volumes: () => ['volumes'] as const,
+
+  // Kubernetes PV/PVC inventory (Storage → Volumes tab, k8s mode)
+  pvs: () => ['pvs'] as const,
 
   // Status
   publicStatus: () => ['public-status'] as const,

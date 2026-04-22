@@ -9,13 +9,13 @@ import { Tabs } from '@/components/Tabs';
 import { StatsGridSkeleton, CardSkeleton } from '@/components/Skeleton';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import type { DisksOverview } from '@/types/api';
-import { StorageSummary } from './StorageSummary';
-import { DiskWarningsBanner } from './DiskWarningsBanner';
+import { StorageOverview } from './StorageOverview';
 import { HostDisksTab } from './HostDisksTab';
-import { ContainerDisksTab, type ContainerFilters, type ContainerSizeRange } from './ContainerDisksTab';
-import { VolumesTab, type VolumeFilters, type VolumeStateFilter } from './VolumesTab';
+import { VolumesTab, type VolumeFilters, type VolumeStateFilter, type VolumeMode, type PvPhaseFilter, type PvStateFilter } from './VolumesTab';
 
-type TabId = 'hosts' | 'containers' | 'volumes';
+const PV_PHASE_ALL = ['Bound', 'Available', 'Released', 'Pending', 'Failed'] as const;
+
+type TabId = 'hosts' | 'volumes';
 type SeverityFilter = 'all' | 'warning' | 'critical';
 
 interface HostTabFilters {
@@ -26,40 +26,41 @@ interface HostTabFilters {
 
 interface AllFilters {
   host: HostTabFilters;
-  container: ContainerFilters;
   volume: VolumeFilters;
 }
 
 function readTab(params: URLSearchParams): TabId {
   const t = params.get('tab');
-  if (t === 'containers' || t === 'volumes') return t;
+  if (t === 'volumes') return 'volumes';
   return 'hosts';
 }
 
 function readAllFilters(params: URLSearchParams): AllFilters {
   const sev = params.get('severity');
   const severity: SeverityFilter = sev === 'warning' || sev === 'critical' ? sev : 'all';
-  const sizeRangeRaw = params.get('cSize');
-  const sizeRange: ContainerSizeRange = sizeRangeRaw === 'gt1gb' || sizeRangeRaw === 'gt5gb' || sizeRangeRaw === 'gt20gb'
-    ? sizeRangeRaw
-    : 'all';
   const volStateRaw = params.get('vState');
   const volState: VolumeStateFilter = volStateRaw === 'orphaned' || volStateRaw === 'in-use' ? volStateRaw : 'all';
+  const modeRaw = params.get('vMode');
+  const mode: VolumeMode = modeRaw === 'k8s' ? 'k8s' : 'docker';
+  const pvStateRaw = params.get('vPvState');
+  const pvState: PvStateFilter = pvStateRaw === 'orphaned' ? 'orphaned' : 'all';
+  const phases = (params.get('vPhases') ?? '').split(',')
+    .filter((x): x is PvPhaseFilter => (PV_PHASE_ALL as readonly string[]).includes(x));
   return {
     host: {
       severity,
       hosts: (params.get('hosts') ?? '').split(',').filter(Boolean),
       groups: (params.get('groups') ?? '').split(',').filter(Boolean),
     },
-    container: {
-      hosts: (params.get('cHosts') ?? '').split(',').filter(Boolean),
-      images: (params.get('cImages') ?? '').split(',').filter(Boolean),
-      sizeRange,
-    },
     volume: {
+      mode,
       hosts: (params.get('vHosts') ?? '').split(',').filter(Boolean),
       drivers: (params.get('vDrivers') ?? '').split(',').filter(Boolean),
       state: volState,
+      clusters: (params.get('vClusters') ?? '').split(',').filter(Boolean),
+      phases,
+      storageClasses: (params.get('vSClasses') ?? '').split(',').filter(Boolean),
+      pvState,
     },
   };
 }
@@ -70,12 +71,14 @@ function writeParams(tab: TabId, f: AllFilters): URLSearchParams {
   if (f.host.severity !== 'all') p.set('severity', f.host.severity);
   if (f.host.hosts.length > 0) p.set('hosts', f.host.hosts.join(','));
   if (f.host.groups.length > 0) p.set('groups', f.host.groups.join(','));
-  if (f.container.hosts.length > 0) p.set('cHosts', f.container.hosts.join(','));
-  if (f.container.images.length > 0) p.set('cImages', f.container.images.join(','));
-  if (f.container.sizeRange !== 'all') p.set('cSize', f.container.sizeRange);
+  if (f.volume.mode !== 'docker') p.set('vMode', f.volume.mode);
   if (f.volume.hosts.length > 0) p.set('vHosts', f.volume.hosts.join(','));
   if (f.volume.drivers.length > 0) p.set('vDrivers', f.volume.drivers.join(','));
   if (f.volume.state !== 'all') p.set('vState', f.volume.state);
+  if (f.volume.clusters.length > 0) p.set('vClusters', f.volume.clusters.join(','));
+  if (f.volume.phases.length > 0) p.set('vPhases', f.volume.phases.join(','));
+  if (f.volume.storageClasses.length > 0) p.set('vSClasses', f.volume.storageClasses.join(','));
+  if (f.volume.pvState !== 'all') p.set('vPvState', f.volume.pvState);
   return p;
 }
 
@@ -95,11 +98,6 @@ export function StoragePage() {
     setSearchParams(writeParams(activeTab, next), { replace: true });
   }, [activeTab, filters, setSearchParams]);
 
-  const updateContainerFilters = useCallback((patch: Partial<ContainerFilters>) => {
-    const next: AllFilters = { ...filters, container: { ...filters.container, ...patch } };
-    setSearchParams(writeParams(activeTab, next), { replace: true });
-  }, [activeTab, filters, setSearchParams]);
-
   const updateVolumeFilters = useCallback((patch: Partial<VolumeFilters>) => {
     const next: AllFilters = { ...filters, volume: { ...filters.volume, ...patch } };
     setSearchParams(writeParams(activeTab, next), { replace: true });
@@ -114,8 +112,7 @@ export function StoragePage() {
 
   useKeyboardShortcut({ keys: 'r', description: 'Refresh storage', scope: 'Storage', onTrigger: () => { refetch(); } });
   useKeyboardShortcut({ keys: '1', description: 'Hosts tab', scope: 'Storage', onTrigger: () => setActiveTab('hosts') });
-  useKeyboardShortcut({ keys: '2', description: 'Containers tab', scope: 'Storage', onTrigger: () => setActiveTab('containers') });
-  useKeyboardShortcut({ keys: '3', description: 'Volumes tab', scope: 'Storage', onTrigger: () => setActiveTab('volumes') });
+  useKeyboardShortcut({ keys: '2', description: 'Volumes tab', scope: 'Storage', onTrigger: () => setActiveTab('volumes') });
 
   const mountCount = useMemo(
     () => data?.hosts.reduce((acc, h) => acc + h.mounts.length, 0) ?? 0,
@@ -133,9 +130,8 @@ export function StoragePage() {
   }, [filters, setSearchParams]);
 
   const tabs = useMemo(() => [
-    { id: 'hosts',      label: 'Hosts',      count: data?.hosts.length ?? 0, shortcut: '1' },
-    { id: 'containers', label: 'Containers',                                 shortcut: '2' },
-    { id: 'volumes',    label: 'Volumes',                                    shortcut: '3' },
+    { id: 'hosts',   label: 'Hosts',   count: data?.hosts.length ?? 0, shortcut: '1' },
+    { id: 'volumes', label: 'Volumes',                                 shortcut: '2' },
   ], [data]);
 
   return (
@@ -149,11 +145,12 @@ export function StoragePage() {
         </div>
       ) : (
         <div className="space-y-4">
-          <StorageSummary totals={data.totals} mountCount={mountCount} hostCount={data.hosts.length} />
-
-          {data.warnings.length > 0 && (
-            <DiskWarningsBanner warnings={data.warnings} onSelectHost={handleSelectHost} />
-          )}
+          <StorageOverview
+            data={data}
+            mountCount={mountCount}
+            hostCount={data.hosts.length}
+            onSelectHost={handleSelectHost}
+          />
 
           <div className="flex items-center justify-between">
             <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
@@ -173,13 +170,6 @@ export function StoragePage() {
               filters={filters.host}
               onFiltersChange={updateHostFilters}
               focusHostId={focusHostId}
-            />
-          )}
-          {activeTab === 'containers' && (
-            <ContainerDisksTab
-              isActive={activeTab === 'containers'}
-              filters={filters.container}
-              onFiltersChange={updateContainerFilters}
             />
           )}
           {activeTab === 'volumes' && (
