@@ -247,4 +247,91 @@ function ingestHost(db: Database.Database, hostId: string, hostData: HostData | 
   );
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestUpdates, upsertHost, ingestHost };
+interface PvRecord {
+  name: string;
+  phase: string;
+  capacityBytes: number | null;
+  accessModes: string[];
+  reclaimPolicy: string | null;
+  storageClass: string | null;
+  volumeMode: string | null;
+  claimNamespace: string | null;
+  claimName: string | null;
+  csiDriver: string | null;
+  createdAt: string | null;
+  labels: string | Record<string, string> | null;
+}
+
+interface PvcRecord {
+  namespace: string;
+  name: string;
+  phase: string;
+  storageClass: string | null;
+  requestBytes: number | null;
+  capacityBytes: number | null;
+  accessModes: string[];
+  volumeName: string | null;
+  volumeMode: string | null;
+  createdAt: string | null;
+  labels: string | Record<string, string> | null;
+}
+
+/**
+ * Ingest a batch of PersistentVolume snapshots for a cluster. Like
+ * ingestVolumes, this inserts fresh rows per cycle — queries pick the latest
+ * batch per cluster_id via MAX(collected_at), so stale rows for deleted PVs
+ * naturally fall off.
+ */
+function ingestPvs(db: Database.Database, clusterId: string, pvs: PvRecord[]): void {
+  const insert = db.prepare(`
+    INSERT INTO pv_snapshots
+    (cluster_id, pv_name, phase, capacity_bytes, access_modes, reclaim_policy,
+     storage_class, volume_mode, claim_namespace, claim_name, csi_driver,
+     created_at, labels, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
+  const insertMany = db.transaction((items: PvRecord[]) => {
+    for (const p of items) {
+      const labels = typeof p.labels === 'object' && p.labels !== null
+        ? JSON.stringify(p.labels)
+        : (p.labels ?? null);
+      insert.run(
+        clusterId, p.name, p.phase, p.capacityBytes ?? null,
+        JSON.stringify(p.accessModes ?? []),
+        p.reclaimPolicy ?? null, p.storageClass ?? null, p.volumeMode ?? null,
+        p.claimNamespace ?? null, p.claimName ?? null, p.csiDriver ?? null,
+        p.createdAt ?? null, labels,
+      );
+    }
+  });
+  if (pvs.length > 0) insertMany(pvs);
+  logger.info('ingest', `Stored ${pvs.length} PV snapshots for cluster ${clusterId}`);
+}
+
+function ingestPvcs(db: Database.Database, clusterId: string, pvcs: PvcRecord[]): void {
+  const insert = db.prepare(`
+    INSERT INTO pvc_snapshots
+    (cluster_id, namespace, pvc_name, phase, storage_class, request_bytes,
+     capacity_bytes, access_modes, volume_name, volume_mode,
+     created_at, labels, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
+  const insertMany = db.transaction((items: PvcRecord[]) => {
+    for (const p of items) {
+      const labels = typeof p.labels === 'object' && p.labels !== null
+        ? JSON.stringify(p.labels)
+        : (p.labels ?? null);
+      insert.run(
+        clusterId, p.namespace, p.name, p.phase, p.storageClass ?? null,
+        p.requestBytes ?? null, p.capacityBytes ?? null,
+        JSON.stringify(p.accessModes ?? []),
+        p.volumeName ?? null, p.volumeMode ?? null,
+        p.createdAt ?? null, labels,
+      );
+    }
+  });
+  if (pvcs.length > 0) insertMany(pvcs);
+  logger.info('ingest', `Stored ${pvcs.length} PVC snapshots for cluster ${clusterId}`);
+}
+
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestUpdates, upsertHost, ingestHost };

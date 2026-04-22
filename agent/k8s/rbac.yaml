@@ -26,6 +26,10 @@ rules:
   - apiGroups: ["apps"]
     resources: ["replicasets"]
     verbs: ["get", "list"]
+  # Cluster-scoped PV/PVC inventory (the elected leader publishes to the hub)
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -35,6 +39,32 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: insightd-agent
+subjects:
+  - kind: ServiceAccount
+    name: insightd-agent
+    namespace: insightd
+---
+# Namespace-scoped Role for leader election via coordination.k8s.io Leases.
+# Deliberately NOT a ClusterRole — the lease lives in insightd's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: insightd-agent-lease
+  namespace: insightd
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: insightd-agent-lease
+  namespace: insightd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: insightd-agent-lease
 subjects:
   - kind: ServiceAccount
     name: insightd-agent

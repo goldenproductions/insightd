@@ -19,6 +19,8 @@ const config = Object.freeze({
   // Kubernetes (DaemonSet mode) — set via downward API in the pod spec
   nodeName: process.env.NODE_NAME || '',
   nodeIp: process.env.NODE_IP || '',
+  podName: process.env.POD_NAME || '',
+  podNamespace: process.env.POD_NAMESPACE || '',
 
   // Optional kubelet URL override. Defaults to https://${NODE_IP}:10250.
   // Useful for k3s/flatcar or clusters where the kubelet listens on a non-standard port.
@@ -69,6 +71,15 @@ function validate(): string[] {
   }
   if (isK8s && config.allowActions) {
     errors.push('INSIGHTD_ALLOW_ACTIONS=true is ignored in Kubernetes mode (pod lifecycle is managed by the cluster)');
+  }
+  if (isK8s && !config.podNamespace) {
+    errors.push('POD_NAMESPACE is not set — leader election is disabled, PV/PVC inventory will not be published. Set via downward API (fieldRef metadata.namespace).');
+  }
+  if (isK8s && !config.podName) {
+    errors.push('POD_NAME is not set — leader election needs a unique identity per pod. Set via downward API (fieldRef metadata.name).');
+  }
+  if (isK8s && !config.hostGroup) {
+    errors.push('INSIGHTD_HOST_GROUP is empty — PV/PVC data will use a synthetic cluster id. Set a unique value per cluster to enable proper cross-cluster separation.');
   }
   return errors;
 }

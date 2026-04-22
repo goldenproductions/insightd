@@ -61,6 +61,53 @@ interface K8sReplicaSet {
 
 interface K8sList<T> { items: T[] }
 
+// ---- PV / PVC / Lease (cluster-scoped resources used by the PV publisher) ----
+
+export interface K8sPvSpec {
+  capacity?: Record<string, string>;
+  accessModes?: string[];
+  persistentVolumeReclaimPolicy?: string;
+  storageClassName?: string;
+  volumeMode?: string;
+  claimRef?: { namespace?: string; name?: string };
+  csi?: { driver?: string };
+}
+
+export interface K8sPv {
+  metadata?: K8sMeta;
+  spec?: K8sPvSpec;
+  status?: { phase?: string };
+}
+
+export interface K8sPvcSpec {
+  accessModes?: string[];
+  resources?: { requests?: Record<string, string> };
+  storageClassName?: string;
+  volumeMode?: string;
+  volumeName?: string;
+}
+
+export interface K8sPvc {
+  metadata?: K8sMeta;
+  spec?: K8sPvcSpec;
+  status?: { phase?: string; capacity?: Record<string, string> };
+}
+
+export interface K8sLeaseSpec {
+  holderIdentity?: string | null;
+  leaseDurationSeconds?: number;
+  acquireTime?: string;
+  renewTime?: string;
+  leaseTransitions?: number;
+}
+
+export interface K8sLease {
+  apiVersion?: string;
+  kind?: string;
+  metadata?: K8sMeta & { resourceVersion?: string };
+  spec?: K8sLeaseSpec;
+}
+
 /**
  * Waiting reasons that represent normal startup. Anything not in this set
  * (CrashLoopBackOff, ImagePullBackOff, ErrImagePull, CreateContainerError,
@@ -74,7 +121,7 @@ const K8S_TRANSIENT_WAITING_REASONS = new Set<string>([
 
 // ---- Lightweight K8s API client using raw HTTPS ----
 
-class K8sClient {
+export class K8sClient {
   private apiServer: string;
   private token: string;
   private caCert: Buffer | null;
@@ -165,6 +212,97 @@ class K8sClient {
     const qs = `?container=${encodeURIComponent(container)}&tailLines=${tailLines}&timestamps=true`;
     return this.getText(
       `/api/v1/namespaces/${encodeURIComponent(namespace)}/pods/${encodeURIComponent(podName)}/log${qs}`,
+    );
+  }
+
+  /**
+   * Low-level JSON write (POST/PUT). Unlike `get`, does NOT reject on non-2xx —
+   * returns { status, body } so lease ops can distinguish 404/409 from success.
+   */
+  async writeJson<T>(method: 'POST' | 'PUT', path: string, body: unknown): Promise<{ status: number; body: T | null }> {
+    const url = new URL(path, this.apiServer);
+    const payload = Buffer.from(JSON.stringify(body), 'utf8');
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname + url.search,
+        method,
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'Content-Length': payload.length,
+        },
+        ca: this.caCert ?? undefined,
+        rejectUnauthorized: !!this.caCert,
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk: string) => body += chunk);
+        res.on('end', () => {
+          const status = res.statusCode ?? 0;
+          let parsed: T | null = null;
+          if (body.length > 0) {
+            try { parsed = JSON.parse(body) as T; } catch { /* non-JSON error body */ }
+          }
+          resolve({ status, body: parsed });
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error('K8s API timeout')); });
+      req.write(payload);
+      req.end();
+    });
+  }
+
+  async listPvs(): Promise<K8sList<K8sPv>> {
+    return this.get<K8sList<K8sPv>>('/api/v1/persistentvolumes');
+  }
+
+  async listPvcs(): Promise<K8sList<K8sPvc>> {
+    return this.get<K8sList<K8sPvc>>('/api/v1/persistentvolumeclaims');
+  }
+
+  /** Returns null on 404 (lease doesn't exist yet). */
+  async getLease(namespace: string, name: string): Promise<K8sLease | null> {
+    const path = `/apis/coordination.k8s.io/v1/namespaces/${encodeURIComponent(namespace)}/leases/${encodeURIComponent(name)}`;
+    const url = new URL(path, this.apiServer);
+    return new Promise((resolve, reject) => {
+      const req = https.request({
+        hostname: url.hostname,
+        port: url.port || 443,
+        path: url.pathname,
+        method: 'GET',
+        headers: { Authorization: `Bearer ${this.token}`, Accept: 'application/json' },
+        ca: this.caCert ?? undefined,
+        rejectUnauthorized: !!this.caCert,
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk: string) => body += chunk);
+        res.on('end', () => {
+          if (res.statusCode === 404) { resolve(null); return; }
+          if (res.statusCode !== 200) {
+            reject(new Error(`getLease returned ${res.statusCode}: ${body.slice(0, 200)}`));
+            return;
+          }
+          try { resolve(JSON.parse(body) as K8sLease); }
+          catch (err) { reject(err as Error); }
+        });
+      });
+      req.on('error', reject);
+      req.setTimeout(10000, () => { req.destroy(); reject(new Error('K8s API timeout')); });
+      req.end();
+    });
+  }
+
+  async createLease(namespace: string, lease: K8sLease): Promise<{ status: number; body: K8sLease | null }> {
+    return this.writeJson<K8sLease>('POST', `/apis/coordination.k8s.io/v1/namespaces/${encodeURIComponent(namespace)}/leases`, lease);
+  }
+
+  async updateLease(namespace: string, name: string, lease: K8sLease): Promise<{ status: number; body: K8sLease | null }> {
+    return this.writeJson<K8sLease>('PUT',
+      `/apis/coordination.k8s.io/v1/namespaces/${encodeURIComponent(namespace)}/leases/${encodeURIComponent(name)}`,
+      lease,
     );
   }
 }
