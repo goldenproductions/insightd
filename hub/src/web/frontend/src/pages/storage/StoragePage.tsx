@@ -12,8 +12,8 @@ import type { DisksOverview } from '@/types/api';
 import { StorageSummary } from './StorageSummary';
 import { DiskWarningsBanner } from './DiskWarningsBanner';
 import { HostDisksTab } from './HostDisksTab';
-import { ContainerDisksTab } from './ContainerDisksTab';
-import { VolumesTab } from './VolumesTab';
+import { ContainerDisksTab, type ContainerFilters, type ContainerSizeRange } from './ContainerDisksTab';
+import { VolumesTab, type VolumeFilters, type VolumeStateFilter } from './VolumesTab';
 
 type TabId = 'hosts' | 'containers' | 'volumes';
 type SeverityFilter = 'all' | 'warning' | 'critical';
@@ -24,26 +24,58 @@ interface HostTabFilters {
   groups: string[];
 }
 
+interface AllFilters {
+  host: HostTabFilters;
+  container: ContainerFilters;
+  volume: VolumeFilters;
+}
+
 function readTab(params: URLSearchParams): TabId {
   const t = params.get('tab');
   if (t === 'containers' || t === 'volumes') return t;
   return 'hosts';
 }
 
-function readHostFilters(params: URLSearchParams): HostTabFilters {
+function readAllFilters(params: URLSearchParams): AllFilters {
   const sev = params.get('severity');
   const severity: SeverityFilter = sev === 'warning' || sev === 'critical' ? sev : 'all';
-  const hosts = (params.get('hosts') ?? '').split(',').filter(Boolean);
-  const groups = (params.get('groups') ?? '').split(',').filter(Boolean);
-  return { severity, hosts, groups };
+  const sizeRangeRaw = params.get('cSize');
+  const sizeRange: ContainerSizeRange = sizeRangeRaw === 'gt1gb' || sizeRangeRaw === 'gt5gb' || sizeRangeRaw === 'gt20gb'
+    ? sizeRangeRaw
+    : 'all';
+  const volStateRaw = params.get('vState');
+  const volState: VolumeStateFilter = volStateRaw === 'orphaned' || volStateRaw === 'in-use' ? volStateRaw : 'all';
+  return {
+    host: {
+      severity,
+      hosts: (params.get('hosts') ?? '').split(',').filter(Boolean),
+      groups: (params.get('groups') ?? '').split(',').filter(Boolean),
+    },
+    container: {
+      hosts: (params.get('cHosts') ?? '').split(',').filter(Boolean),
+      images: (params.get('cImages') ?? '').split(',').filter(Boolean),
+      sizeRange,
+    },
+    volume: {
+      hosts: (params.get('vHosts') ?? '').split(',').filter(Boolean),
+      drivers: (params.get('vDrivers') ?? '').split(',').filter(Boolean),
+      state: volState,
+    },
+  };
 }
 
-function writeParams(tab: TabId, f: HostTabFilters): URLSearchParams {
+function writeParams(tab: TabId, f: AllFilters): URLSearchParams {
   const p = new URLSearchParams();
   if (tab !== 'hosts') p.set('tab', tab);
-  if (f.severity !== 'all') p.set('severity', f.severity);
-  if (f.hosts.length > 0) p.set('hosts', f.hosts.join(','));
-  if (f.groups.length > 0) p.set('groups', f.groups.join(','));
+  if (f.host.severity !== 'all') p.set('severity', f.host.severity);
+  if (f.host.hosts.length > 0) p.set('hosts', f.host.hosts.join(','));
+  if (f.host.groups.length > 0) p.set('groups', f.host.groups.join(','));
+  if (f.container.hosts.length > 0) p.set('cHosts', f.container.hosts.join(','));
+  if (f.container.images.length > 0) p.set('cImages', f.container.images.join(','));
+  if (f.container.sizeRange !== 'all') p.set('cSize', f.container.sizeRange);
+  if (f.volume.hosts.length > 0) p.set('vHosts', f.volume.hosts.join(','));
+  if (f.volume.drivers.length > 0) p.set('vDrivers', f.volume.drivers.join(','));
+  if (f.volume.state !== 'all') p.set('vState', f.volume.state);
   return p;
 }
 
@@ -51,17 +83,27 @@ export function StoragePage() {
   const { token } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = useMemo(() => readTab(searchParams), [searchParams]);
-  const hostFilters = useMemo(() => readHostFilters(searchParams), [searchParams]);
+  const filters = useMemo(() => readAllFilters(searchParams), [searchParams]);
   const [focusHostId, setFocusHostId] = useState<string | null>(null);
 
   const setActiveTab = useCallback((id: string) => {
-    setSearchParams(writeParams(id as TabId, hostFilters), { replace: true });
-  }, [hostFilters, setSearchParams]);
+    setSearchParams(writeParams(id as TabId, filters), { replace: true });
+  }, [filters, setSearchParams]);
 
   const updateHostFilters = useCallback((patch: Partial<HostTabFilters>) => {
-    const next: HostTabFilters = { ...hostFilters, ...patch };
+    const next: AllFilters = { ...filters, host: { ...filters.host, ...patch } };
     setSearchParams(writeParams(activeTab, next), { replace: true });
-  }, [activeTab, hostFilters, setSearchParams]);
+  }, [activeTab, filters, setSearchParams]);
+
+  const updateContainerFilters = useCallback((patch: Partial<ContainerFilters>) => {
+    const next: AllFilters = { ...filters, container: { ...filters.container, ...patch } };
+    setSearchParams(writeParams(activeTab, next), { replace: true });
+  }, [activeTab, filters, setSearchParams]);
+
+  const updateVolumeFilters = useCallback((patch: Partial<VolumeFilters>) => {
+    const next: AllFilters = { ...filters, volume: { ...filters.volume, ...patch } };
+    setSearchParams(writeParams(activeTab, next), { replace: true });
+  }, [activeTab, filters, setSearchParams]);
 
   const { data, isLoading, refetch, isFetching } = useQuery({
     queryKey: queryKeys.disks(),
@@ -82,16 +124,14 @@ export function StoragePage() {
   );
 
   const handleSelectHost = useCallback((hostId: string) => {
-    // Jump to Hosts tab and scroll to the highlighted host.
-    setSearchParams(writeParams('hosts', hostFilters), { replace: true });
+    setSearchParams(writeParams('hosts', filters), { replace: true });
     setFocusHostId(hostId);
     requestAnimationFrame(() => {
       const el = document.getElementById(`storage-host-${hostId}`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
-    // Clear focus highlight after a moment so it behaves like a flash.
     window.setTimeout(() => setFocusHostId(null), 2000);
-  }, [hostFilters, setSearchParams]);
+  }, [filters, setSearchParams]);
 
   const tabs = useMemo(() => [
     { id: 'hosts',      label: 'Hosts',      count: data?.hosts.length ?? 0, shortcut: '1' },
@@ -131,13 +171,25 @@ export function StoragePage() {
           {activeTab === 'hosts' && (
             <HostDisksTab
               hosts={data.hosts}
-              filters={hostFilters}
+              filters={filters.host}
               onFiltersChange={updateHostFilters}
               focusHostId={focusHostId}
             />
           )}
-          {activeTab === 'containers' && <ContainerDisksTab />}
-          {activeTab === 'volumes' && <VolumesTab />}
+          {activeTab === 'containers' && (
+            <ContainerDisksTab
+              isActive={activeTab === 'containers'}
+              filters={filters.container}
+              onFiltersChange={updateContainerFilters}
+            />
+          )}
+          {activeTab === 'volumes' && (
+            <VolumesTab
+              isActive={activeTab === 'volumes'}
+              filters={filters.volume}
+              onFiltersChange={updateVolumeFilters}
+            />
+          )}
         </div>
       )}
     </>

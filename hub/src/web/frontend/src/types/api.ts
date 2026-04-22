@@ -165,6 +165,55 @@ export interface DisksOverview {
   warnings: DiskOverviewWarning[];
 }
 
+export interface ContainerStorageItem {
+  name: string;
+  image: string | null;
+  status: string;
+  sizeRwBytes: number | null;
+  sizeRootfsBytes: number | null;
+  collectedAt: string;
+}
+
+export interface ContainersStorageHost {
+  hostId: string;
+  hostGroup: string | null;
+  online: boolean;
+  containers: ContainerStorageItem[];
+}
+
+export interface ContainersStorage {
+  totals: { containerCount: number; totalRwBytes: number; totalRootfsBytes: number };
+  hosts: ContainersStorageHost[];
+}
+
+export interface VolumeItem {
+  name: string;
+  driver: string;
+  mountpoint: string | null;
+  sizeBytes: number | null;
+  refCount: number | null;
+  createdAt: string | null;
+  collectedAt: string;
+}
+
+export interface VolumesOverviewHost {
+  hostId: string;
+  runtimeType: string;
+  hostGroup: string | null;
+  online: boolean;
+  volumes: VolumeItem[];
+}
+
+export interface VolumesOverview {
+  totals: {
+    volumeCount: number;
+    totalSizeBytes: number;
+    orphanedCount: number;
+    orphanedSizeBytes: number;
+  };
+  hosts: VolumesOverviewHost[];
+}
+
 export interface UpdateCheck {
   container_name: string;
   image: string;

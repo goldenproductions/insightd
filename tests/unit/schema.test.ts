@@ -47,6 +47,60 @@ describe('schema', () => {
     restore();
   });
 
+  it('bootstrap creates v30 size columns on container_snapshots', () => {
+    bootstrap(db);
+    const cols = db.prepare("PRAGMA table_info(container_snapshots)").all();
+    const names = cols.map((c: any) => c.name);
+    assert.ok(names.includes('size_rootfs_bytes'));
+    assert.ok(names.includes('size_rw_bytes'));
+    restore();
+  });
+
+  it('bootstrap creates v31 volume_snapshots table', () => {
+    bootstrap(db);
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='volume_snapshots'").get();
+    assert.ok(row, 'volume_snapshots should exist');
+    const cols = db.prepare('PRAGMA table_info(volume_snapshots)').all();
+    const names = cols.map((c: any) => c.name);
+    for (const col of ['host_id', 'volume_name', 'driver', 'mountpoint', 'size_bytes', 'ref_count', 'created_at', 'labels', 'collected_at']) {
+      assert.ok(names.includes(col), `volume_snapshots missing column ${col}`);
+    }
+    restore();
+  });
+
+  it('v29 → v30 migration adds the size columns without dropping existing data', () => {
+    // Start with a v29-shaped table (no size columns).
+    db.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE container_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id TEXT NOT NULL DEFAULT 'local',
+        container_name TEXT NOT NULL, container_id TEXT NOT NULL, status TEXT NOT NULL,
+        cpu_percent REAL, memory_mb REAL, restart_count INTEGER DEFAULT 0,
+        labels TEXT, exit_code INTEGER,
+        collected_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO meta (key, value) VALUES ('schema_version', '29');
+      INSERT INTO container_snapshots (container_name, container_id, status) VALUES ('nginx', 'abc', 'running');
+    `);
+
+    bootstrap(db);
+
+    const cols = db.prepare("PRAGMA table_info(container_snapshots)").all();
+    const names = cols.map((c: any) => c.name);
+    assert.ok(names.includes('size_rootfs_bytes'));
+    assert.ok(names.includes('size_rw_bytes'));
+
+    const rows = db.prepare('SELECT container_name, size_rw_bytes FROM container_snapshots').all();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].container_name, 'nginx');
+    assert.equal(rows[0].size_rw_bytes, null);
+
+    const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+    assert.equal(version.value, String(SCHEMA_VERSION));
+    restore();
+  });
+
   describe('pruneOldData', () => {
     it('deletes rows older than 30 days', () => {
       bootstrap(db);

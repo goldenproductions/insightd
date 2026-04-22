@@ -4,9 +4,10 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
+  ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
   upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
@@ -46,12 +47,23 @@ interface CollectionPayload {
     health_check_output?: string | null;
     labels?: Record<string, string> | null;
     exit_code?: number | null;
+    size_rootfs_bytes?: number | null;
+    size_rw_bytes?: number | null;
   }>;
   disk?: Array<{
     mount_point: string;
     total_gb: number;
     used_gb: number;
     used_percent: number;
+  }>;
+  volumes?: Array<{
+    name: string;
+    driver: string;
+    mountpoint: string | null;
+    size_bytes: number | null;
+    ref_count: number | null;
+    created_at: string | null;
+    labels: string | null;
   }>;
   host?: {
     cpu_percent?: number | null;
@@ -216,6 +228,8 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     healthCheckOutput: c.health_check_output ?? null,
     labels: c.labels || null,
     exitCode: c.exit_code ?? null,
+    sizeRootfsBytes: c.size_rootfs_bytes ?? null,
+    sizeRwBytes: c.size_rw_bytes ?? null,
   }));
 
   // Detect containers transitioning to unhealthy — pre-warm the log cache for diagnosis
@@ -247,6 +261,16 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     usedPercent: d.used_percent,
   }));
 
+  const volumes = (payload.volumes || []).map(v => ({
+    name: v.name,
+    driver: v.driver,
+    mountpoint: v.mountpoint ?? null,
+    sizeBytes: v.size_bytes ?? null,
+    refCount: v.ref_count ?? null,
+    createdAt: v.created_at ?? null,
+    labels: v.labels ?? null,
+  }));
+
   upsertHost(db, hostId, payload.agent_version || null, payload.runtime_type || 'docker', payload.host_group ?? null);
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
@@ -268,6 +292,10 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     }
   }
   if (disk.length > 0) ingestDisk(db, hostId, disk);
+
+  // Volumes: agents that don't support the listing (k8s, older versions) will
+  // simply not include the field — skip silently rather than wipe state.
+  if (payload.volumes !== undefined) ingestVolumes(db, hostId, volumes);
 
   // Host metrics (v2 payloads)
   if (payload.host) {

@@ -26,6 +26,17 @@ export interface ContainerInfo {
    * successfully" (0) from "failed" (non-zero) for one-shot containers.
    */
   exitCode?: number | null;
+  /**
+   * Total rootfs size (image layers + writable) in bytes. Docker only —
+   * Kubernetes doesn't expose an equivalent.
+   */
+  sizeRootfsBytes?: number | null;
+  /**
+   * Writable layer size in bytes (what the container has written on top of
+   * its image). Docker only. For k8s we map cAdvisor's
+   * container_fs_usage_bytes onto sizeRootfsBytes instead.
+   */
+  sizeRwBytes?: number | null;
 }
 
 export interface ContainerWithResources extends ContainerInfo {
@@ -59,6 +70,19 @@ export interface ImageUpdate {
 export interface ActionResult {
   status: 'success' | 'failed';
   message: string;
+}
+
+export interface VolumeInfo {
+  name: string;
+  driver: string;
+  mountpoint: string | null;
+  /** Filesystem size in bytes. Null if the runtime can't report it. */
+  sizeBytes: number | null;
+  /** Number of containers currently mounting this volume. Null if unknown. */
+  refCount: number | null;
+  /** ISO timestamp from the runtime's own metadata. Null if unknown. */
+  createdAt: string | null;
+  labels: Record<string, string>;
 }
 
 /**
@@ -131,6 +155,15 @@ export interface ContainerRuntime {
    * Only called if supportsUpdateChecks is true.
    */
   checkImageUpdates(): Promise<ImageUpdate[]>;
+
+  /**
+   * Optional: list on-host volumes (Docker named volumes). Omitted by
+   * runtimes that don't have a native volume concept (Kubernetes — where
+   * volumes are cluster-scoped and visible via the API server, not the
+   * per-node agent). The hub surfaces hosts without this capability as
+   * "coming soon" in the Storage → Volumes tab.
+   */
+  listVolumes?(): Promise<VolumeInfo[]>;
 
   /**
    * Optional: returns a runtime-specific override for host metrics.

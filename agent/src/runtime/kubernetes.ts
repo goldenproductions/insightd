@@ -440,6 +440,10 @@ export class KubernetesRuntime implements ContainerRuntime {
       if (m.networkTxBytes != null) c.networkTxBytes = m.networkTxBytes;
       if (m.fsReadBytes != null) c.blkioReadBytes = m.fsReadBytes;
       if (m.fsWriteBytes != null) c.blkioWriteBytes = m.fsWriteBytes;
+      // cAdvisor's container_fs_usage_bytes reports the container's
+      // filesystem size — the closest analog to Docker's SizeRootFs.
+      // sizeRwBytes has no direct equivalent in k8s, so we leave it null.
+      if (m.fsUsageBytes != null) c.sizeRootfsBytes = m.fsUsageBytes;
 
       logger.info('resources', `${c.name}: CPU=${c.cpuPercent ?? 'pending'}%, RAM=${c.memoryMb ?? '?'}MB`);
     }
@@ -680,6 +684,7 @@ interface ContainerMetrics {
   networkTxBytes?: number;   // cumulative (pod-level)
   fsReadBytes?: number;      // cumulative
   fsWriteBytes?: number;     // cumulative
+  fsUsageBytes?: number;     // current — size of the container's filesystem
 }
 
 /**
@@ -739,6 +744,11 @@ export function parseCadvisorMetrics(raw: string): Map<string, ContainerMetrics>
           break;
         case 'container_fs_writes_bytes_total':
           m.fsWriteBytes = (m.fsWriteBytes || 0) + value;
+          break;
+        case 'container_fs_usage_bytes':
+          // Summed across multiple devices if cAdvisor reports per-device
+          // rows; homogeneous setups typically report one row per container.
+          m.fsUsageBytes = (m.fsUsageBytes || 0) + value;
           break;
       }
       byKey.set(key, m);

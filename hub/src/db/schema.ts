@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 29;
+const SCHEMA_VERSION = 31;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -37,6 +37,8 @@ function bootstrap(db: Database.Database): void {
       health_check_output TEXT,
       labels          TEXT,
       exit_code       INTEGER,
+      size_rootfs_bytes INTEGER,
+      size_rw_bytes   INTEGER,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -95,6 +97,24 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_disk_host_time
       ON disk_snapshots (host_id, collected_at);
+
+    CREATE TABLE IF NOT EXISTS volume_snapshots (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id       TEXT NOT NULL,
+      volume_name   TEXT NOT NULL,
+      driver        TEXT NOT NULL,
+      mountpoint    TEXT,
+      size_bytes    INTEGER,
+      ref_count     INTEGER,
+      created_at    TEXT,
+      labels        TEXT,
+      collected_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_volumes_host_time
+      ON volume_snapshots (host_id, collected_at);
+    CREATE INDEX IF NOT EXISTS idx_volumes_host_name_time
+      ON volume_snapshots (host_id, volume_name, collected_at);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -603,6 +623,34 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('DROP TABLE IF EXISTS service_groups'); } catch { /* not present */ }
     // Best-effort cleanup of the now-unused statusPage.showStacks setting.
     try { db.prepare("DELETE FROM settings WHERE key = 'statusPage.showStacks'").run(); } catch { /* table not present */ }
+  }
+  if (fromVersion < 30) {
+    // Per-container disk usage for the Storage → Containers tab.
+    // Docker populates both via `listContainers({size:true})`; k8s only
+    // fills size_rootfs_bytes from cAdvisor's container_fs_usage_bytes.
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN size_rootfs_bytes INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN size_rw_bytes INTEGER'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 31) {
+    // Docker volume inventory for the Storage → Volumes tab.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS volume_snapshots (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id       TEXT NOT NULL,
+        volume_name   TEXT NOT NULL,
+        driver        TEXT NOT NULL,
+        mountpoint    TEXT,
+        size_bytes    INTEGER,
+        ref_count     INTEGER,
+        created_at    TEXT,
+        labels        TEXT,
+        collected_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_volumes_host_time
+        ON volume_snapshots (host_id, collected_at);
+      CREATE INDEX IF NOT EXISTS idx_volumes_host_name_time
+        ON volume_snapshots (host_id, volume_name, collected_at);
+    `);
   }
 }
 

@@ -112,6 +112,8 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/storage', handlers.handleGetStorage);
   router.add('POST', '/api/storage/vacuum', handlers.handleVacuum);
   router.add('GET', '/api/disks', handlers.handleDisksOverview);
+  router.add('GET', '/api/containers-storage', handlers.handleContainersStorage);
+  router.add('GET', '/api/volumes', handlers.handleVolumesOverview);
 
   const server: Server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url!, `http://${req.headers.host}`);

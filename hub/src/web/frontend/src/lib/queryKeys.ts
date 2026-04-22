@@ -57,6 +57,12 @@ export const queryKeys = {
   // Disks (fleet disk overview)
   disks: () => ['disks'] as const,
 
+  // Per-container storage (Storage → Containers tab)
+  containersStorage: (showInternal?: boolean) => ['containers-storage', showInternal] as const,
+
+  // Volume inventory (Storage → Volumes tab)
+  volumes: () => ['volumes'] as const,
+
   // Status
   publicStatus: () => ['public-status'] as const,
 } as const;
