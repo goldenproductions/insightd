@@ -19,6 +19,7 @@ const ContainerDetailPage = lazy(() => import('@/pages/containers/ContainerDetai
 const AlertsPage = lazy(() => import('@/pages/AlertsPage').then(m => ({ default: m.AlertsPage })));
 const InsightsPage = lazy(() => import('@/pages/InsightsPage').then(m => ({ default: m.InsightsPage })));
 const EndpointsPage = lazy(() => import('@/pages/EndpointsPage').then(m => ({ default: m.EndpointsPage })));
+const StoragePage = lazy(() => import('@/pages/storage/StoragePage').then(m => ({ default: m.StoragePage })));
 const EndpointDetailPage = lazy(() => import('@/pages/EndpointDetailPage').then(m => ({ default: m.EndpointDetailPage })));
 const EndpointFormPage = lazy(() => import('@/pages/EndpointFormPage').then(m => ({ default: m.EndpointFormPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
@@ -56,6 +57,7 @@ function GlobalShortcuts() {
   useKeyboardShortcut({ keys: 'g d', description: 'Go to dashboard', scope: 'Global', onTrigger: () => navigate('/') });
   useKeyboardShortcut({ keys: 'g h', description: 'Go to hosts', scope: 'Global', onTrigger: () => navigate('/hosts') });
   useKeyboardShortcut({ keys: 'g e', description: 'Go to endpoints', scope: 'Global', onTrigger: () => navigate('/endpoints') });
+  useKeyboardShortcut({ keys: 'g s', description: 'Go to storage', scope: 'Global', onTrigger: () => navigate('/storage') });
   useKeyboardShortcut({ keys: 'g i', description: 'Go to insights', scope: 'Global', onTrigger: () => navigate('/insights') });
   useKeyboardShortcut({ keys: 'g a', description: 'Go to alerts', scope: 'Global', onTrigger: () => navigate('/alerts') });
   useKeyboardShortcut({ keys: 'g u', description: 'Go to updates', scope: 'Global', onTrigger: () => navigate('/updates') });
@@ -112,6 +114,7 @@ export function App() {
                 <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/insights" element={<InsightsPage />} />
                 <Route path="/endpoints" element={<EndpointsPage />} />
+                <Route path="/storage" element={<StoragePage />} />
                 <Route path="/endpoints/new" element={<EndpointFormPage />} />
                 <Route path="/endpoints/:endpointId" element={<EndpointDetailPage />} />
                 <Route path="/endpoints/:endpointId/edit" element={<EndpointFormPage />} />
