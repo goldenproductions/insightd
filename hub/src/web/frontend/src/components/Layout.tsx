@@ -6,7 +6,7 @@ import { useShowInternal } from '@/hooks/useShowInternal';
 import { UpdateBanner } from './UpdateBanner';
 import {
   DashboardIcon, HostsIcon, AlertsIcon, InsightsIcon, EndpointsIcon,
-  WebhooksIcon, KeyIcon, UpdatesIcon, AgentIcon, SettingsIcon,
+  StorageIcon, WebhooksIcon, KeyIcon, UpdatesIcon, AgentIcon, SettingsIcon,
   EyeIcon, SunIcon, MoonIcon, MenuIcon,
 } from './Icons';
 
@@ -24,6 +24,7 @@ export function Layout() {
     { label: 'Monitor', items: [
       { to: '/', label: 'Dashboard', icon: DashboardIcon },
       { to: '/hosts', label: 'Hosts', icon: HostsIcon },
+      { to: '/storage', label: 'Storage', icon: StorageIcon },
       { to: '/endpoints', label: 'Endpoints', icon: EndpointsIcon },
     ]},
     { label: 'Respond', items: [

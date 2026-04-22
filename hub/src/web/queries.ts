@@ -1175,6 +1175,129 @@ function getDiskForecast(db: Database.Database, hostId: string): Array<{ mountPo
   });
 }
 
+interface DisksOverviewHostRow {
+  host_id: string;
+  host_group: string | null;
+  is_online: number;
+}
+
+interface DisksOverviewMount {
+  mountPoint: string;
+  totalGb: number;
+  usedGb: number;
+  freeGb: number;
+  usedPercent: number;
+  collectedAt: string;
+  daysUntilFull: number | null;
+  dailyGrowthGb: number;
+}
+
+interface DisksOverviewHost {
+  hostId: string;
+  hostGroup: string | null;
+  online: boolean;
+  mounts: DisksOverviewMount[];
+}
+
+interface DisksOverviewWarning {
+  hostId: string;
+  mountPoint: string;
+  severity: 'warning' | 'critical';
+  reason: 'threshold' | 'forecast';
+  usedPercent: number;
+  daysUntilFull: number | null;
+}
+
+interface DisksOverviewResult {
+  totals: { totalGb: number; usedGb: number; freeGb: number; usedPercent: number };
+  hosts: DisksOverviewHost[];
+  warnings: DisksOverviewWarning[];
+}
+
+function getDisksOverview(db: Database.Database, onlineThresholdMinutes: number): DisksOverviewResult {
+  const hosts = db.prepare(`
+    SELECT host_id,
+      COALESCE(host_group_override, host_group) AS host_group,
+      CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
+        THEN 1 ELSE 0 END as is_online
+    FROM hosts ORDER BY host_id
+  `).all(onlineThresholdMinutes) as DisksOverviewHostRow[];
+
+  const hostsOut: DisksOverviewHost[] = [];
+  const warnings: DisksOverviewWarning[] = [];
+  let totalGb = 0;
+  let usedGb = 0;
+
+  for (const h of hosts) {
+    const mounts = getLatestDisk(db, h.host_id);
+    if (mounts.length === 0) continue;
+
+    const forecasts = getDiskForecast(db, h.host_id);
+    const forecastByMount = new Map(forecasts.map(f => [f.mountPoint, f]));
+
+    const mountsOut: DisksOverviewMount[] = mounts.map(m => {
+      const f = forecastByMount.get(m.mount_point);
+      const freeGb = Math.max(0, Math.round((m.total_gb - m.used_gb) * 100) / 100);
+      return {
+        mountPoint: m.mount_point,
+        totalGb: m.total_gb,
+        usedGb: m.used_gb,
+        freeGb,
+        usedPercent: m.used_percent,
+        collectedAt: m.collected_at,
+        daysUntilFull: f?.daysUntilFull ?? null,
+        dailyGrowthGb: f?.dailyGrowthGb ?? 0,
+      };
+    });
+
+    for (const m of mountsOut) {
+      totalGb += m.totalGb;
+      usedGb += m.usedGb;
+
+      const thresholdCritical = m.usedPercent >= 90;
+      const thresholdWarning = m.usedPercent >= 85;
+      const forecastCritical = m.daysUntilFull != null && m.daysUntilFull < 7;
+      const forecastWarning = m.daysUntilFull != null && m.daysUntilFull < 14;
+
+      if (thresholdCritical || thresholdWarning || forecastCritical || forecastWarning) {
+        const severity: 'warning' | 'critical' = (thresholdCritical || forecastCritical) ? 'critical' : 'warning';
+        const reason: 'threshold' | 'forecast' = (thresholdCritical || thresholdWarning) ? 'threshold' : 'forecast';
+        warnings.push({
+          hostId: h.host_id,
+          mountPoint: m.mountPoint,
+          severity,
+          reason,
+          usedPercent: m.usedPercent,
+          daysUntilFull: m.daysUntilFull,
+        });
+      }
+    }
+
+    hostsOut.push({
+      hostId: h.host_id,
+      hostGroup: h.host_group,
+      online: h.is_online === 1,
+      mounts: mountsOut,
+    });
+  }
+
+  totalGb = Math.round(totalGb * 100) / 100;
+  usedGb = Math.round(usedGb * 100) / 100;
+  const freeGb = Math.round((totalGb - usedGb) * 100) / 100;
+  const usedPercent = totalGb > 0 ? Math.round((usedGb / totalGb) * 1000) / 10 : 0;
+
+  warnings.sort((a, b) => {
+    if (a.severity !== b.severity) return a.severity === 'critical' ? -1 : 1;
+    return b.usedPercent - a.usedPercent;
+  });
+
+  return {
+    totals: { totalGb, usedGb, freeGb, usedPercent },
+    hosts: hostsOut,
+    warnings,
+  };
+}
+
 function getAllImageUpdates(db: Database.Database): ImageUpdateRow[] {
   return db.prepare(`
     SELECT uc.host_id, uc.container_name, uc.image, uc.checked_at
@@ -1265,4 +1388,4 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getAllImageUpdates, getContainerDowntime };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getAllImageUpdates, getContainerDowntime };

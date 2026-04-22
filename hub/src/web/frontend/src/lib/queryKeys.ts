@@ -51,8 +51,11 @@ export const queryKeys = {
   versionCheck: () => ['version-check'] as const,
   imageUpdates: () => ['image-updates'] as const,
 
-  // Storage
+  // Storage (DB stats for Settings card)
   storage: () => ['storage'] as const,
+
+  // Disks (fleet disk overview)
+  disks: () => ['disks'] as const,
 
   // Status
   publicStatus: () => ['public-status'] as const,

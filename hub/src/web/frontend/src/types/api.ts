@@ -132,6 +132,39 @@ export interface DiskForecastItem {
   currentPercent?: number;
 }
 
+export interface DiskOverviewMount {
+  mountPoint: string;
+  totalGb: number;
+  usedGb: number;
+  freeGb: number;
+  usedPercent: number;
+  collectedAt: string;
+  daysUntilFull: number | null;
+  dailyGrowthGb: number;
+}
+
+export interface DiskOverviewHost {
+  hostId: string;
+  hostGroup: string | null;
+  online: boolean;
+  mounts: DiskOverviewMount[];
+}
+
+export interface DiskOverviewWarning {
+  hostId: string;
+  mountPoint: string;
+  severity: 'warning' | 'critical';
+  reason: 'threshold' | 'forecast';
+  usedPercent: number;
+  daysUntilFull: number | null;
+}
+
+export interface DisksOverview {
+  totals: { totalGb: number; usedGb: number; freeGb: number; usedPercent: number };
+  hosts: DiskOverviewHost[];
+  warnings: DiskOverviewWarning[];
+}
+
 export interface UpdateCheck {
   container_name: string;
   image: string;
