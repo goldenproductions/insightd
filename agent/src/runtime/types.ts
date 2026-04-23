@@ -108,6 +108,15 @@ export interface DiskResult {
   usedPercent: number;
 }
 
+export interface NodeCondition {
+  type: string;
+  status: 'True' | 'False' | 'Unknown';
+  reason?: string | null;
+  message?: string | null;
+  lastHeartbeatTime?: string | null;
+  lastTransitionTime?: string | null;
+}
+
 export interface HostMetricsOverride {
   cpuPercent?: number | null;
   memoryUsedMb?: number | null;
@@ -117,6 +126,7 @@ export interface HostMetricsOverride {
   load5?: number | null;
   load15?: number | null;
   uptimeSeconds?: number | null;
+  nodeConditions?: NodeCondition[] | null;
 }
 
 /**

@@ -511,6 +511,12 @@ function handleHostK8sEvents(req: HandlerReq, res: ServerResponse, db: Database.
   return { clusterId, items };
 }
 
+function handleHostNodeConditions(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
+  const items = queries.getNodeConditionsForHost(db, params.hostId);
+  return { items };
+}
+
 // --- HTTP Endpoint Monitoring ---
 
 const endpointQueries = require('../http-monitor/queries');
@@ -1209,7 +1215,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }

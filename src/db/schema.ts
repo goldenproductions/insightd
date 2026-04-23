@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 34;
+const SCHEMA_VERSION = 35;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -183,6 +183,21 @@ function bootstrap(db: Database.Database): void {
       ON k8s_events (cluster_id, last_seen_at DESC);
     CREATE INDEX IF NOT EXISTS idx_k8s_events_involved
       ON k8s_events (cluster_id, involved_kind, involved_name, last_seen_at DESC);
+
+    -- Kubernetes Node conditions (current state, keyed by host + type).
+    CREATE TABLE IF NOT EXISTS node_conditions (
+      host_id            TEXT NOT NULL,
+      type               TEXT NOT NULL,
+      status             TEXT NOT NULL,
+      reason             TEXT,
+      message            TEXT,
+      last_heartbeat_at  TEXT,
+      last_transition_at TEXT,
+      observed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (host_id, type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_node_conditions_host_observed
+      ON node_conditions (host_id, observed_at DESC);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -785,6 +800,23 @@ function migrate(db: Database.Database, fromVersion: number): void {
         ON k8s_events (cluster_id, last_seen_at DESC);
       CREATE INDEX IF NOT EXISTS idx_k8s_events_involved
         ON k8s_events (cluster_id, involved_kind, involved_name, last_seen_at DESC);
+    `);
+  }
+  if (fromVersion < 35) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS node_conditions (
+        host_id            TEXT NOT NULL,
+        type               TEXT NOT NULL,
+        status             TEXT NOT NULL,
+        reason             TEXT,
+        message            TEXT,
+        last_heartbeat_at  TEXT,
+        last_transition_at TEXT,
+        observed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (host_id, type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_node_conditions_host_observed
+        ON node_conditions (host_id, observed_at DESC);
     `);
   }
 }

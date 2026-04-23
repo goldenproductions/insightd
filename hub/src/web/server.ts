@@ -55,6 +55,7 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/hosts/:hostId/trends', handlers.handleTrends);
   router.add('GET', '/api/hosts/:hostId/events', handlers.handleEvents);
   router.add('GET', '/api/hosts/:hostId/k8s-events', handlers.handleHostK8sEvents);
+  router.add('GET', '/api/hosts/:hostId/node-conditions', handlers.handleHostNodeConditions);
   router.add('GET', '/api/hosts/:hostId/metrics', handlers.handleHostMetrics);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/logs', handlers.handleContainerLogs);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/availability', handlers.handleContainerAvailability);
