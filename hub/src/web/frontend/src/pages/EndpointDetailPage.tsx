@@ -30,28 +30,15 @@ function buildResponseChart(checks: EndpointCheck[]): { timestamps: number[]; va
   return { timestamps, values };
 }
 
-const MAX_STRIP_CHECKS = 100;
 const SLOW_RESPONSE_MS = 2000;
 
-/**
- * One-bar-per-check status strip. Each bar represents one of the most
- * recent ~100 checks (chronological, left = older). Colour:
- *   • red     — check failed
- *   • amber   — check passed but response_time_ms > SLOW_RESPONSE_MS
- *   • emerald — check passed
- *
- * The bar height also encodes severity (100% / 80% / 55%) so the strip
- * reads at a glance even when colours wash out in bright monitors.
- */
 function CheckStatusStrip({ checks }: { checks: EndpointCheck[] }) {
   const [hover, setHover] = useState<{ index: number; clientX: number; clientY: number } | null>(null);
 
-  // `checks` comes newest-first from the API — reverse + trim to the
-  // latest N so the strip reads left-to-right old → new.
-  const strip = useMemo(() => {
-    const chronological = [...checks].reverse();
-    return chronological.slice(-MAX_STRIP_CHECKS);
-  }, [checks]);
+  const strip = useMemo(() => [...checks].reverse(), [checks]);
+
+  const dense = strip.length > 200;
+  const gapClass = dense ? 'gap-px' : 'gap-[2px]';
 
   if (strip.length === 0) return null;
 
@@ -65,7 +52,7 @@ function CheckStatusStrip({ checks }: { checks: EndpointCheck[] }) {
   return (
     <div className="relative">
       <div
-        className="relative flex h-11 items-stretch gap-[2px]"
+        className={`relative flex h-11 items-stretch ${gapClass}`}
         onMouseLeave={() => setHover(null)}
       >
         {strip.map((c, i) => {
@@ -90,7 +77,7 @@ function CheckStatusStrip({ checks }: { checks: EndpointCheck[] }) {
         })}
       </div>
       <div className="mt-2 flex justify-between text-[11px] text-muted">
-        <span>{strip.length} most recent</span>
+        <span>24h ago</span>
         <span>now</span>
       </div>
       {hovered && hover && (
@@ -174,7 +161,7 @@ export function EndpointDetailPage() {
       </StatsGrid>
 
       {totalChecks > 0 && (
-        <Card title={`Check Status (${totalChecks} checks)`}>
+        <Card title={`Check Status (last 24h, ${totalChecks} checks)`}>
           <CheckStatusStrip checks={checks!} />
         </Card>
       )}
