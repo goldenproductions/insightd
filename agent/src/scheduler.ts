@@ -49,7 +49,15 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
       containers = await safeCollect('resources', () => runtime.collectResources(containers!));
     }
 
-    const disk = await safeCollect('disk', () => Promise.resolve(collectDisk(config))) || [];
+    // Runtime-provided disk metrics (Kubernetes uses kubelet /stats/summary
+    // — /proc/mounts inside the DaemonSet can't see nested host mounts
+    // without mountPropagation=HostToContainer, and nodefs/imagefs are the
+    // meaningful units on a k8s node anyway). When the runtime opts in, we
+    // use it exclusively; falling back to collectDisk would produce the
+    // same misleading rootfs-only numbers the override is meant to avoid.
+    const disk = runtime.getDiskMetrics
+      ? (await safeCollect('disk', () => runtime.getDiskMetrics!())) || []
+      : await safeCollect('disk', () => Promise.resolve(collectDisk(config))) || [];
     const host = await safeCollect('host', () => Promise.resolve(collectHost(config)));
 
     // For containerized runtimes (k8s), /proc/* and /sys/* reflect the

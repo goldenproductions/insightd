@@ -4,7 +4,7 @@ import logger = require('../../../shared/utils/logger');
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
-  HostMetricsOverride,
+  HostMetricsOverride, DiskResult,
 } from './types';
 
 const { safeCollect } = require('../../../shared/utils/errors') as {
@@ -746,6 +746,41 @@ export class KubernetesRuntime implements ContainerRuntime {
   }
 
   /**
+   * Node-level disk usage sourced from kubelet `/stats/summary`. Replaces
+   * the /proc-based `collectDisk` in k8s mode, where the DaemonSet's rootfs
+   * bind mount doesn't propagate nested host mounts and the meaningful
+   * numbers are kubelet's own `nodefs` and `imagefs` anyway.
+   *
+   * - `nodefs` is where kubelet stores its data (pod logs, emptyDir, etc.)
+   * - `imagefs` is where the container runtime stores pulled images
+   *
+   * When the two point to the same underlying filesystem (shared-disk
+   * nodes — the common case for small clusters), we emit a single
+   * `nodefs` entry to avoid double-counting.
+   */
+  async getDiskMetrics(): Promise<DiskResult[] | null> {
+    try {
+      const stats = await this.fetchKubeletStats();
+      const nodeFs = stats?.node?.fs as FsStats | undefined;
+      const imageFs = stats?.node?.runtime?.imageFs as FsStats | undefined;
+
+      const results: DiskResult[] = [];
+      const nodeEntry = fsStatsToDiskResult('nodefs', nodeFs);
+      if (nodeEntry) results.push(nodeEntry);
+
+      if (imageFs && !sameFilesystem(nodeFs, imageFs)) {
+        const imageEntry = fsStatsToDiskResult('imagefs', imageFs);
+        if (imageEntry) results.push(imageEntry);
+      }
+
+      return results.length > 0 ? results : null;
+    } catch (err) {
+      logger.warn('k8s-disk', `Failed to fetch kubelet disk stats: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
    * Fetch the kubelet's `/stats/summary` JSON. This is the per-node view
    * the kubelet maintains for its own scheduling decisions — much more
    * accurate than scraping cAdvisor for node-level totals.
@@ -962,6 +997,47 @@ export function parseQuantity(q: string | undefined | null): number | null {
   };
   const mult = multipliers[suffix];
   return mult != null ? num * mult : null;
+}
+
+/**
+ * Shape of the `fs` / `runtime.imageFs` blocks in kubelet `/stats/summary`.
+ * All fields are optional — older kubelets or misconfigured runtimes may
+ * omit any of them.
+ */
+interface FsStats {
+  capacityBytes?: number;
+  usedBytes?: number;
+  availableBytes?: number;
+}
+
+function fsStatsToDiskResult(mountPoint: string, fs: FsStats | undefined): DiskResult | null {
+  if (!fs) return null;
+  const total = fs.capacityBytes;
+  if (!Number.isFinite(total) || (total ?? 0) <= 0) return null;
+
+  // Prefer explicit `usedBytes`; fall back to `capacity - available` when
+  // kubelet only reports free space (seen on some cAdvisor configurations).
+  let used = fs.usedBytes;
+  if (!Number.isFinite(used) && Number.isFinite(fs.availableBytes)) {
+    used = (total as number) - (fs.availableBytes as number);
+  }
+  if (!Number.isFinite(used) || (used ?? 0) < 0) return null;
+
+  const totalGb = Math.round(((total as number) / 1e9) * 100) / 100;
+  const usedGb = Math.round(((used as number) / 1e9) * 100) / 100;
+  const usedPercent = totalGb > 0 ? Math.round((usedGb / totalGb) * 100 * 10) / 10 : 0;
+  return { mountPoint, totalGb, usedGb, usedPercent };
+}
+
+/**
+ * When kubelet reports nodefs and imagefs with identical capacity and
+ * usage, they're the same underlying filesystem — a single disk on the
+ * node. In that case we avoid emitting both to prevent apparent
+ * double-counting in the Storage page and alerts.
+ */
+function sameFilesystem(a: FsStats | undefined, b: FsStats | undefined): boolean {
+  if (!a || !b) return false;
+  return a.capacityBytes === b.capacityBytes && a.usedBytes === b.usedBytes;
 }
 
 function splitKubeTimestamp(line: string): { timestamp: string | null; message: string } {
