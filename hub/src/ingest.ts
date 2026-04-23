@@ -18,6 +18,9 @@ interface ContainerSnapshot {
   exitCode?: number | null;
   sizeRootfsBytes?: number | null;
   sizeRwBytes?: number | null;
+  cpuLimitCores?: number | null;
+  cpuLimitPercent?: number | null;
+  memoryLimitMb?: number | null;
 }
 
 interface DiskResult {
@@ -84,8 +87,8 @@ interface HostData {
  */
 function ingestContainers(db: Database.Database, hostId: string, containers: ContainerSnapshot[]): void {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, size_rootfs_bytes, size_rw_bytes, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, size_rootfs_bytes, size_rw_bytes, cpu_limit_cores, cpu_limit_percent, memory_limit_mb, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const upsertRegistry = db.prepare(`
     INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
@@ -106,7 +109,8 @@ function ingestContainers(db: Database.Database, hostId: string, containers: Con
       const labels = typeof c.labels === 'object' ? JSON.stringify(c.labels) : (c.labels || null);
       insert.run(hostId, c.name, c.id, c.status, c.cpuPercent ?? null, c.memoryMb ?? null, c.restartCount,
         c.networkRxBytes ?? null, c.networkTxBytes ?? null, c.blkioReadBytes ?? null, c.blkioWriteBytes ?? null, c.healthStatus ?? null, c.healthCheckOutput ?? null, labels, c.exitCode ?? null,
-        c.sizeRootfsBytes ?? null, c.sizeRwBytes ?? null, batchAt);
+        c.sizeRootfsBytes ?? null, c.sizeRwBytes ?? null,
+        c.cpuLimitCores ?? null, c.cpuLimitPercent ?? null, c.memoryLimitMb ?? null, batchAt);
       upsertRegistry.run(hostId, c.name, batchAt, batchAt);
     }
     markRemoved.run(batchAt, hostId, batchAt);

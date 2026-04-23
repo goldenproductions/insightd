@@ -35,6 +35,9 @@ describe('hub ingest', () => {
         labels: { app: 'web' },
         sizeRootfsBytes: 142_000_000,
         sizeRwBytes: 12_000_000,
+        cpuLimitCores: 0.5,
+        cpuLimitPercent: 42.5,
+        memoryLimitMb: 512,
       }]);
 
       const row = db.prepare('SELECT * FROM container_snapshots WHERE host_id = ?').get('h1');
@@ -52,6 +55,9 @@ describe('hub ingest', () => {
       assert.equal(row.labels, '{"app":"web"}');
       assert.equal(row.size_rootfs_bytes, 142_000_000);
       assert.equal(row.size_rw_bytes, 12_000_000);
+      assert.equal(row.cpu_limit_cores, 0.5);
+      assert.equal(row.cpu_limit_percent, 42.5);
+      assert.equal(row.memory_limit_mb, 512);
     });
 
     it('coerces undefined optional fields to NULL', () => {

@@ -31,6 +31,8 @@ interface AlertsConfig {
   excludeContainers: string;
   endpointDown: boolean | undefined;
   endpointFailureThreshold: number;
+  containerMemoryLimitPercent: number;
+  containerCpuLimitPercent: number;
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
@@ -94,6 +96,12 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
     }
     if (alerts.memoryMb > 0) {
       triggered.push(...checkHighMemory(db, host_id, alerts.memoryMb).filter(notExcluded));
+    }
+    if (alerts.containerMemoryLimitPercent > 0) {
+      triggered.push(...checkMemoryLimitSaturation(db, host_id, alerts.containerMemoryLimitPercent).filter(notExcluded));
+    }
+    if (alerts.containerCpuLimitPercent > 0) {
+      triggered.push(...checkCpuLimitSaturation(db, host_id, alerts.containerCpuLimitPercent).filter(notExcluded));
     }
   }
 
@@ -246,6 +254,65 @@ function checkHighMemory(db: Database.Database, hostId: string, threshold: numbe
       target: r.container_name,
       message: `Container "${r.container_name}" on ${hostId} using ${Math.round(r.memory_mb)}MB RAM (threshold: ${threshold}MB)`,
       value: r.memory_mb,
+      threshold,
+    }));
+}
+
+/**
+ * Fire `container_memory_saturation` when a k8s container's memory usage
+ * is over `threshold` percent of its pod spec memory limit — the point
+ * where OOMKill becomes imminent. Only applies to containers with a limit
+ * set (Docker or unlimited-k8s containers never fire).
+ */
+function checkMemoryLimitSaturation(db: Database.Database, hostId: string, threshold: number): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT container_name, memory_mb, memory_limit_mb,
+           ROUND(memory_mb / memory_limit_mb * 100, 1) AS percent
+    FROM container_snapshots
+    WHERE host_id = ? AND collected_at = (
+      SELECT MAX(collected_at) FROM container_snapshots WHERE host_id = ?
+    )
+      AND memory_limit_mb IS NOT NULL AND memory_limit_mb > 0
+      AND memory_mb IS NOT NULL
+      AND status = 'running'
+  `).all(hostId, hostId) as { container_name: string; memory_mb: number; memory_limit_mb: number; percent: number }[];
+
+  return rows
+    .filter(r => r.percent > threshold)
+    .map(r => ({
+      type: 'container_memory_saturation',
+      hostId,
+      target: r.container_name,
+      message: `Container "${r.container_name}" on ${hostId} at ${r.percent}% of memory limit (${Math.round(r.memory_mb)}MB / ${Math.round(r.memory_limit_mb)}MB, threshold: ${threshold}%)`,
+      value: r.percent,
+      threshold,
+    }));
+}
+
+/**
+ * Fire `container_cpu_saturation` when a k8s container's CPU usage is
+ * over `threshold` percent of its pod spec CPU limit. cpu_limit_percent
+ * is computed on the agent since cpu_percent is node-normalized.
+ */
+function checkCpuLimitSaturation(db: Database.Database, hostId: string, threshold: number): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT container_name, cpu_limit_percent, cpu_limit_cores
+    FROM container_snapshots
+    WHERE host_id = ? AND collected_at = (
+      SELECT MAX(collected_at) FROM container_snapshots WHERE host_id = ?
+    )
+      AND cpu_limit_percent IS NOT NULL
+      AND status = 'running'
+  `).all(hostId, hostId) as { container_name: string; cpu_limit_percent: number; cpu_limit_cores: number | null }[];
+
+  return rows
+    .filter(r => r.cpu_limit_percent > threshold)
+    .map(r => ({
+      type: 'container_cpu_saturation',
+      hostId,
+      target: r.container_name,
+      message: `Container "${r.container_name}" on ${hostId} at ${r.cpu_limit_percent}% of CPU limit${r.cpu_limit_cores ? ` (${r.cpu_limit_cores} cores)` : ''}, threshold: ${threshold}%`,
+      value: r.cpu_limit_percent,
       threshold,
     }));
 }
@@ -424,6 +491,8 @@ const CONTAINER_ALERT_TYPES = new Set<string>([
   'high_cpu',
   'high_memory',
   'container_unhealthy',
+  'container_memory_saturation',
+  'container_cpu_saturation',
 ]);
 
 // Generous window for "is the agent itself still reporting?" — used as a
@@ -503,6 +572,20 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
     } else if (alert.alert_type === 'high_memory') {
       const latest = db.prepare('SELECT memory_mb FROM container_snapshots WHERE host_id = ? AND container_name = ? AND memory_mb IS NOT NULL ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target) as { memory_mb: number } | undefined;
       isResolved = !!latest && latest.memory_mb <= alertsConfig.memoryMb;
+    } else if (alert.alert_type === 'container_memory_saturation') {
+      const latest = db.prepare(`
+        SELECT ROUND(memory_mb / memory_limit_mb * 100, 1) AS percent
+        FROM container_snapshots
+        WHERE host_id = ? AND container_name = ?
+          AND memory_limit_mb IS NOT NULL AND memory_mb IS NOT NULL
+        ORDER BY collected_at DESC LIMIT 1
+      `).get(alert.host_id, alert.target) as { percent: number } | undefined;
+      isResolved = !!latest && latest.percent <= alertsConfig.containerMemoryLimitPercent;
+    } else if (alert.alert_type === 'container_cpu_saturation') {
+      const latest = db.prepare(
+        'SELECT cpu_limit_percent FROM container_snapshots WHERE host_id = ? AND container_name = ? AND cpu_limit_percent IS NOT NULL ORDER BY collected_at DESC LIMIT 1'
+      ).get(alert.host_id, alert.target) as { cpu_limit_percent: number } | undefined;
+      isResolved = !!latest && latest.cpu_limit_percent <= alertsConfig.containerCpuLimitPercent;
     } else if (alert.alert_type === 'disk_full') {
       const latest = db.prepare('SELECT used_percent FROM disk_snapshots WHERE host_id = ? AND mount_point = ? ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target) as { used_percent: number } | undefined;
       isResolved = !!latest && latest.used_percent <= alertsConfig.diskPercent;
@@ -577,6 +660,8 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
     case 'node_pressure': return `Node${on} ${target} cleared`;
     case 'node_not_ready': return `Node "${hostId}" is Ready again`;
+    case 'container_memory_saturation': return `Container "${target}"${on} memory back under limit`;
+    case 'container_cpu_saturation': return `Container "${target}"${on} CPU back under limit`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

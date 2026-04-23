@@ -272,6 +272,12 @@ export interface ContainerSnapshot {
   // when the runtime didn't report one. 0 = completed successfully, non-zero
   // = failed.
   exit_code: number | null;
+  // v36 — k8s resource limits and percent-of-limit. Null for Docker and
+  // unlimited k8s containers. memory_limit_percent is hub-derived.
+  cpu_limit_cores: number | null;
+  cpu_limit_percent: number | null;
+  memory_limit_mb: number | null;
+  memory_limit_percent: number | null;
   collected_at: string;
   // 1 when the owning host hasn't reported within the offline threshold —
   // the snapshot is last-known state, not current truth.
@@ -288,6 +294,9 @@ export interface ContainerHistory {
   blkio_read_bytes: number | null;
   blkio_write_bytes: number | null;
   health_status: string | null;
+  cpu_limit_cores: number | null;
+  cpu_limit_percent: number | null;
+  memory_limit_mb: number | null;
   collected_at: string;
 }
 

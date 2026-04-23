@@ -64,6 +64,8 @@ interface AlertsConfig {
   excludeContainers: string;
   endpointDown: boolean;
   endpointFailureThreshold: number;
+  containerMemoryLimitPercent: number;
+  containerCpuLimitPercent: number;
 }
 
 interface AiConfig {
@@ -120,6 +122,8 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'alerts.excludeContainers', env: 'INSIGHTD_ALERT_EXCLUDE', type: 'string', category: 'Alerts', label: 'Exclude Containers (patterns)', hotReload: true, default: '', description: 'Comma-separated patterns. Use * as wildcard. E.g. dev-*,test-*,insightd-*' },
   { key: 'alerts.endpointDown', env: 'INSIGHTD_ALERT_ENDPOINT_DOWN', type: 'bool', category: 'Alerts', label: 'Endpoint Down Alerts', hotReload: true, default: 'true' },
   { key: 'alerts.endpointFailureThreshold', env: 'INSIGHTD_ALERT_ENDPOINT_FAILURES', type: 'int', category: 'Alerts', label: 'Endpoint Failure Threshold', hotReload: true, default: '3', description: 'Consecutive failures before alerting' },
+  { key: 'alerts.containerMemoryLimitPercent', env: 'INSIGHTD_ALERT_MEMORY_LIMIT', type: 'int', category: 'Alerts', label: 'K8s Memory Limit Saturation (%)', hotReload: true, default: '90', description: 'Fire when a k8s container is above this percent of its pod memory limit. Predicts OOMKill. Set 0 to disable.' },
+  { key: 'alerts.containerCpuLimitPercent', env: 'INSIGHTD_ALERT_CPU_LIMIT', type: 'int', category: 'Alerts', label: 'K8s CPU Limit Saturation (%)', hotReload: true, default: '90', description: 'Fire when a k8s container is above this percent of its pod CPU limit. Set 0 to disable.' },
 
   // Collection
   { key: 'collectIntervalMinutes', env: 'INSIGHTD_COLLECT_INTERVAL', type: 'int', category: 'Collection', label: 'Collection Interval (minutes)', hotReload: false, default: '5' },
@@ -281,6 +285,8 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts?.excludeContainers || '',
       endpointDown: get('alerts.endpointDown'),
       endpointFailureThreshold: get('alerts.endpointFailureThreshold') || baseConfig.alerts?.endpointFailureThreshold || 3,
+      containerMemoryLimitPercent: get('alerts.containerMemoryLimitPercent') ?? baseConfig.alerts?.containerMemoryLimitPercent ?? 90,
+      containerCpuLimitPercent: get('alerts.containerCpuLimitPercent') ?? baseConfig.alerts?.containerCpuLimitPercent ?? 90,
     },
     web: {
       baseUrl: (get('web.baseUrl') as string) || baseConfig.web?.baseUrl || '',

@@ -116,6 +116,52 @@ describe('schema', () => {
     restore();
   });
 
+  it('bootstrap creates v36 container limit columns', () => {
+    bootstrap(db);
+    const cols = db.prepare('PRAGMA table_info(container_snapshots)').all();
+    const names = cols.map((c: any) => c.name);
+    for (const col of ['cpu_limit_cores', 'cpu_limit_percent', 'memory_limit_mb']) {
+      assert.ok(names.includes(col), `container_snapshots missing column ${col}`);
+    }
+    restore();
+  });
+
+  it('v35 → v36 migration adds container limit columns without dropping existing data', () => {
+    db.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE container_snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id TEXT NOT NULL DEFAULT 'local',
+        container_name TEXT NOT NULL, container_id TEXT NOT NULL, status TEXT NOT NULL,
+        cpu_percent REAL, memory_mb REAL, restart_count INTEGER DEFAULT 0,
+        labels TEXT, exit_code INTEGER,
+        size_rootfs_bytes INTEGER, size_rw_bytes INTEGER,
+        collected_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO meta (key, value) VALUES ('schema_version', '35');
+      INSERT INTO container_snapshots (container_name, container_id, status, memory_mb)
+        VALUES ('nginx', 'abc', 'running', 256);
+    `);
+
+    bootstrap(db);
+
+    const cols = db.prepare('PRAGMA table_info(container_snapshots)').all();
+    const names = cols.map((c: any) => c.name);
+    for (const col of ['cpu_limit_cores', 'cpu_limit_percent', 'memory_limit_mb']) {
+      assert.ok(names.includes(col), `container_snapshots missing column ${col} after migration`);
+    }
+
+    const rows = db.prepare('SELECT container_name, memory_mb, memory_limit_mb FROM container_snapshots').all();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].container_name, 'nginx');
+    assert.equal(rows[0].memory_mb, 256, 'existing row data preserved');
+    assert.equal(rows[0].memory_limit_mb, null, 'new column defaults to null');
+
+    const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+    assert.equal(version.value, String(SCHEMA_VERSION));
+    restore();
+  });
+
   it('v34 → v35 migration adds node_conditions without dropping existing data', () => {
     // Start at v34 — only the tables/state v34 would have.
     db.exec(`

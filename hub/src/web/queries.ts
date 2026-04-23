@@ -43,6 +43,10 @@ interface ContainerRow {
   health_check_output: string | null;
   labels: string | null;
   exit_code: number | null;
+  cpu_limit_cores: number | null;
+  cpu_limit_percent: number | null;
+  memory_limit_mb: number | null;
+  memory_limit_percent: number | null;
   collected_at: string;
   is_stale: number;
 }
@@ -156,6 +160,9 @@ interface ContainerHistoryRow {
   blkio_read_bytes: number | null;
   blkio_write_bytes: number | null;
   health_status: string | null;
+  cpu_limit_cores: number | null;
+  cpu_limit_percent: number | null;
+  memory_limit_mb: number | null;
   collected_at: string;
 }
 
@@ -320,6 +327,9 @@ function getLatestContainers(db: Database.Database, hostId: string, onlineThresh
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
+           cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
+           CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
+             THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
              THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs
@@ -408,11 +418,13 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   restart_loop: 'error',
   disk_full: 'error',
   node_pressure: 'error',
+  container_memory_saturation: 'error',
   high_cpu: 'warning',
   high_memory: 'warning',
   high_host_cpu: 'warning',
   low_host_memory: 'warning',
   high_load: 'warning',
+  container_cpu_saturation: 'warning',
 };
 
 /** The CASE expression equivalent of LEVEL_BY_ALERT_TYPE — used in SQL filters/facets. */
@@ -426,11 +438,13 @@ const LEVEL_CASE_SQL = `
     WHEN 'restart_loop' THEN 'error'
     WHEN 'disk_full' THEN 'error'
     WHEN 'node_pressure' THEN 'error'
+    WHEN 'container_memory_saturation' THEN 'error'
     WHEN 'high_cpu' THEN 'warning'
     WHEN 'high_memory' THEN 'warning'
     WHEN 'high_host_cpu' THEN 'warning'
     WHEN 'low_host_memory' THEN 'warning'
     WHEN 'high_load' THEN 'warning'
+    WHEN 'container_cpu_saturation' THEN 'warning'
     ELSE 'info'
   END
 `;
@@ -909,7 +923,8 @@ function getContainerHistory(db: Database.Database, hostId: string, containerNam
   return db.prepare(`
     SELECT status, cpu_percent, memory_mb, restart_count,
            network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes,
-           health_status, collected_at
+           health_status, cpu_limit_cores, cpu_limit_percent, memory_limit_mb,
+           collected_at
     FROM container_snapshots
     WHERE host_id = ? AND container_name = ?
       AND collected_at >= ${cutoff}
@@ -932,6 +947,9 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
            cs.cpu_percent, cs.memory_mb, cs.restart_count,
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
+           cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
+           CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
+             THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
              THEN 0 ELSE 1 END as is_stale
     FROM container_snapshots cs

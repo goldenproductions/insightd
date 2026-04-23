@@ -80,6 +80,8 @@ const config = Object.freeze({
     excludeContainers: process.env.INSIGHTD_ALERT_EXCLUDE || '',
     endpointDown: process.env.INSIGHTD_ALERT_ENDPOINT_DOWN !== 'false',
     endpointFailureThreshold: parseInt(process.env.INSIGHTD_ALERT_ENDPOINT_FAILURES || '3', 10),
+    containerMemoryLimitPercent: parseInt(process.env.INSIGHTD_ALERT_MEMORY_LIMIT || '90', 10),
+    containerCpuLimitPercent: parseInt(process.env.INSIGHTD_ALERT_CPU_LIMIT || '90', 10),
   }),
 
   // AI diagnosis (Gemini)
