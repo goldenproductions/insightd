@@ -95,6 +95,19 @@ export interface VolumeInfo {
  * `null` mean "this runtime can't observe this metric meaningfully — emit
  * NULL rather than the bogus /proc value".
  */
+/**
+ * A single disk/filesystem usage entry. Shared between the on-host
+ * `collectDisk` collector (Docker/standalone) and runtime-provided disk
+ * metrics (Kubernetes — sourced from kubelet `/stats/summary` rather than
+ * `/proc/mounts`, which is unreliable inside a containerized agent).
+ */
+export interface DiskResult {
+  mountPoint: string;
+  totalGb: number;
+  usedGb: number;
+  usedPercent: number;
+}
+
 export interface HostMetricsOverride {
   cpuPercent?: number | null;
   memoryUsedMb?: number | null;
@@ -174,4 +187,18 @@ export interface ContainerRuntime {
    * Returns null on failure (scheduler keeps the /proc values).
    */
   getHostMetrics?(): Promise<HostMetricsOverride | null>;
+
+  /**
+   * Optional: return per-filesystem disk usage for the host/node. When
+   * defined, the scheduler uses this *instead of* the generic /proc/mounts
+   * collector. Intended for containerized runtimes (Kubernetes) where
+   * /proc/mounts and statfs(/host/...) can't give accurate nested-mount
+   * data without `mountPropagation: HostToContainer`, and where operators
+   * care about kubelet-level concepts (nodefs, imagefs) anyway.
+   *
+   * Returns null on failure. The scheduler treats null as "no disk data"
+   * rather than falling back to the /proc collector (which would report
+   * misleading numbers in k8s mode).
+   */
+  getDiskMetrics?(): Promise<DiskResult[] | null>;
 }

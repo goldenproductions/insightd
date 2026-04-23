@@ -284,6 +284,98 @@ describe('KubernetesRuntime.getHostMetrics', () => {
   });
 });
 
+describe('KubernetesRuntime.getDiskMetrics', () => {
+  function makeRuntime(stats: any): any {
+    const runtime = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    runtime.fetchKubeletStats = async () => stats;
+    return runtime;
+  }
+
+  it('maps node.fs and imageFs to nodefs + imagefs when they are separate filesystems', async () => {
+    const runtime = makeRuntime({
+      node: {
+        fs: { capacityBytes: 100e9, usedBytes: 40e9, availableBytes: 60e9 },
+        runtime: {
+          // Different capacity → clearly a different physical disk
+          imageFs: { capacityBytes: 500e9, usedBytes: 50e9, availableBytes: 450e9 },
+        },
+      },
+    });
+    const disks = await runtime.getDiskMetrics();
+    assert.deepEqual(disks, [
+      { mountPoint: 'nodefs', totalGb: 100, usedGb: 40, usedPercent: 40 },
+      { mountPoint: 'imagefs', totalGb: 500, usedGb: 50, usedPercent: 10 },
+    ]);
+  });
+
+  it('treats same capacity but different availableBytes as separate filesystems', async () => {
+    // Edge case: equal-size disks, but different free space → genuinely
+    // distinct mounts, not one shared disk. Don't dedupe.
+    const runtime = makeRuntime({
+      node: {
+        fs:      { capacityBytes: 100e9, usedBytes: 40e9, availableBytes: 60e9 },
+        runtime: { imageFs: { capacityBytes: 100e9, usedBytes: 10e9, availableBytes: 90e9 } },
+      },
+    });
+    const disks = await runtime.getDiskMetrics();
+    assert.equal(disks.length, 2);
+  });
+
+  it('dedupes when nodefs and imagefs share a disk (same capacity + availableBytes, different usedBytes)', async () => {
+    // Real-world shape from a k3d node: kubelet reports separate usedBytes
+    // for each subtree (kubelet rootDir vs. image store), but capacity and
+    // availableBytes are identical because it's the same physical disk.
+    const runtime = makeRuntime({
+      node: {
+        fs:      { capacityBytes: 200e9, usedBytes: 60e9, availableBytes: 140e9 },
+        runtime: { imageFs: { capacityBytes: 200e9, usedBytes: 5e9,  availableBytes: 140e9 } },
+      },
+    });
+    const disks = await runtime.getDiskMetrics();
+    assert.equal(disks.length, 1);
+    assert.equal(disks[0].mountPoint, 'nodefs');
+    assert.equal(disks[0].usedGb, 60);
+  });
+
+  it('falls back to capacity - available when usedBytes is missing', async () => {
+    const runtime = makeRuntime({
+      node: {
+        fs: { capacityBytes: 50e9, availableBytes: 30e9 },
+      },
+    });
+    const disks = await runtime.getDiskMetrics();
+    assert.equal(disks.length, 1);
+    assert.equal(disks[0].usedGb, 20);
+    assert.equal(disks[0].usedPercent, 40);
+  });
+
+  it('returns null when kubelet has no fs data at all', async () => {
+    const runtime = makeRuntime({ node: {} });
+    const disks = await runtime.getDiskMetrics();
+    assert.equal(disks, null);
+  });
+
+  it('returns null when fetchKubeletStats throws', async () => {
+    const runtime = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    (runtime as any).fetchKubeletStats = async () => { throw new Error('kubelet down'); };
+    const disks = await (runtime as any).getDiskMetrics();
+    assert.equal(disks, null);
+  });
+
+  it('skips fs entries with zero or missing capacity', async () => {
+    const runtime = makeRuntime({
+      node: {
+        fs: { capacityBytes: 0, usedBytes: 0 },
+        runtime: { imageFs: { capacityBytes: 10e9, usedBytes: 1e9 } },
+      },
+    });
+    const disks = await runtime.getDiskMetrics();
+    // nodefs dropped, imagefs kept and emitted (dedupe doesn't fire because nodefs was rejected)
+    assert.equal(disks.length, 1);
+    assert.equal(disks[0].mountPoint, 'imagefs');
+  });
+});
+
 describe('KubernetesRuntime constructor: kubeletUrl precedence', () => {
   it('uses explicit kubeletUrl when provided', () => {
     const runtime: any = new KubernetesRuntime({
