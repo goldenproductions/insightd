@@ -93,6 +93,23 @@ export interface K8sPvc {
   status?: { phase?: string; capacity?: Record<string, string> };
 }
 
+/**
+ * Kubernetes Event v1 (core/v1.Event). We model only the fields we store;
+ * the resource has a handful of legacy vs. new fields (firstTimestamp/
+ * lastTimestamp vs. eventTime, etc.) and we fall back across them.
+ */
+export interface K8sEvent {
+  metadata?: K8sMeta & { uid?: string };
+  involvedObject?: { kind?: string; namespace?: string; name?: string; uid?: string };
+  reason?: string;
+  message?: string;
+  type?: string;
+  count?: number;
+  firstTimestamp?: string | null;
+  lastTimestamp?: string | null;
+  eventTime?: string | null;
+}
+
 export interface K8sLeaseSpec {
   holderIdentity?: string | null;
   leaseDurationSeconds?: number;
@@ -261,6 +278,16 @@ export class K8sClient {
 
   async listPvcs(): Promise<K8sList<K8sPvc>> {
     return this.get<K8sList<K8sPvc>>('/api/v1/persistentvolumeclaims');
+  }
+
+  /**
+   * List cluster-wide Events, optionally server-side-filtered by type.
+   * Events age out of the apiserver after ~1h, so this is a firehose of
+   * recent activity — polling at a sensible interval (60s) is fine.
+   */
+  async listEvents(typeFilter?: 'Warning' | 'Normal'): Promise<K8sList<K8sEvent>> {
+    const qs = typeFilter ? `?fieldSelector=${encodeURIComponent(`type=${typeFilter}`)}` : '';
+    return this.get<K8sList<K8sEvent>>(`/api/v1/events${qs}`);
   }
 
   /** Returns null on 404 (lease doesn't exist yet). */

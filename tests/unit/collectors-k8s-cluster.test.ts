@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mapPv, mapPvc } from '../../agent/src/collectors/k8s-cluster';
-import type { K8sPv, K8sPvc } from '../../agent/src/runtime/kubernetes';
+import { mapPv, mapPvc, mapEvent } from '../../agent/src/collectors/k8s-cluster';
+import type { K8sPv, K8sPvc, K8sEvent } from '../../agent/src/runtime/kubernetes';
 
 describe('mapPv', () => {
   it('maps a bound PV with claimRef', () => {
@@ -96,5 +96,77 @@ describe('mapPvc', () => {
     assert.equal(out!.phase, 'Pending');
     assert.equal(out!.volumeName, null);
     assert.equal(out!.capacityBytes, null);
+  });
+});
+
+describe('mapEvent', () => {
+  it('maps a Warning pod event with legacy firstTimestamp/lastTimestamp', () => {
+    const ev: K8sEvent = {
+      metadata: { uid: 'evt-uid-1', creationTimestamp: '2026-04-23T10:00:00Z' },
+      involvedObject: { kind: 'Pod', namespace: 'default', name: 'web-7d9-abc', uid: 'pod-uid' },
+      reason: 'BackOff',
+      message: 'Back-off restarting failed container',
+      type: 'Warning',
+      count: 5,
+      firstTimestamp: '2026-04-23T09:55:00Z',
+      lastTimestamp: '2026-04-23T10:00:30Z',
+    };
+    const out = mapEvent(ev);
+    assert.ok(out);
+    assert.equal(out!.eventUid, 'evt-uid-1');
+    assert.equal(out!.namespace, 'default');
+    assert.equal(out!.involvedKind, 'Pod');
+    assert.equal(out!.involvedName, 'web-7d9-abc');
+    assert.equal(out!.reason, 'BackOff');
+    assert.equal(out!.type, 'Warning');
+    assert.equal(out!.count, 5);
+    assert.equal(out!.firstSeenAt, '2026-04-23T09:55:00Z');
+    assert.equal(out!.lastSeenAt, '2026-04-23T10:00:30Z');
+  });
+
+  it('falls back to eventTime when firstTimestamp/lastTimestamp are null (new events.k8s.io API)', () => {
+    const ev: K8sEvent = {
+      metadata: { uid: 'evt-uid-2', creationTimestamp: '2026-04-23T10:00:00Z' },
+      involvedObject: { kind: 'Node', name: 'k3d-node-0' },
+      reason: 'MemoryPressure',
+      message: 'Node is under memory pressure',
+      type: 'Warning',
+      firstTimestamp: null,
+      lastTimestamp: null,
+      eventTime: '2026-04-23T09:58:00Z',
+    };
+    const out = mapEvent(ev);
+    assert.ok(out);
+    assert.equal(out!.firstSeenAt, '2026-04-23T09:58:00Z');
+    assert.equal(out!.lastSeenAt, '2026-04-23T09:58:00Z');
+  });
+
+  it('defaults count to 1 when not provided', () => {
+    const out = mapEvent({
+      metadata: { uid: 'evt-uid-3', creationTimestamp: '2026-04-23T10:00:00Z' },
+      involvedObject: { kind: 'Pod', name: 'one-off', namespace: 'default' },
+      reason: 'FailedScheduling',
+      type: 'Warning',
+    });
+    assert.equal(out!.count, 1);
+  });
+
+  it('handles cluster-scoped events (no namespace)', () => {
+    const out = mapEvent({
+      metadata: { uid: 'evt-uid-4', creationTimestamp: '2026-04-23T10:00:00Z' },
+      involvedObject: { kind: 'Node', name: 'k3d-node-0' },
+      reason: 'NodeNotReady',
+      type: 'Warning',
+    });
+    assert.equal(out!.namespace, null);
+    assert.equal(out!.involvedKind, 'Node');
+  });
+
+  it('returns null when required fields are missing', () => {
+    assert.equal(mapEvent({ metadata: {}, involvedObject: { kind: 'Pod', name: 'x' }, reason: 'X', type: 'Warning' }), null, 'missing uid');
+    assert.equal(mapEvent({ metadata: { uid: 'u' }, involvedObject: { name: 'x' }, reason: 'X', type: 'Warning' }), null, 'missing kind');
+    assert.equal(mapEvent({ metadata: { uid: 'u' }, involvedObject: { kind: 'Pod' }, reason: 'X', type: 'Warning' }), null, 'missing name');
+    assert.equal(mapEvent({ metadata: { uid: 'u' }, involvedObject: { kind: 'Pod', name: 'x' }, type: 'Warning' }), null, 'missing reason');
+    assert.equal(mapEvent({ metadata: { uid: 'u' }, involvedObject: { kind: 'Pod', name: 'x' }, reason: 'X' }), null, 'missing type');
   });
 });

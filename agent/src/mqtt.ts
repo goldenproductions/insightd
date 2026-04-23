@@ -452,6 +452,54 @@ function publishPvcs(clusterId: string, publisherHostId: string, pvcs: PvcPayloa
   });
 }
 
+interface EventPayloadItem {
+  eventUid: string;
+  namespace: string | null;
+  involvedKind: string;
+  involvedName: string;
+  reason: string;
+  message: string | null;
+  type: string;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+function publishEvents(clusterId: string, publisherHostId: string, events: EventPayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/events`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: events.map(e => ({
+      event_uid: e.eventUid,
+      namespace: e.namespace,
+      involved_kind: e.involvedKind,
+      involved_name: e.involvedName,
+      reason: e.reason,
+      message: e.message,
+      type: e.type,
+      count: e.count,
+      first_seen_at: e.firstSeenAt,
+      last_seen_at: e.lastSeenAt,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${events.length} events for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -485,4 +533,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, disconnect };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, disconnect };

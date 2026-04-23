@@ -4,11 +4,12 @@ import logger = require('../../shared/utils/logger');
 import type { ContainerRuntime } from './runtime/types';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
-const { publishCollection, publishUpdates, publishPvs, publishPvcs } = require('./mqtt') as {
+const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents } = require('./mqtt') as {
   publishCollection: (hostId: string, data: any) => Promise<void>;
   publishUpdates: (hostId: string, updates: any[]) => Promise<void>;
   publishPvs: (clusterId: string, publisherHostId: string, pvs: any[]) => Promise<void>;
   publishPvcs: (clusterId: string, publisherHostId: string, pvcs: any[]) => Promise<void>;
+  publishEvents: (clusterId: string, publisherHostId: string, events: any[]) => Promise<void>;
 };
 
 interface SchedulerConfig {
@@ -102,16 +103,22 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
       ? (await safeCollect('volumes', () => runtime.listVolumes!())) ?? []
       : [];
 
-    // K8s cluster-scoped inventory (PVs, PVCs) — only the elected leader publishes.
+    // K8s cluster-scoped inventory (PVs, PVCs, Events) — only the elected
+    // leader publishes so we don't duplicate streams from every node-agent.
     if (clusterPublisher && clusterPublisher.leader.isLeader()) {
-      const { collectPvs, collectPvcs } = require('./collectors/k8s-cluster') as {
+      const { collectPvs, collectPvcs, collectEvents } = require('./collectors/k8s-cluster') as {
         collectPvs: (c: any) => Promise<any[]>;
         collectPvcs: (c: any) => Promise<any[]>;
+        collectEvents: (c: any) => Promise<any[]>;
       };
       const pvs = await safeCollect('pvs', () => collectPvs(clusterPublisher!.client));
       const pvcs = await safeCollect('pvcs', () => collectPvcs(clusterPublisher!.client));
+      const events = await safeCollect('events', () => collectEvents(clusterPublisher!.client));
       if (pvs) await safeCollect('mqtt-pvs', () => publishPvs(clusterPublisher!.clusterId, config.hostId, pvs));
       if (pvcs) await safeCollect('mqtt-pvcs', () => publishPvcs(clusterPublisher!.clusterId, config.hostId, pvcs));
+      if (events && events.length > 0) {
+        await safeCollect('mqtt-events', () => publishEvents(clusterPublisher!.clusterId, config.hostId, events));
+      }
     }
 
     logger.info('scheduler', 'Collection cycle complete');

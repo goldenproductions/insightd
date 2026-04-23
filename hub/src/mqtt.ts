@@ -4,12 +4,13 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
   ingestPvs: (db: Database.Database, clusterId: string, pvs: any[]) => void;
   ingestPvcs: (db: Database.Database, clusterId: string, pvcs: any[]) => void;
+  ingestEvents: (db: Database.Database, clusterId: string, events: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
   upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
@@ -165,6 +166,11 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         else logger.info('mqtt', 'Subscribed to insightd/+/pvcs');
       });
 
+      client!.subscribe('insightd/+/events', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to events topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/events');
+      });
+
       client!.subscribe('insightd/+/logs/response', { qos: 1 }, (err) => {
         if (err) logger.error('mqtt', 'Failed to subscribe to logs response topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
@@ -199,8 +205,9 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         // handlers unwrap.
         if (hostId.startsWith('_cluster_')) {
           const clusterId = hostId.slice('_cluster_'.length);
-          if (type === 'pvs')  { handlePvs(db, clusterId, payload); return; }
-          if (type === 'pvcs') { handlePvcs(db, clusterId, payload); return; }
+          if (type === 'pvs')    { handlePvs(db, clusterId, payload); return; }
+          if (type === 'pvcs')   { handlePvcs(db, clusterId, payload); return; }
+          if (type === 'events') { handleEvents(db, clusterId, payload); return; }
         }
 
         if (type === 'collection') {
@@ -381,6 +388,21 @@ interface PvcPayload {
   }>;
 }
 
+interface EventsPayload {
+  items?: Array<{
+    event_uid: string;
+    namespace: string | null;
+    involved_kind: string;
+    involved_name: string;
+    reason: string;
+    message: string | null;
+    type: string;
+    count: number;
+    first_seen_at: string;
+    last_seen_at: string;
+  }>;
+}
+
 function handlePvs(db: Database.Database, clusterId: string, payload: PvPayload): void {
   const pvs = (payload.items || []).map(p => ({
     name: p.name,
@@ -416,6 +438,23 @@ function handlePvcs(db: Database.Database, clusterId: string, payload: PvcPayloa
   }));
   ingestPvcs(db, clusterId, pvcs);
   logger.info('mqtt', `Ingested ${pvcs.length} PVCs for cluster ${clusterId}`);
+}
+
+function handleEvents(db: Database.Database, clusterId: string, payload: EventsPayload): void {
+  const events = (payload.items || []).map(e => ({
+    eventUid: e.event_uid,
+    namespace: e.namespace ?? null,
+    involvedKind: e.involved_kind,
+    involvedName: e.involved_name,
+    reason: e.reason,
+    message: e.message ?? null,
+    type: e.type,
+    count: e.count,
+    firstSeenAt: e.first_seen_at,
+    lastSeenAt: e.last_seen_at,
+  }));
+  if (events.length > 0) ingestEvents(db, clusterId, events);
+  logger.info('mqtt', `Ingested ${events.length} events for cluster ${clusterId}`);
 }
 
 function handleUpdates(db: Database.Database, hostId: string, payload: UpdatesPayload): void {

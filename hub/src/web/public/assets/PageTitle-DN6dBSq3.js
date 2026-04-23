@@ -1,1 +1,0 @@
-import{i as e}from"./api-CXqkJEZx.js";import{t}from"./Topbar-CyyVmq72.js";var n=e();function r({children:e,actions:r,subtitle:i}){return(0,n.jsx)(t,{title:e,subtitle:i,actions:r})}export{r as t};
