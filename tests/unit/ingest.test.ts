@@ -2,13 +2,14 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const { createTestDb } = require('../helpers/db');
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestUpdates, upsertHost, ingestHost } = require('../../hub/src/ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestUpdates, upsertHost, ingestHost, ingestEvents } = require('../../hub/src/ingest') as {
   ingestContainers: (db: any, hostId: string, containers: any[]) => void;
   ingestDisk: (db: any, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: any, hostId: string, volumes: any[]) => void;
   ingestUpdates: (db: any, hostId: string, updates: any[]) => void;
   upsertHost: (db: any, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
   ingestHost: (db: any, hostId: string, hostData: any) => void;
+  ingestEvents: (db: any, clusterId: string, events: any[]) => void;
 };
 
 describe('hub ingest', () => {
@@ -281,6 +282,65 @@ describe('hub ingest', () => {
     it('is a no-op for null hostData', () => {
       ingestHost(db, 'h1', null);
       assert.equal(db.prepare('SELECT COUNT(*) as c FROM host_snapshots').get().c, 0);
+    });
+  });
+
+  describe('ingestEvents', () => {
+    const sampleEvent = (overrides: any = {}) => ({
+      eventUid: 'uid-a',
+      namespace: 'default',
+      involvedKind: 'Pod',
+      involvedName: 'web-7d9-abc',
+      reason: 'BackOff',
+      message: 'Back-off restarting failed container',
+      type: 'Warning',
+      count: 1,
+      firstSeenAt: '2026-04-23T10:00:00Z',
+      lastSeenAt: '2026-04-23T10:00:30Z',
+      ...overrides,
+    });
+
+    it('inserts new events and stores all fields', () => {
+      ingestEvents(db, 'prod', [sampleEvent()]);
+      const row = db.prepare('SELECT * FROM k8s_events WHERE event_uid = ?').get('uid-a') as any;
+      assert.equal(row.cluster_id, 'prod');
+      assert.equal(row.namespace, 'default');
+      assert.equal(row.involved_kind, 'Pod');
+      assert.equal(row.involved_name, 'web-7d9-abc');
+      assert.equal(row.reason, 'BackOff');
+      assert.equal(row.type, 'Warning');
+      assert.equal(row.count, 1);
+    });
+
+    it('upserts on conflicting event_uid, bumping count and last_seen_at', () => {
+      ingestEvents(db, 'prod', [sampleEvent({ count: 1, lastSeenAt: '2026-04-23T10:00:30Z' })]);
+      ingestEvents(db, 'prod', [sampleEvent({ count: 7, lastSeenAt: '2026-04-23T10:05:00Z', message: 'Still backing off' })]);
+
+      const rows = db.prepare('SELECT * FROM k8s_events WHERE event_uid = ?').all('uid-a') as any[];
+      assert.equal(rows.length, 1, 'should dedupe by event_uid — not append a second row');
+      assert.equal(rows[0].count, 7);
+      assert.equal(rows[0].last_seen_at, '2026-04-23T10:05:00Z');
+      assert.equal(rows[0].message, 'Still backing off');
+    });
+
+    it('stores multiple distinct events in one call', () => {
+      ingestEvents(db, 'prod', [
+        sampleEvent({ eventUid: 'a', reason: 'BackOff' }),
+        sampleEvent({ eventUid: 'b', reason: 'Unhealthy', involvedName: 'db-0' }),
+        sampleEvent({ eventUid: 'c', involvedKind: 'Node', involvedName: 'node-1', namespace: null, reason: 'MemoryPressure' }),
+      ]);
+      assert.equal(db.prepare('SELECT COUNT(*) as c FROM k8s_events WHERE cluster_id = ?').get('prod').c, 3);
+    });
+
+    it('handles null namespace for cluster-scoped events', () => {
+      ingestEvents(db, 'prod', [sampleEvent({ eventUid: 'node-evt', involvedKind: 'Node', involvedName: 'n1', namespace: null })]);
+      const row = db.prepare('SELECT * FROM k8s_events WHERE event_uid = ?').get('node-evt') as any;
+      assert.equal(row.namespace, null);
+    });
+
+    it('is a no-op for empty input', () => {
+      ingestEvents(db, 'prod', []);
+      assert.equal(db.prepare('SELECT COUNT(*) as c FROM k8s_events').get().c, 0);
     });
   });
 });

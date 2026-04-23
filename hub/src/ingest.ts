@@ -334,4 +334,52 @@ function ingestPvcs(db: Database.Database, clusterId: string, pvcs: PvcRecord[])
   logger.info('ingest', `Stored ${pvcs.length} PVC snapshots for cluster ${clusterId}`);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestUpdates, upsertHost, ingestHost };
+interface EventRecord {
+  eventUid: string;
+  namespace: string | null;
+  involvedKind: string;
+  involvedName: string;
+  reason: string;
+  message: string | null;
+  type: string;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+/**
+ * Upsert a batch of Kubernetes Events keyed by event_uid. The agent
+ * polls cluster-wide warnings every collection cycle; re-firings of the
+ * same event arrive with the same UID and a higher `count`, so we
+ * UPDATE last_seen_at + count + message in place rather than
+ * accumulating duplicate rows.
+ */
+function ingestEvents(db: Database.Database, clusterId: string, events: EventRecord[]): void {
+  if (events.length === 0) return;
+
+  const upsert = db.prepare(`
+    INSERT INTO k8s_events
+      (event_uid, cluster_id, namespace, involved_kind, involved_name,
+       reason, message, type, count, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(event_uid) DO UPDATE SET
+      count        = excluded.count,
+      message      = excluded.message,
+      last_seen_at = excluded.last_seen_at,
+      -- Only refresh cluster_id/involved_* if they match — different
+      -- cluster reusing a UID (astronomically unlikely) would be a bug.
+      namespace    = excluded.namespace
+  `);
+  const upsertMany = db.transaction((items: EventRecord[]) => {
+    for (const e of items) {
+      upsert.run(
+        e.eventUid, clusterId, e.namespace, e.involvedKind, e.involvedName,
+        e.reason, e.message, e.type, e.count, e.firstSeenAt, e.lastSeenAt,
+      );
+    }
+  });
+  upsertMany(events);
+  logger.info('ingest', `Upserted ${events.length} k8s events for cluster ${clusterId}`);
+}
+
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestUpdates, upsertHost, ingestHost };

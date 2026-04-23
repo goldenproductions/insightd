@@ -1,5 +1,5 @@
 import { parseQuantity } from '../runtime/kubernetes';
-import type { K8sClient, K8sPv, K8sPvc } from '../runtime/kubernetes';
+import type { K8sClient, K8sPv, K8sPvc, K8sEvent } from '../runtime/kubernetes';
 
 export interface PvInfo {
   name: string;
@@ -75,4 +75,57 @@ export async function collectPvs(client: K8sClient): Promise<PvInfo[]> {
 export async function collectPvcs(client: K8sClient): Promise<PvcInfo[]> {
   const list = await client.listPvcs();
   return (list.items || []).map(mapPvc).filter((x): x is PvcInfo => x !== null);
+}
+
+export interface EventInfo {
+  eventUid: string;
+  namespace: string | null;
+  involvedKind: string;
+  involvedName: string;
+  reason: string;
+  message: string | null;
+  type: string;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+export function mapEvent(ev: K8sEvent): EventInfo | null {
+  const uid = ev.metadata?.uid;
+  const kind = ev.involvedObject?.kind;
+  const name = ev.involvedObject?.name;
+  const reason = ev.reason;
+  const type = ev.type;
+  if (!uid || !kind || !name || !reason || !type) return null;
+
+  // Prefer lastTimestamp/firstTimestamp (legacy API); fall back to eventTime
+  // (new events.k8s.io-style), and finally to creationTimestamp. We always
+  // want a non-null timestamp so the hub can sort + prune correctly.
+  const fallback = ev.metadata?.creationTimestamp ?? new Date().toISOString();
+  const firstSeenAt = ev.firstTimestamp || ev.eventTime || fallback;
+  const lastSeenAt = ev.lastTimestamp || ev.eventTime || firstSeenAt;
+
+  return {
+    eventUid: uid,
+    namespace: ev.involvedObject?.namespace ?? null,
+    involvedKind: kind,
+    involvedName: name,
+    reason,
+    message: ev.message ?? null,
+    type,
+    count: ev.count ?? 1,
+    firstSeenAt,
+    lastSeenAt,
+  };
+}
+
+/**
+ * List cluster-wide Warning events. `Normal` events are hundreds per cluster
+ * per hour (Pulled, Scheduled, Started) and carry no actionable signal, so
+ * v1 scopes to `Warning` only. The hub dedupes by event_uid so polling at
+ * 60s just bumps `count`/`last_seen_at` on re-fire.
+ */
+export async function collectEvents(client: K8sClient): Promise<EventInfo[]> {
+  const list = await client.listEvents('Warning');
+  return (list.items || []).map(mapEvent).filter((x): x is EventInfo => x !== null);
 }

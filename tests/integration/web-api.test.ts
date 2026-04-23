@@ -78,7 +78,7 @@ describe('Web API integration', () => {
     assert.equal(res.status, 200);
     const data = res.json();
     assert.equal(data.status, 'ok');
-    assert.equal(data.schemaVersion, 33);
+    assert.equal(data.schemaVersion, 34);
   });
 
   it('GET /api/hosts returns host list', async () => {

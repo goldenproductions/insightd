@@ -1745,4 +1745,75 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime };
+export interface K8sEventRow {
+  event_uid: string;
+  cluster_id: string;
+  namespace: string | null;
+  involved_kind: string;
+  involved_name: string;
+  reason: string;
+  message: string | null;
+  type: string;
+  count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+/**
+ * Resolve the cluster_id for a given host. Mirrors the agent logic
+ * (agent/src/scheduler.ts: `clusterId = hostGroup || "cluster-{hostId}"`),
+ * but UI overrides of host_group are honored via COALESCE.
+ * Returns null for non-k8s hosts so the UI can show an empty state.
+ */
+function getClusterIdForHost(db: Database.Database, hostId: string): string | null {
+  const row = db.prepare(`
+    SELECT runtime_type,
+           COALESCE(host_group_override, host_group) AS effective_group
+    FROM hosts
+    WHERE host_id = ?
+  `).get(hostId) as { runtime_type: string | null; effective_group: string | null } | undefined;
+  if (!row || row.runtime_type !== 'kubernetes') return null;
+  return row.effective_group && row.effective_group.length > 0
+    ? row.effective_group
+    : `cluster-${hostId}`;
+}
+
+interface K8sEventFilters {
+  limit?: number;
+  reason?: string;
+  namespace?: string;
+  sinceHours?: number;
+}
+
+function getK8sEventsForHost(db: Database.Database, hostId: string, filters: K8sEventFilters = {}): K8sEventRow[] {
+  const clusterId = getClusterIdForHost(db, hostId);
+  if (!clusterId) return [];
+
+  const conditions: string[] = ['cluster_id = ?'];
+  const params: any[] = [clusterId];
+
+  if (filters.reason) {
+    conditions.push('reason = ?');
+    params.push(filters.reason);
+  }
+  if (filters.namespace) {
+    conditions.push('namespace = ?');
+    params.push(filters.namespace);
+  }
+  if (filters.sinceHours && filters.sinceHours > 0) {
+    conditions.push(`last_seen_at >= datetime('now', '-${Math.floor(filters.sinceHours)} hours')`);
+  }
+
+  const limit = Math.max(1, Math.min(500, filters.limit ?? 100));
+
+  return db.prepare(`
+    SELECT event_uid, cluster_id, namespace, involved_kind, involved_name,
+           reason, message, type, count, first_seen_at, last_seen_at
+    FROM k8s_events
+    WHERE ${conditions.join(' AND ')}
+    ORDER BY last_seen_at DESC
+    LIMIT ${limit}
+  `).all(...params) as K8sEventRow[];
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getClusterIdForHost };

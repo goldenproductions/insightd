@@ -514,6 +514,26 @@ export interface EventItem {
   good: boolean;
 }
 
+// Kubernetes Events (cluster-scoped, per-host view)
+export interface K8sEvent {
+  event_uid: string;
+  cluster_id: string;
+  namespace: string | null;
+  involved_kind: string;
+  involved_name: string;
+  reason: string;
+  message: string | null;
+  type: string;
+  count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface HostK8sEventsResponse {
+  clusterId: string | null;
+  items: K8sEvent[];
+}
+
 // Endpoints
 export interface Endpoint {
   id: number;

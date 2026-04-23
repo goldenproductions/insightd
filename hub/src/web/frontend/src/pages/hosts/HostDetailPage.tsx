@@ -20,6 +20,7 @@ import { queryKeys } from '@/lib/queryKeys';
 import { HostOverviewTab } from './HostOverviewTab';
 import { HostResourcesTab } from './HostResourcesTab';
 import { HostAlertsTab } from './HostAlertsTab';
+import { HostK8sEventsTab } from './HostK8sEventsTab';
 import { AnomaliesList } from '@/components/AnomaliesList';
 import { timeAgo } from '@/lib/formatters';
 
@@ -53,6 +54,7 @@ export function HostDetailPage() {
   useKeyboardShortcut({ keys: '1', description: 'Overview tab', scope: 'Host detail', onTrigger: () => setActiveTab('overview') });
   useKeyboardShortcut({ keys: '2', description: 'Resources tab', scope: 'Host detail', onTrigger: () => setActiveTab('resources') });
   useKeyboardShortcut({ keys: '3', description: 'Alerts tab', scope: 'Host detail', onTrigger: () => setActiveTab('alerts') });
+  useKeyboardShortcut({ keys: '4', description: 'K8s Events tab', scope: 'Host detail', onTrigger: () => setActiveTab('k8s-events') });
   useKeyboardShortcut({ keys: 'b', description: 'Back to hosts', scope: 'Host detail', onTrigger: () => navigate('/hosts') });
   useKeyboardShortcut({ keys: '[', description: 'Previous host', scope: 'Host detail', disabled: !prevHost, onTrigger: () => { if (prevHost) goToHost(prevHost); } });
   useKeyboardShortcut({ keys: ']', description: 'Next host', scope: 'Host detail', disabled: !nextHost, onTrigger: () => { if (nextHost) goToHost(nextHost); } });
@@ -66,10 +68,12 @@ export function HostDetailPage() {
     </div>
   );
 
+  const isK8s = data.runtime_type === 'kubernetes';
   const tabs = [
     { id: 'overview', label: 'Overview', shortcut: '1' },
     { id: 'resources', label: 'Resources', shortcut: '2' },
     { id: 'alerts', label: 'Alerts', count: data.alerts.length, shortcut: '3' },
+    ...(isK8s ? [{ id: 'k8s-events', label: 'Events', shortcut: '4' }] : []),
   ];
 
   return (
@@ -150,6 +154,10 @@ export function HostDetailPage() {
 
       {activeTab === 'alerts' && (
         <HostAlertsTab data={data} events={events} hostId={hostId!} />
+      )}
+
+      {activeTab === 'k8s-events' && isK8s && (
+        <HostK8sEventsTab hostId={hostId!} />
       )}
 
       {/* v26 — historical S-H-ESD anomalies for this host. Always visible

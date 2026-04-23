@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 33;
+const SCHEMA_VERSION = 34;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -164,6 +164,29 @@ function bootstrap(db: Database.Database): void {
       ON pvc_snapshots (cluster_id, collected_at);
     CREATE INDEX IF NOT EXISTS idx_pvc_cluster_ns_name_time
       ON pvc_snapshots (cluster_id, namespace, pvc_name, collected_at);
+
+    -- Kubernetes Events stream (cluster-scoped, leader-published).
+    -- Stored by event_uid so re-publishes of the same event bump count +
+    -- last_seen_at rather than duplicating rows. Retention pruned with
+    -- the same rawDays knob as other raw data.
+    CREATE TABLE IF NOT EXISTS k8s_events (
+      event_uid        TEXT PRIMARY KEY,
+      cluster_id       TEXT NOT NULL,
+      namespace        TEXT,
+      involved_kind    TEXT NOT NULL,
+      involved_name    TEXT NOT NULL,
+      reason           TEXT NOT NULL,
+      message          TEXT,
+      type             TEXT NOT NULL,
+      count            INTEGER NOT NULL DEFAULT 1,
+      first_seen_at    TEXT NOT NULL,
+      last_seen_at     TEXT NOT NULL,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_k8s_events_cluster_last_seen
+      ON k8s_events (cluster_id, last_seen_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_k8s_events_involved
+      ON k8s_events (cluster_id, involved_kind, involved_name, last_seen_at DESC);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -752,6 +775,29 @@ function migrate(db: Database.Database, fromVersion: number): void {
         ON pvc_snapshots (cluster_id, namespace, pvc_name, collected_at);
     `);
   }
+  if (fromVersion < 34) {
+    // K8s Events stream (cluster-scoped, leader-published).
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS k8s_events (
+        event_uid        TEXT PRIMARY KEY,
+        cluster_id       TEXT NOT NULL,
+        namespace        TEXT,
+        involved_kind    TEXT NOT NULL,
+        involved_name    TEXT NOT NULL,
+        reason           TEXT NOT NULL,
+        message          TEXT,
+        type             TEXT NOT NULL,
+        count            INTEGER NOT NULL DEFAULT 1,
+        first_seen_at    TEXT NOT NULL,
+        last_seen_at     TEXT NOT NULL,
+        created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_k8s_events_cluster_last_seen
+        ON k8s_events (cluster_id, last_seen_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_k8s_events_involved
+        ON k8s_events (cluster_id, involved_kind, involved_name, last_seen_at DESC);
+    `);
+  }
 }
 
 /**
@@ -780,6 +826,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r8 = db.prepare(`DELETE FROM insight_feedback WHERE created_at < ${rawCutoff}`).run();
   const rPv  = db.prepare(`DELETE FROM pv_snapshots  WHERE collected_at < ${rawCutoff}`).run();
   const rPvc = db.prepare(`DELETE FROM pvc_snapshots WHERE collected_at < ${rawCutoff}`).run();
+  const rEv  = db.prepare(`DELETE FROM k8s_events    WHERE last_seen_at < ${rawCutoff}`).run();
   const rC = db.prepare(`DELETE FROM containers WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
@@ -795,7 +842,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
-    + r9.changes + r10.changes + r11.changes + r12.changes;
+    + rEv.changes + r9.changes + r10.changes + r11.changes + r12.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);

@@ -63,6 +63,9 @@ export const queryKeys = {
   // Kubernetes PV/PVC inventory (Storage → Volumes tab, k8s mode)
   pvs: () => ['pvs'] as const,
 
+  // Kubernetes Events stream (Host detail → Events tab, k8s mode)
+  k8sEvents: (hostId?: string) => ['k8s-events', hostId] as const,
+
   // Status
   publicStatus: () => ['public-status'] as const,
 } as const;
