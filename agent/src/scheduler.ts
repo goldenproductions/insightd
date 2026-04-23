@@ -65,6 +65,7 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     // underlying machine's kernel — not the node we're reporting on. Ask
     // the runtime for an authoritative override and merge it into `host`,
     // skipping fields the runtime doesn't observe.
+    let nodeConditions: import('./runtime/types').NodeCondition[] | null = null;
     if (host && runtime.getHostMetrics) {
       const override = await safeCollect('runtime-host-metrics', () => runtime.getHostMetrics!());
       if (override) {
@@ -85,6 +86,7 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
           if (override.load5 !== undefined) host.load.load5 = override.load5;
           if (override.load15 !== undefined) host.load.load15 = override.load15;
         }
+        if (override.nodeConditions !== undefined) nodeConditions = override.nodeConditions;
       }
     }
 
@@ -126,7 +128,7 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     // Publish to MQTT
     if (containers) {
       await safeCollect('mqtt-publish', () =>
-        publishCollection(config.hostId, { containers, disk, volumes, host, gpu, temperature, diskIO, networkIO, runtimeName: runtime.name, hostGroup: config.hostGroup })
+        publishCollection(config.hostId, { containers, disk, volumes, host, gpu, temperature, diskIO, networkIO, nodeConditions, runtimeName: runtime.name, hostGroup: config.hostGroup })
       );
     }
 

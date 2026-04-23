@@ -101,6 +101,44 @@ describe('schema', () => {
     restore();
   });
 
+  it('bootstrap creates v35 node_conditions table', () => {
+    bootstrap(db);
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='node_conditions'").get();
+    assert.ok(row, 'node_conditions should exist');
+    const cols = db.prepare('PRAGMA table_info(node_conditions)').all();
+    const names = cols.map((c: any) => c.name);
+    for (const col of ['host_id', 'type', 'status', 'reason', 'message', 'last_heartbeat_at', 'last_transition_at', 'observed_at']) {
+      assert.ok(names.includes(col), `node_conditions missing column ${col}`);
+    }
+    // Composite PK (host_id, type)
+    const pkCols = cols.filter((c: any) => c.pk > 0).sort((a: any, b: any) => a.pk - b.pk).map((c: any) => c.name);
+    assert.deepEqual(pkCols, ['host_id', 'type']);
+    restore();
+  });
+
+  it('v34 → v35 migration adds node_conditions without dropping existing data', () => {
+    // Start at v34 — only the tables/state v34 would have.
+    db.exec(`
+      CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE hosts (host_id TEXT PRIMARY KEY, first_seen TEXT, last_seen TEXT);
+      INSERT INTO meta (key, value) VALUES ('schema_version', '34');
+      INSERT INTO hosts (host_id, first_seen, last_seen) VALUES ('k3d-0', '2026-04-01', '2026-04-23');
+    `);
+
+    bootstrap(db);
+
+    const row = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='node_conditions'").get();
+    assert.ok(row, 'v35 migration should create node_conditions');
+
+    const hosts = db.prepare('SELECT host_id FROM hosts').all();
+    assert.equal(hosts.length, 1);
+    assert.equal(hosts[0].host_id, 'k3d-0');
+
+    const version = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+    assert.equal(version.value, String(SCHEMA_VERSION));
+    restore();
+  });
+
   describe('pruneOldData', () => {
     it('deletes rows older than 30 days', () => {
       bootstrap(db);

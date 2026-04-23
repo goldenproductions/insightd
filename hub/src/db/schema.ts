@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 34;
+const SCHEMA_VERSION = 35;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -187,6 +187,23 @@ function bootstrap(db: Database.Database): void {
       ON k8s_events (cluster_id, last_seen_at DESC);
     CREATE INDEX IF NOT EXISTS idx_k8s_events_involved
       ON k8s_events (cluster_id, involved_kind, involved_name, last_seen_at DESC);
+
+    -- Kubernetes Node conditions (current state, keyed by host + type).
+    -- UPSERT on each agent collection cycle — not a time-series.
+    -- Only populated for k8s hosts.
+    CREATE TABLE IF NOT EXISTS node_conditions (
+      host_id            TEXT NOT NULL,
+      type               TEXT NOT NULL,
+      status             TEXT NOT NULL,
+      reason             TEXT,
+      message            TEXT,
+      last_heartbeat_at  TEXT,
+      last_transition_at TEXT,
+      observed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (host_id, type)
+    );
+    CREATE INDEX IF NOT EXISTS idx_node_conditions_host_observed
+      ON node_conditions (host_id, observed_at DESC);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -798,6 +815,24 @@ function migrate(db: Database.Database, fromVersion: number): void {
         ON k8s_events (cluster_id, involved_kind, involved_name, last_seen_at DESC);
     `);
   }
+  if (fromVersion < 35) {
+    // K8s Node conditions (current state, keyed by host + type).
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS node_conditions (
+        host_id            TEXT NOT NULL,
+        type               TEXT NOT NULL,
+        status             TEXT NOT NULL,
+        reason             TEXT,
+        message            TEXT,
+        last_heartbeat_at  TEXT,
+        last_transition_at TEXT,
+        observed_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (host_id, type)
+      );
+      CREATE INDEX IF NOT EXISTS idx_node_conditions_host_observed
+        ON node_conditions (host_id, observed_at DESC);
+    `);
+  }
 }
 
 /**
@@ -828,6 +863,9 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const rPvc = db.prepare(`DELETE FROM pvc_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const rEv  = db.prepare(`DELETE FROM k8s_events    WHERE last_seen_at < ${rawCutoff}`).run();
   const rC = db.prepare(`DELETE FROM containers WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
+  const rNc = db.prepare(`DELETE FROM node_conditions WHERE host_id NOT IN (
+    SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
+  )`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
     UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
@@ -842,7 +880,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
-    + rEv.changes + r9.changes + r10.changes + r11.changes + r12.changes;
+    + rEv.changes + rNc.changes + r9.changes + r10.changes + r11.changes + r12.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);

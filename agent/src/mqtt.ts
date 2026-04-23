@@ -61,6 +61,14 @@ interface CollectionData {
   } | null;
   diskIO?: { readBytesPerSec?: number; writeBytesPerSec?: number } | null;
   networkIO?: { rxBytesPerSec?: number; txBytesPerSec?: number } | null;
+  nodeConditions?: Array<{
+    type: string;
+    status: 'True' | 'False' | 'Unknown';
+    reason?: string | null;
+    message?: string | null;
+    lastHeartbeatTime?: string | null;
+    lastTransitionTime?: string | null;
+  }> | null;
   runtimeName?: string;
   hostGroup?: string;
 }
@@ -273,7 +281,7 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
   const topic = `insightd/${hostId}/collection`;
   const { VERSION } = require('./config') as { VERSION: string };
   const msg: Record<string, any> = {
-    version: 3,
+    version: 4,
     host_id: hostId,
     agent_version: VERSION,
     runtime_type: data.runtimeName ?? 'docker',
@@ -335,6 +343,16 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
       net_rx_bytes_per_sec: data.networkIO?.rxBytesPerSec ?? null,
       net_tx_bytes_per_sec: data.networkIO?.txBytesPerSec ?? null,
     };
+  }
+  if (data.nodeConditions && data.nodeConditions.length > 0) {
+    msg.node_conditions = data.nodeConditions.map(c => ({
+      type: c.type,
+      status: c.status,
+      reason: c.reason ?? null,
+      message: c.message ?? null,
+      last_heartbeat_at: c.lastHeartbeatTime ?? null,
+      last_transition_at: c.lastTransitionTime ?? null,
+    }));
   }
   const payload = JSON.stringify(msg);
 

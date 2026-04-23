@@ -4,6 +4,7 @@ import { api, apiAuth } from '@/lib/api';
 import type { HostDetail, HostMetricsSnapshot, Host, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { NodeConditionBadges } from '@/components/NodeConditionBadges';
 import { Button, Input } from '@/components/FormField';
 import { Tabs } from '@/components/Tabs';
 import { BackLink } from '@/components/BackLink';
@@ -112,6 +113,9 @@ export function HostDetailPage() {
           <Badge text={data.is_online ? 'online' : 'offline'} color={data.is_online ? 'green' : 'red'} />
           {data.runtime_type && data.runtime_type !== 'docker' && (
             <Badge text={data.runtime_type === 'kubernetes' ? 'k8s' : data.runtime_type} color="blue" />
+          )}
+          {data.nodeConditions && data.nodeConditions.length > 0 && (
+            <NodeConditionBadges conditions={data.nodeConditions} />
           )}
           <HostGroupEditor hostId={hostId!} group={data.host_group ?? null} override={data.host_group_override ?? null} />
         </div>

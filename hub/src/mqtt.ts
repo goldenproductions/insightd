@@ -4,13 +4,14 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
   ingestPvs: (db: Database.Database, clusterId: string, pvs: any[]) => void;
   ingestPvcs: (db: Database.Database, clusterId: string, pvcs: any[]) => void;
   ingestEvents: (db: Database.Database, clusterId: string, events: any[]) => void;
+  ingestNodeConditions: (db: Database.Database, hostId: string, conditions: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
   upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
@@ -89,6 +90,14 @@ interface CollectionPayload {
     net_rx_bytes_per_sec?: number | null;
     net_tx_bytes_per_sec?: number | null;
   };
+  node_conditions?: Array<{
+    type: string;
+    status: string;
+    reason?: string | null;
+    message?: string | null;
+    last_heartbeat_at?: string | null;
+    last_transition_at?: string | null;
+  }>;
   agent_version?: string;
   runtime_type?: string;
   host_group?: string | null;
@@ -350,6 +359,19 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
       netRxBytesPerSec: h.net_rx_bytes_per_sec ?? null,
       netTxBytesPerSec: h.net_tx_bytes_per_sec ?? null,
     });
+  }
+
+  // Node conditions (v4 payloads) — only present for k8s hosts
+  if (payload.node_conditions && payload.node_conditions.length > 0) {
+    const conditions = payload.node_conditions.map(c => ({
+      type: c.type,
+      status: (c.status === 'True' || c.status === 'False') ? c.status : 'Unknown',
+      reason: c.reason ?? null,
+      message: c.message ?? null,
+      lastHeartbeatAt: c.last_heartbeat_at ?? null,
+      lastTransitionAt: c.last_transition_at ?? null,
+    }));
+    ingestNodeConditions(db, hostId, conditions);
   }
 
   logger.info('mqtt', `Ingested from ${hostId}: ${containers.length} containers, ${disk.length} disk mounts${payload.host ? ', host metrics' : ''}`);

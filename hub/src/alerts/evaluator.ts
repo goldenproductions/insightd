@@ -109,6 +109,10 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
     if (alerts.hostLoadThreshold > 0) {
       triggered.push(...checkHighLoad(db, host_id, alerts.hostLoadThreshold));
     }
+    // K8s node conditions — fires only on k8s hosts (non-k8s hosts never
+    // have rows in node_conditions). No config toggle in v1.
+    triggered.push(...checkNodePressure(db, host_id));
+    triggered.push(...checkNodeNotReady(db, host_id));
   }
 
   // Host offline — iterate the `hosts` table directly so we don't rely on
@@ -304,6 +308,49 @@ function checkHighLoad(db: Database.Database, hostId: string, threshold: number)
 }
 
 /**
+ * Fire `node_pressure` for each k8s pressure condition currently set to
+ * True. `target` is the condition type (MemoryPressure / DiskPressure /
+ * PIDPressure) so each fires and resolves independently.
+ */
+function checkNodePressure(db: Database.Database, hostId: string): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT type, reason, message
+    FROM node_conditions
+    WHERE host_id = ?
+      AND type IN ('MemoryPressure', 'DiskPressure', 'PIDPressure')
+      AND status = 'True'
+  `).all(hostId) as Array<{ type: string; reason: string | null; message: string | null }>;
+  return rows.map(r => ({
+    type: 'node_pressure',
+    hostId,
+    target: r.type,
+    message: `Node "${hostId}" has ${r.type}=True${r.reason ? ` (${r.reason})` : ''}: ${r.message ?? 'no detail'}`,
+    value: r.type,
+    threshold: null,
+  }));
+}
+
+/**
+ * Fire `node_not_ready` when the Ready condition is anything other than
+ * True (False or Unknown). Ready=Unknown is the kubelet-lost-contact case.
+ */
+function checkNodeNotReady(db: Database.Database, hostId: string): AlertItem[] {
+  const r = db.prepare(`
+    SELECT status, reason, message FROM node_conditions
+    WHERE host_id = ? AND type = 'Ready' AND status != 'True'
+  `).get(hostId) as { status: string; reason: string | null; message: string | null } | undefined;
+  if (!r) return [];
+  return [{
+    type: 'node_not_ready',
+    hostId,
+    target: 'Ready',
+    message: `Node "${hostId}" is not Ready (status=${r.status}${r.reason ? `, ${r.reason}` : ''}): ${r.message ?? 'no detail'}`,
+    value: r.status,
+    threshold: 'True',
+  }];
+}
+
+/**
  * Fire host_offline for any host whose agent hasn't reported in
  * `thresholdMinutes`. Queried directly from the `hosts` table (not
  * host_snapshots) so the check keeps working for hosts whose snapshot
@@ -485,6 +532,19 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
         "SELECT 1 FROM hosts WHERE host_id = ? AND last_seen >= datetime('now', ?) LIMIT 1"
       ).get(alert.host_id, `-${windowMinutes} minutes`);
       isResolved = !!row;
+    } else if (alert.alert_type === 'node_pressure') {
+      // Resolved when the condition is no longer True (flipped back to
+      // False) — or the row is gone entirely (host removed / non-k8s now).
+      const row = db.prepare(
+        `SELECT 1 FROM node_conditions WHERE host_id = ? AND type = ? AND status = 'True'`
+      ).get(alert.host_id, alert.target);
+      isResolved = !row;
+    } else if (alert.alert_type === 'node_not_ready') {
+      // Resolved when Ready is True again (or the row is gone entirely).
+      const row = db.prepare(
+        `SELECT 1 FROM node_conditions WHERE host_id = ? AND type = 'Ready' AND status != 'True'`
+      ).get(alert.host_id);
+      isResolved = !row;
     }
 
     if (isResolved) {
@@ -515,6 +575,8 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'host_offline': return `Host "${hostId}" is back online`;
     case 'container_unhealthy': return `Container "${target}"${on} is healthy again`;
     case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
+    case 'node_pressure': return `Node${on} ${target} cleared`;
+    case 'node_not_ready': return `Node "${hostId}" is Ready again`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

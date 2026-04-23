@@ -4,7 +4,7 @@ import logger = require('../../../shared/utils/logger');
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
-  HostMetricsOverride, DiskResult,
+  HostMetricsOverride, DiskResult, NodeCondition,
 } from './types';
 
 const { safeCollect } = require('../../../shared/utils/errors') as {
@@ -51,7 +51,14 @@ interface K8sNode {
   status?: {
     capacity?: Record<string, string>;
     allocatable?: Record<string, string>;
-    conditions?: Array<{ type: string; status: string }>;
+    conditions?: Array<{
+      type: string;
+      status: string;
+      reason?: string;
+      message?: string;
+      lastHeartbeatTime?: string;
+      lastTransitionTime?: string;
+    }>;
   };
 }
 
@@ -754,6 +761,20 @@ export class KubernetesRuntime implements ContainerRuntime {
         }
       }
 
+      // Node conditions (Ready, MemoryPressure, DiskPressure, PIDPressure,
+      // NetworkUnavailable) come straight from `node.status.conditions`.
+      // Kubelet sets these; they're the canonical per-node health signal.
+      const nodeConditions: NodeCondition[] | null = node?.status?.conditions
+        ? node.status.conditions.map(c => ({
+            type: c.type,
+            status: (c.status === 'True' || c.status === 'False') ? c.status : 'Unknown',
+            reason: c.reason ?? null,
+            message: c.message ?? null,
+            lastHeartbeatTime: c.lastHeartbeatTime ?? null,
+            lastTransitionTime: c.lastTransitionTime ?? null,
+          }))
+        : null;
+
       return {
         cpuPercent,
         memoryUsedMb,
@@ -766,6 +787,7 @@ export class KubernetesRuntime implements ContainerRuntime {
         load5: null,
         load15: null,
         uptimeSeconds,
+        nodeConditions,
       };
     } catch {
       return null;

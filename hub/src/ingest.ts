@@ -382,4 +382,40 @@ function ingestEvents(db: Database.Database, clusterId: string, events: EventRec
   logger.info('ingest', `Upserted ${events.length} k8s events for cluster ${clusterId}`);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestUpdates, upsertHost, ingestHost };
+interface NodeConditionRecord {
+  type: string;
+  status: 'True' | 'False' | 'Unknown';
+  reason: string | null;
+  message: string | null;
+  lastHeartbeatAt: string | null;
+  lastTransitionAt: string | null;
+}
+
+/**
+ * Upsert the current set of k8s Node conditions for a host, keyed by
+ * (host_id, type). This is current-state, not a time-series — each
+ * collection cycle overwrites the prior row for the same condition.
+ */
+function ingestNodeConditions(db: Database.Database, hostId: string, conditions: NodeConditionRecord[]): void {
+  if (conditions.length === 0) return;
+  const upsert = db.prepare(`
+    INSERT INTO node_conditions
+      (host_id, type, status, reason, message, last_heartbeat_at, last_transition_at, observed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(host_id, type) DO UPDATE SET
+      status             = excluded.status,
+      reason             = excluded.reason,
+      message            = excluded.message,
+      last_heartbeat_at  = excluded.last_heartbeat_at,
+      last_transition_at = excluded.last_transition_at,
+      observed_at        = excluded.observed_at
+  `);
+  const upsertMany = db.transaction((items: NodeConditionRecord[]) => {
+    for (const c of items) {
+      upsert.run(hostId, c.type, c.status, c.reason, c.message, c.lastHeartbeatAt, c.lastTransitionAt);
+    }
+  });
+  upsertMany(conditions);
+}
+
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };

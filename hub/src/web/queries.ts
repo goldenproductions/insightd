@@ -300,6 +300,9 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
     updates: getLatestUpdates(db, hostId),
     hostMetrics: getLatestHostMetrics(db, hostId),
     diskForecast: getDiskForecast(db, hostId),
+    // K8s-only — empty array for Docker hosts. Embedded here so the detail
+    // page badge row doesn't need a second round-trip.
+    nodeConditions: host.runtime_type === 'kubernetes' ? getNodeConditionsForHost(db, hostId) : [],
   };
 }
 
@@ -400,9 +403,11 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   container_down: 'critical',
   host_offline: 'critical',
   endpoint_down: 'critical',
+  node_not_ready: 'critical',
   container_unhealthy: 'error',
   restart_loop: 'error',
   disk_full: 'error',
+  node_pressure: 'error',
   high_cpu: 'warning',
   high_memory: 'warning',
   high_host_cpu: 'warning',
@@ -416,9 +421,11 @@ const LEVEL_CASE_SQL = `
     WHEN 'container_down' THEN 'critical'
     WHEN 'host_offline' THEN 'critical'
     WHEN 'endpoint_down' THEN 'critical'
+    WHEN 'node_not_ready' THEN 'critical'
     WHEN 'container_unhealthy' THEN 'error'
     WHEN 'restart_loop' THEN 'error'
     WHEN 'disk_full' THEN 'error'
+    WHEN 'node_pressure' THEN 'error'
     WHEN 'high_cpu' THEN 'warning'
     WHEN 'high_memory' THEN 'warning'
     WHEN 'high_host_cpu' THEN 'warning'
@@ -1816,4 +1823,35 @@ function getK8sEventsForHost(db: Database.Database, hostId: string, filters: K8s
   `).all(...params) as K8sEventRow[];
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getClusterIdForHost };
+interface NodeConditionRow {
+  host_id: string;
+  type: string;
+  status: 'True' | 'False' | 'Unknown';
+  reason: string | null;
+  message: string | null;
+  last_heartbeat_at: string | null;
+  last_transition_at: string | null;
+  observed_at: string;
+}
+
+/**
+ * Current k8s node conditions for a single host. Rows are already
+ * "latest per (host, type)" by virtue of the UPSERT primary key —
+ * no window functions needed.
+ *
+ * `Ready` is pinned first because it's the most important condition
+ * operationally; remaining conditions sort alphabetically.
+ */
+function getNodeConditionsForHost(db: Database.Database, hostId: string): NodeConditionRow[] {
+  return db.prepare(`
+    SELECT host_id, type, status, reason, message,
+           last_heartbeat_at, last_transition_at, observed_at
+    FROM node_conditions
+    WHERE host_id = ?
+    ORDER BY
+      CASE type WHEN 'Ready' THEN 0 ELSE 1 END,
+      type
+  `).all(hostId) as NodeConditionRow[];
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getNodeConditionsForHost, getClusterIdForHost };

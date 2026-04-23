@@ -367,6 +367,23 @@ export interface HostDetail extends Host {
   diskForecast: DiskForecastItem[];
   /** v26 — recent S-H-ESD rollup anomalies for this host. */
   anomalies?: RollupAnomaly[];
+  /** v35 — k8s node conditions (empty for non-k8s hosts). */
+  nodeConditions: NodeCondition[];
+}
+
+export interface NodeCondition {
+  host_id: string;
+  type: string;
+  status: 'True' | 'False' | 'Unknown';
+  reason: string | null;
+  message: string | null;
+  last_heartbeat_at: string | null;
+  last_transition_at: string | null;
+  observed_at: string;
+}
+
+export interface HostNodeConditionsResponse {
+  items: NodeCondition[];
 }
 
 // Alerts
