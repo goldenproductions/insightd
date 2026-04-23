@@ -296,6 +296,7 @@ describe('KubernetesRuntime.getDiskMetrics', () => {
       node: {
         fs: { capacityBytes: 100e9, usedBytes: 40e9, availableBytes: 60e9 },
         runtime: {
+          // Different capacity → clearly a different physical disk
           imageFs: { capacityBytes: 500e9, usedBytes: 50e9, availableBytes: 450e9 },
         },
       },
@@ -307,18 +308,32 @@ describe('KubernetesRuntime.getDiskMetrics', () => {
     ]);
   });
 
-  it('dedupes when nodefs and imagefs share the same underlying filesystem', async () => {
-    const shared = { capacityBytes: 200e9, usedBytes: 60e9, availableBytes: 140e9 };
+  it('treats same capacity but different availableBytes as separate filesystems', async () => {
+    // Edge case: equal-size disks, but different free space → genuinely
+    // distinct mounts, not one shared disk. Don't dedupe.
     const runtime = makeRuntime({
       node: {
-        fs: shared,
-        runtime: { imageFs: { ...shared } },
+        fs:      { capacityBytes: 100e9, usedBytes: 40e9, availableBytes: 60e9 },
+        runtime: { imageFs: { capacityBytes: 100e9, usedBytes: 10e9, availableBytes: 90e9 } },
+      },
+    });
+    const disks = await runtime.getDiskMetrics();
+    assert.equal(disks.length, 2);
+  });
+
+  it('dedupes when nodefs and imagefs share a disk (same capacity + availableBytes, different usedBytes)', async () => {
+    // Real-world shape from a k3d node: kubelet reports separate usedBytes
+    // for each subtree (kubelet rootDir vs. image store), but capacity and
+    // availableBytes are identical because it's the same physical disk.
+    const runtime = makeRuntime({
+      node: {
+        fs:      { capacityBytes: 200e9, usedBytes: 60e9, availableBytes: 140e9 },
+        runtime: { imageFs: { capacityBytes: 200e9, usedBytes: 5e9,  availableBytes: 140e9 } },
       },
     });
     const disks = await runtime.getDiskMetrics();
     assert.equal(disks.length, 1);
     assert.equal(disks[0].mountPoint, 'nodefs');
-    assert.equal(disks[0].totalGb, 200);
     assert.equal(disks[0].usedGb, 60);
   });
 

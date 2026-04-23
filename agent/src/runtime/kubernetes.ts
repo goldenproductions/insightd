@@ -1030,14 +1030,27 @@ function fsStatsToDiskResult(mountPoint: string, fs: FsStats | undefined): DiskR
 }
 
 /**
- * When kubelet reports nodefs and imagefs with identical capacity and
- * usage, they're the same underlying filesystem — a single disk on the
- * node. In that case we avoid emitting both to prevent apparent
- * double-counting in the Storage page and alerts.
+ * When kubelet reports nodefs and imagefs with identical capacity AND
+ * available-bytes, they're the same underlying filesystem — a single
+ * disk shared between kubelet data and the container runtime's images.
+ *
+ * usedBytes legitimately differs between the two even on a shared disk:
+ * each tracks a different subtree (kubelet's rootDir vs. the image
+ * store), so imagefs.usedBytes is a subset of nodefs.usedBytes. Using
+ * `availableBytes` for the dedupe signal instead catches the shared-disk
+ * case without losing the separate-disk case — two filesystems on
+ * different disks can't happen to have identical free space, whereas
+ * two subtrees on the same disk always do.
+ *
+ * Without this dedupe, the UI would show two rows users would mentally
+ * sum (nodefs 24 GB + imagefs 1 GB = "25 GB used"), when in reality the
+ * disk only has 24 GB used.
  */
 function sameFilesystem(a: FsStats | undefined, b: FsStats | undefined): boolean {
   if (!a || !b) return false;
-  return a.capacityBytes === b.capacityBytes && a.usedBytes === b.usedBytes;
+  if (a.capacityBytes !== b.capacityBytes) return false;
+  if (a.availableBytes === undefined || b.availableBytes === undefined) return false;
+  return a.availableBytes === b.availableBytes;
 }
 
 function splitKubeTimestamp(line: string): { timestamp: string | null; message: string } {
