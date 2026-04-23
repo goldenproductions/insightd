@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 35;
+const SCHEMA_VERSION = 36;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -39,6 +39,9 @@ function bootstrap(db: Database.Database): void {
       exit_code       INTEGER,
       size_rootfs_bytes INTEGER,
       size_rw_bytes   INTEGER,
+      cpu_limit_cores REAL,
+      cpu_limit_percent REAL,
+      memory_limit_mb REAL,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -832,6 +835,15 @@ function migrate(db: Database.Database, fromVersion: number): void {
       CREATE INDEX IF NOT EXISTS idx_node_conditions_host_observed
         ON node_conditions (host_id, observed_at DESC);
     `);
+  }
+  if (fromVersion < 36) {
+    // K8s container resource limits: pod.spec.containers[].resources.limits
+    // flows through as cpu_limit_cores (from "500m" / "2") and memory_limit_mb
+    // (from "128Mi" / "1Gi"). cpu_limit_percent is agent-computed because
+    // cpu_percent is already node-normalized. Null on Docker + unlimited k8s.
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN cpu_limit_cores REAL'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN cpu_limit_percent REAL'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN memory_limit_mb REAL'); } catch { /* already exists */ }
   }
 }
 

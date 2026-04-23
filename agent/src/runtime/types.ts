@@ -46,6 +46,12 @@ export interface ContainerWithResources extends ContainerInfo {
   networkTxBytes?: number | null;
   blkioReadBytes?: number | null;
   blkioWriteBytes?: number | null;
+  /** CPU limit in cores (e.g. "500m" → 0.5, "2" → 2). k8s only; null if unlimited/not set. */
+  cpuLimitCores?: number | null;
+  /** CPU usage as % of cpuLimitCores, agent-computed (cpuPercent is node-normalized). */
+  cpuLimitPercent?: number | null;
+  /** Memory limit in MB (e.g. "512Mi" → 512, "1Gi" → 1024). k8s only; null if unlimited/not set. */
+  memoryLimitMb?: number | null;
 }
 
 export interface LogOptions {

@@ -31,6 +31,9 @@ interface CollectionData {
     exitCode?: number | null;
     sizeRootfsBytes?: number | null;
     sizeRwBytes?: number | null;
+    cpuLimitCores?: number | null;
+    cpuLimitPercent?: number | null;
+    memoryLimitMb?: number | null;
   }>;
   disk: Array<{
     mountPoint: string;
@@ -281,7 +284,7 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
   const topic = `insightd/${hostId}/collection`;
   const { VERSION } = require('./config') as { VERSION: string };
   const msg: Record<string, any> = {
-    version: 4,
+    version: 5,
     host_id: hostId,
     agent_version: VERSION,
     runtime_type: data.runtimeName ?? 'docker',
@@ -304,6 +307,9 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
       exit_code: c.exitCode ?? null,
       size_rootfs_bytes: c.sizeRootfsBytes ?? null,
       size_rw_bytes: c.sizeRwBytes ?? null,
+      cpu_limit_cores: c.cpuLimitCores ?? null,
+      cpu_limit_percent: c.cpuLimitPercent ?? null,
+      memory_limit_mb: c.memoryLimitMb ?? null,
     })),
     disk: data.disk.map(d => ({
       mount_point: d.mountPoint,

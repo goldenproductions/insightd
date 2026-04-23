@@ -1,9 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-const { parseCadvisorMetrics, parseQuantity, KubernetesRuntime } = require('../../agent/src/runtime/kubernetes') as {
+const { parseCadvisorMetrics, parseQuantity, parseCpuQuantity, KubernetesRuntime } = require('../../agent/src/runtime/kubernetes') as {
   parseCadvisorMetrics: (raw: string) => Map<string, any>;
   parseQuantity: (q: string | undefined | null) => number | null;
+  parseCpuQuantity: (q: string | undefined | null) => number | null;
   KubernetesRuntime: any;
 };
 
@@ -173,6 +174,47 @@ describe('parseQuantity', () => {
   it('returns null for non-numeric input', () => {
     assert.equal(parseQuantity('abc'), null);
     assert.equal(parseQuantity('NaN'), null);
+  });
+});
+
+describe('parseCpuQuantity', () => {
+  it('parses whole-core integers', () => {
+    assert.equal(parseCpuQuantity('1'), 1);
+    assert.equal(parseCpuQuantity('2'), 2);
+    assert.equal(parseCpuQuantity('8'), 8);
+  });
+
+  it('parses decimal-core values', () => {
+    assert.equal(parseCpuQuantity('2.5'), 2.5);
+    assert.equal(parseCpuQuantity('0.5'), 0.5);
+  });
+
+  it('parses milli-core values', () => {
+    assert.equal(parseCpuQuantity('500m'), 0.5);
+    assert.equal(parseCpuQuantity('100m'), 0.1);
+    assert.equal(parseCpuQuantity('1500m'), 1.5);
+    assert.equal(parseCpuQuantity('1000m'), 1);
+  });
+
+  it('returns null for null/undefined/empty', () => {
+    assert.equal(parseCpuQuantity(null), null);
+    assert.equal(parseCpuQuantity(undefined), null);
+    assert.equal(parseCpuQuantity(''), null);
+  });
+
+  it('returns null for unrecognized suffix', () => {
+    // 'k', 'M' are memory suffixes — not valid for CPU.
+    assert.equal(parseCpuQuantity('1k'), null);
+    assert.equal(parseCpuQuantity('1Mi'), null);
+  });
+
+  it('returns null for non-numeric input', () => {
+    assert.equal(parseCpuQuantity('abc'), null);
+    assert.equal(parseCpuQuantity('bogus'), null);
+  });
+
+  it('handles whitespace', () => {
+    assert.equal(parseCpuQuantity('  500m  '), 0.5);
   });
 });
 

@@ -114,8 +114,33 @@ export function HostOverviewTab({ data, timeline, hostId, hid, navigate, isAuthe
       const derived = deriveContainerDisplayStatus(r.status, r.exit_code);
       return <Badge text={derived.label} color={derived.color} />;
     } },
-    { header: 'CPU', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{fmtPercent(r.cpu_percent)}</span> },
-    { header: 'Memory', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-'}</span> },
+    { header: 'CPU', accessor: r => (
+      <span className={r.is_stale ? 'text-muted' : ''}>
+        {fmtPercent(r.cpu_percent)}
+        {r.cpu_limit_percent != null && !r.is_stale && (
+          <span className={`ml-1 text-xs ${r.cpu_limit_percent >= 90 ? 'text-red-500' : r.cpu_limit_percent >= 75 ? 'text-amber-500' : 'text-muted'}`}>
+            ({r.cpu_limit_percent}% of limit)
+          </span>
+        )}
+      </span>
+    ) },
+    { header: 'Memory', accessor: r => {
+      const pct = r.memory_limit_mb && r.memory_mb != null && r.memory_limit_mb > 0
+        ? Math.round(r.memory_mb / r.memory_limit_mb * 100 * 10) / 10 : null;
+      const limitCls = pct == null || r.is_stale ? 'text-muted'
+        : pct >= 90 ? 'text-red-500'
+        : pct >= 75 ? 'text-amber-500' : 'text-muted';
+      return (
+        <span className={r.is_stale ? 'text-muted' : ''}>
+          {r.memory_mb != null ? `${Math.round(r.memory_mb)} MB` : '-'}
+          {pct != null && (
+            <span className={`ml-1 text-xs ${limitCls}`}>
+              / {Math.round(r.memory_limit_mb!)} MB ({pct}%)
+            </span>
+          )}
+        </span>
+      );
+    } },
     { header: 'Restarts', accessor: r => <span className={r.is_stale ? 'text-muted' : ''}>{r.restart_count}</span> },
     ...(isAuthenticated ? [{
       header: '',

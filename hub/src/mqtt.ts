@@ -53,6 +53,9 @@ interface CollectionPayload {
     exit_code?: number | null;
     size_rootfs_bytes?: number | null;
     size_rw_bytes?: number | null;
+    cpu_limit_cores?: number | null;
+    cpu_limit_percent?: number | null;
+    memory_limit_mb?: number | null;
   }>;
   disk?: Array<{
     mount_point: string;
@@ -268,6 +271,9 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     exitCode: c.exit_code ?? null,
     sizeRootfsBytes: c.size_rootfs_bytes ?? null,
     sizeRwBytes: c.size_rw_bytes ?? null,
+    cpuLimitCores: c.cpu_limit_cores ?? null,
+    cpuLimitPercent: c.cpu_limit_percent ?? null,
+    memoryLimitMb: c.memory_limit_mb ?? null,
   }));
 
   // Detect containers transitioning to unhealthy — pre-warm the log cache for diagnosis

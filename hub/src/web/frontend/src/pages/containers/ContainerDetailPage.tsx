@@ -36,6 +36,9 @@ interface HistoryRow {
   network_tx_bytes: number | null;
   blkio_read_bytes: number | null;
   blkio_write_bytes: number | null;
+  cpu_limit_cores: number | null;
+  cpu_limit_percent: number | null;
+  memory_limit_mb: number | null;
 }
 
 interface ChartDataset {

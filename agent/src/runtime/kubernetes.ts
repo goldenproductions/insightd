@@ -37,9 +37,17 @@ interface K8sContainerStatus {
   image: string;
 }
 
+interface K8sPodContainer {
+  name: string;
+  resources?: {
+    limits?: Record<string, string>;   // 'cpu' and 'memory' keys, k8s quantity strings
+    requests?: Record<string, string>;
+  };
+}
+
 interface K8sPod {
   metadata?: K8sMeta;
-  spec?: { nodeName?: string };
+  spec?: { nodeName?: string; containers?: K8sPodContainer[] };
   status?: {
     phase?: string;
     containerStatuses?: K8sContainerStatus[];
@@ -380,6 +388,17 @@ export class KubernetesRuntime implements ContainerRuntime {
   // Previous cadvisor CPU counters for delta calculation
   private prevCpuUsage = new Map<string, { value: number; ts: number }>();
 
+  // Per-cycle cache of pod resource limits, keyed by container id (pod_uid/
+  // container_name format — see listContainers). Populated in listContainers
+  // because that's where we have pod.spec; consumed in collectResources to
+  // attach to ContainerWithResources rows.
+  private lastLimits = new Map<string, { cpuLimitCores: number | null; memoryLimitMb: number | null }>();
+
+  // Cached node core count for converting node-normalized cpuPercent back
+  // into cores for the cpuLimitPercent math. Populated by getHostMetrics
+  // on each cycle; defaults to 0 which disables cpu_limit_percent.
+  private nodeCoreCount = 0;
+
   constructor(options: KubernetesRuntimeOptions) {
     this.nodeName = options.nodeName;
     if (options.kubeletUrl) {
@@ -515,6 +534,19 @@ export class KubernetesRuntime implements ContainerRuntime {
           image: cs.image,
           exitCode: typeof termCode === 'number' ? termCode : null,
         });
+
+        // Capture resource limits from the pod spec. These are current-state
+        // and only change on pod redeploy, but we re-read every cycle so
+        // changes propagate at the normal collection cadence.
+        const specContainer = pod.spec?.containers?.find(sc => sc.name === cs.name);
+        const cpuLimitStr = specContainer?.resources?.limits?.cpu;
+        const memLimitStr = specContainer?.resources?.limits?.memory;
+        const cpuLimitCores = parseCpuQuantity(cpuLimitStr);
+        const memLimitBytes = parseQuantity(memLimitStr);
+        const memoryLimitMb = memLimitBytes != null
+          ? Math.round((memLimitBytes / 1024 / 1024) * 100) / 100
+          : null;
+        this.lastLimits.set(id, { cpuLimitCores, memoryLimitMb });
       }
     }
 
@@ -620,10 +652,27 @@ export class KubernetesRuntime implements ContainerRuntime {
       logger.info('resources', `${c.name}: CPU=${c.cpuPercent ?? 'pending'}%, RAM=${c.memoryMb ?? '?'}MB`);
     }
 
+    // Attach pod resource limits captured in listContainers. CPU limit
+    // percent is derived here because we need both the per-container cpuPercent
+    // (which is node-normalized) and the cached nodeCoreCount.
+    for (const c of result) {
+      const lim = this.lastLimits.get(c.id);
+      if (!lim) continue;
+      c.cpuLimitCores = lim.cpuLimitCores;
+      c.memoryLimitMb = lim.memoryLimitMb;
+      if (lim.cpuLimitCores && lim.cpuLimitCores > 0 && c.cpuPercent != null && this.nodeCoreCount > 0) {
+        const coresUsed = (c.cpuPercent / 100) * this.nodeCoreCount;
+        c.cpuLimitPercent = Math.round((coresUsed / lim.cpuLimitCores) * 100 * 100) / 100;
+      }
+    }
+
     // Clean up stale entries
     const currentIds = new Set(result.map(c => c.id));
     for (const id of this.prevCpuUsage.keys()) {
       if (!currentIds.has(id)) this.prevCpuUsage.delete(id);
+    }
+    for (const id of this.lastLimits.keys()) {
+      if (!currentIds.has(id)) this.lastLimits.delete(id);
     }
 
     return result;
@@ -725,6 +774,7 @@ export class KubernetesRuntime implements ContainerRuntime {
       // count to get the per-core percentage (0–100 across the whole node).
       let cpuPercent: number | null | undefined = undefined;
       const cpuCount = parseInt(node?.status?.capacity?.cpu || '0', 10);
+      if (cpuCount > 0) this.nodeCoreCount = cpuCount;
       if (cpu.usageNanoCores != null && cpuCount > 0) {
         cpuPercent = Math.round((cpu.usageNanoCores / 1e9 / cpuCount) * 100 * 100) / 100;
       }
@@ -1046,6 +1096,24 @@ export function parseQuantity(q: string | undefined | null): number | null {
   };
   const mult = multipliers[suffix];
   return mult != null ? num * mult : null;
+}
+
+/**
+ * Parse a Kubernetes CPU quantity string into cores. Handles:
+ *   - Plain numbers: "1" → 1, "2.5" → 2.5
+ *   - Milli-units:   "500m" → 0.5, "1500m" → 1.5
+ * Returns null on parse failure.
+ *
+ * NOTE: Separate from parseQuantity() because 'm' means milli for CPU
+ * but mega for memory — overloading parseQuantity would misread both.
+ */
+export function parseCpuQuantity(q: string | undefined | null): number | null {
+  if (!q) return null;
+  const match = String(q).trim().match(/^(\d+(?:\.\d+)?)(m?)$/);
+  if (!match) return null;
+  const num = parseFloat(match[1]);
+  if (!Number.isFinite(num)) return null;
+  return match[2] === 'm' ? num / 1000 : num;
 }
 
 /**
