@@ -1,28 +1,52 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { ContainerSnapshot } from '@/types/api';
 import { getContainerNamespace } from '@/lib/containers';
 
 const STORAGE_PREFIX = 'insightd.nsFilter.';
+const PARAM = 'ns';
 
-function loadHidden(hostId: string): Set<string> {
+function loadLegacyHidden(hostId: string): string[] {
   try {
     const raw = localStorage.getItem(STORAGE_PREFIX + hostId);
-    if (!raw) return new Set();
-    return new Set(JSON.parse(raw) as string[]);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter(x => typeof x === 'string') : [];
   } catch {
-    return new Set();
+    return [];
   }
 }
 
-function saveHidden(hostId: string, hidden: Set<string>): void {
-  try {
-    if (hidden.size === 0) localStorage.removeItem(STORAGE_PREFIX + hostId);
-    else localStorage.setItem(STORAGE_PREFIX + hostId, JSON.stringify(Array.from(hidden)));
-  } catch { /* quota exceeded */ }
-}
-
 export function useNamespaceFilter(containers: ContainerSnapshot[], hostId: string) {
-  const [hidden, setHidden] = useState<Set<string>>(() => loadHidden(hostId));
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const hidden = useMemo(() => {
+    const raw = searchParams.get(PARAM) ?? '';
+    return new Set(raw.split(',').filter(Boolean));
+  }, [searchParams]);
+
+  // One-shot migration: if the URL is empty for this host but localStorage
+  // has a pre-existing hide list, promote it to the URL and clear storage.
+  // Silent — homelab audience won't notice and the alternative is a toast.
+  const migratedRef = useRef(false);
+  useEffect(() => {
+    if (migratedRef.current) return;
+    migratedRef.current = true;
+    if (searchParams.get(PARAM)) return;
+    const legacy = loadLegacyHidden(hostId);
+    if (legacy.length === 0) return;
+    const next = new URLSearchParams(searchParams);
+    next.set(PARAM, legacy.join(','));
+    setSearchParams(next, { replace: true });
+    try { localStorage.removeItem(STORAGE_PREFIX + hostId); } catch { /* ignore */ }
+  }, [hostId, searchParams, setSearchParams]);
+
+  const writeHidden = useCallback((next: Set<string>) => {
+    const params = new URLSearchParams(searchParams);
+    if (next.size === 0) params.delete(PARAM);
+    else params.set(PARAM, Array.from(next).join(','));
+    setSearchParams(params, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const namespaces = useMemo(() => {
     const ns = new Set<string>();
@@ -44,19 +68,15 @@ export function useNamespaceFilter(containers: ContainerSnapshot[], hostId: stri
   }, [containers, hidden]);
 
   const toggle = useCallback((ns: string) => {
-    setHidden(prev => {
-      const next = new Set(prev);
-      if (next.has(ns)) next.delete(ns);
-      else next.add(ns);
-      saveHidden(hostId, next);
-      return next;
-    });
-  }, [hostId]);
+    const next = new Set(hidden);
+    if (next.has(ns)) next.delete(ns);
+    else next.add(ns);
+    writeHidden(next);
+  }, [hidden, writeHidden]);
 
   const showAll = useCallback(() => {
-    setHidden(new Set());
-    saveHidden(hostId, new Set());
-  }, [hostId]);
+    writeHidden(new Set());
+  }, [writeHidden]);
 
   return { namespaces, hidden, filtered, toggle, showAll, isKubernetes };
 }

@@ -405,6 +405,7 @@ export interface AlertsExploreResponse {
     byStatus: { active: number; resolved: number };
     byLevel: { critical: number; error: number; warning: number; info: number };
     byHost: { host_id: string; count: number }[];
+    byNamespace: { namespace: string; count: number }[];
     byMuted: { muted: number; not_muted: number };
   };
 }

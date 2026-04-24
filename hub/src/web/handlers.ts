@@ -274,6 +274,7 @@ function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Databas
   const LEVEL_SET = new Set(['critical', 'error', 'warning', 'info']);
   const levels = (p.get('levels') ?? '').split(',').map(s => s.trim()).filter(s => LEVEL_SET.has(s)) as Array<'critical' | 'error' | 'warning' | 'info'>;
   const hosts = (p.get('hosts') ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  const namespaces = (p.get('namespaces') ?? '').split(',').map(s => s.trim()).filter(Boolean);
 
   const rawMuted = p.get('muted');
   const muted = rawMuted === 'true' ? true : rawMuted === 'false' ? false : undefined;
@@ -289,6 +290,7 @@ function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Databas
     status,
     levels: levels.length > 0 ? levels : undefined,
     hosts: hosts.length > 0 ? hosts : undefined,
+    namespaces: namespaces.length > 0 ? namespaces : undefined,
     muted,
     q,
   });

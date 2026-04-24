@@ -13,6 +13,7 @@ import { PageTitle } from '@/components/PageTitle';
 import { SearchIcon } from '@/components/Icons';
 import { LoadingState } from '@/components/LoadingState';
 import { formatAlertType, fmtDurationMs } from '@/lib/formatters';
+import { getContainerNamespace, getContainerDisplayName } from '@/lib/containers';
 import type { Alert, AlertLevel, AlertsExploreResponse } from '@/types/api';
 
 const PAGE_SIZE = 20;
@@ -84,31 +85,35 @@ interface Filters {
   status: 'active' | 'resolved' | null;
   levels: AlertLevel[];
   hosts: string[];
+  namespaces: string[];
   muted: boolean | null;
   offset: number;
 }
 
-function readFilters(params: URLSearchParams): Filters {
+export function readFilters(params: URLSearchParams): Filters {
   const status = params.get('status');
   const muted = params.get('muted');
   const levels = (params.get('levels') ?? '').split(',').filter(Boolean) as AlertLevel[];
   const hosts = (params.get('hosts') ?? '').split(',').filter(Boolean);
+  const namespaces = (params.get('namespaces') ?? '').split(',').filter(Boolean);
   return {
     q: params.get('q') ?? '',
     status: status === 'active' || status === 'resolved' ? status : null,
     levels: levels.filter(l => l === 'critical' || l === 'error' || l === 'warning' || l === 'info'),
     hosts,
+    namespaces,
     muted: muted === 'true' ? true : muted === 'false' ? false : null,
     offset: Math.max(0, parseInt(params.get('offset') ?? '0', 10) || 0),
   };
 }
 
-function writeFilters(f: Filters): URLSearchParams {
+export function writeFilters(f: Filters): URLSearchParams {
   const p = new URLSearchParams();
   if (f.q) p.set('q', f.q);
   if (f.status) p.set('status', f.status);
   if (f.levels.length > 0) p.set('levels', f.levels.join(','));
   if (f.hosts.length > 0) p.set('hosts', f.hosts.join(','));
+  if (f.namespaces.length > 0) p.set('namespaces', f.namespaces.join(','));
   if (f.muted != null) p.set('muted', String(f.muted));
   if (f.offset > 0) p.set('offset', String(f.offset));
   return p;
@@ -216,6 +221,10 @@ export function AlertsPage() {
     id: h.host_id, label: h.host_id, count: h.count,
   })), [data]);
 
+  const namespaceItems = useMemo(() => (data?.counts.byNamespace ?? []).map(n => ({
+    id: n.namespace, label: n.namespace, count: n.count,
+  })), [data]);
+
   return (
     <>
       <PageTitle subtitle="Explore alerts from your monitors and checks.">Alerts</PageTitle>
@@ -242,6 +251,7 @@ export function AlertsPage() {
           filters={filters}
           counts={data?.counts}
           monitors={monitorItems}
+          namespaces={namespaceItems}
           onChange={updateFilters}
         />
 
@@ -346,11 +356,12 @@ function FacetGroup<T extends string>({
 }
 
 function FacetRail({
-  filters, counts, monitors, onChange,
+  filters, counts, monitors, namespaces, onChange,
 }: {
   filters: Filters;
   counts?: AlertsExploreResponse['counts'];
   monitors: FacetItem[];
+  namespaces: FacetItem[];
   onChange: (patch: Partial<Filters>) => void;
 }) {
   const toggleList = <T extends string>(list: T[], id: T): T[] =>
@@ -379,6 +390,13 @@ function FacetRail({
         items={monitors}
         selected={filters.hosts}
         onToggle={(id) => onChange({ hosts: toggleList(filters.hosts, id) })}
+      />
+      {/* Namespace facet auto-hides on Docker-only fleets (empty items → null). */}
+      <FacetGroup
+        title="Namespace"
+        items={namespaces}
+        selected={filters.namespaces}
+        onToggle={(id) => onChange({ namespaces: toggleList(filters.namespaces, id) })}
       />
       {/* Status is single-select — Active and Ended are exclusive. */}
       <FacetGroup
@@ -496,11 +514,24 @@ function AlertsTable({
                 <span className="font-mono tabular-nums text-secondary">{fmtDurationMs(duration * 1000)}</span>
               </div>
               <div className="flex min-w-0 items-center gap-1.5">
-                <span className="truncate text-secondary" title={`${formatAlertType(a.alert_type)} · ${a.host_id}`}>
-                  <span className="font-medium text-fg">{formatAlertType(a.alert_type)}</span>
-                  <span className="mx-1 text-muted">·</span>
-                  <span className="font-mono text-muted">{a.host_id}</span>
-                </span>
+                {(() => {
+                  const ns = getContainerNamespace(a.target);
+                  const tail = ns ? getContainerDisplayName(a.target) : null;
+                  const titleTail = ns ? ` · ${ns}/${tail}` : '';
+                  return (
+                    <span className="truncate text-secondary" title={`${formatAlertType(a.alert_type)} · ${a.host_id}${titleTail}`}>
+                      <span className="font-medium text-fg">{formatAlertType(a.alert_type)}</span>
+                      <span className="mx-1 text-muted">·</span>
+                      <span className="font-mono text-muted">{a.host_id}</span>
+                      {ns && (
+                        <>
+                          <span className="mx-1 text-muted">·</span>
+                          <span className="font-mono text-muted">{ns}</span>
+                        </>
+                      )}
+                    </span>
+                  );
+                })()}
               </div>
             </div>
           );
