@@ -459,6 +459,8 @@ interface AlertsExploreFilters {
   levels?: Array<'critical' | 'error' | 'warning' | 'info'>;
   /** OR'd across host_ids. */
   hosts?: string[];
+  /** OR'd across Kubernetes namespaces (derived from the prefix of `target`). */
+  namespaces?: string[];
   /** `true` = only silenced alerts, `false` = only not-silenced, undefined = both. */
   muted?: boolean;
   /** Case-insensitive substring match against alert_type, target, message, host_id. */
@@ -472,6 +474,7 @@ interface AlertsExploreResult {
     byStatus: { active: number; resolved: number };
     byLevel: { critical: number; error: number; warning: number; info: number };
     byHost: Array<{ host_id: string; count: number }>;
+    byNamespace: Array<{ namespace: string; count: number }>;
     byMuted: { muted: number; not_muted: number };
   };
 }
@@ -508,6 +511,16 @@ function getAlertsExplore(db: Database.Database, filters: AlertsExploreFilters):
     const needle = `%${filters.q.trim().toLowerCase()}%`;
     where.push(`(LOWER(alert_type) LIKE ? OR LOWER(target) LIKE ? OR LOWER(IFNULL(message, '')) LIKE ? OR LOWER(host_id) LIKE ?)`);
     params.push(needle, needle, needle, needle);
+  }
+
+  // Snapshot the non-namespace filter state so `byNamespace` can be computed
+  // against everything *except* its own filter (standard facet-counts pattern).
+  const preNsWhere = where.slice();
+  const preNsParams = params.slice();
+
+  if (filters.namespaces && filters.namespaces.length > 0) {
+    where.push(`(instr(target, '/') > 1 AND substr(target, 1, instr(target, '/') - 1) IN (${filters.namespaces.map(() => '?').join(',')}))`);
+    params.push(...filters.namespaces);
   }
 
   const whereSql = where.length > 0 ? ` WHERE ${where.join(' AND ')}` : '';
@@ -557,7 +570,21 @@ function getAlertsExplore(db: Database.Database, filters: AlertsExploreFilters):
     LIMIT 20
   `).all() as Array<{ host_id: string; count: number }>;
 
-  return { total: totalRow.count, alerts, counts: { byStatus, byLevel, byHost, byMuted } };
+  // Namespace facet — computed with every OTHER active filter applied (but not
+  // the namespace filter itself), so selecting a namespace doesn't zero out
+  // its own count. Only k8s targets (containing '/') contribute.
+  const preNsWhereParts = preNsWhere.slice();
+  preNsWhereParts.push(`instr(target, '/') > 1`);
+  const nsWhereSql = ` WHERE ${preNsWhereParts.join(' AND ')}`;
+  const byNamespace = db.prepare(`
+    SELECT substr(target, 1, instr(target, '/') - 1) AS namespace, COUNT(*) AS count
+    FROM alert_state${nsWhereSql}
+    GROUP BY namespace
+    ORDER BY count DESC, namespace ASC
+    LIMIT 20
+  `).all(...preNsParams) as Array<{ namespace: string; count: number }>;
+
+  return { total: totalRow.count, alerts, counts: { byStatus, byLevel, byHost, byNamespace, byMuted } };
 }
 
 const _dashboardCache: { data: any; key: string | null; db: Database.Database | null; time: number } = { data: null, key: null, db: null, time: 0 };
