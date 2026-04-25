@@ -4,13 +4,14 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
   ingestPvs: (db: Database.Database, clusterId: string, pvs: any[]) => void;
   ingestPvcs: (db: Database.Database, clusterId: string, pvcs: any[]) => void;
   ingestEvents: (db: Database.Database, clusterId: string, events: any[]) => void;
+  ingestIngresses: (db: Database.Database, clusterId: string, ingresses: any[]) => void;
   ingestNodeConditions: (db: Database.Database, hostId: string, conditions: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
   upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
@@ -183,6 +184,11 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         else logger.info('mqtt', 'Subscribed to insightd/+/events');
       });
 
+      client!.subscribe('insightd/+/ingresses', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to ingresses topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/ingresses');
+      });
+
       client!.subscribe('insightd/+/logs/response', { qos: 1 }, (err) => {
         if (err) logger.error('mqtt', 'Failed to subscribe to logs response topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
@@ -217,9 +223,10 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         // handlers unwrap.
         if (hostId.startsWith('_cluster_')) {
           const clusterId = hostId.slice('_cluster_'.length);
-          if (type === 'pvs')    { handlePvs(db, clusterId, payload); return; }
-          if (type === 'pvcs')   { handlePvcs(db, clusterId, payload); return; }
-          if (type === 'events') { handleEvents(db, clusterId, payload); return; }
+          if (type === 'pvs')       { handlePvs(db, clusterId, payload); return; }
+          if (type === 'pvcs')      { handlePvcs(db, clusterId, payload); return; }
+          if (type === 'events')    { handleEvents(db, clusterId, payload); return; }
+          if (type === 'ingresses') { handleIngresses(db, clusterId, payload); return; }
         }
 
         if (type === 'collection') {
@@ -466,6 +473,36 @@ function handlePvcs(db: Database.Database, clusterId: string, payload: PvcPayloa
   }));
   ingestPvcs(db, clusterId, pvcs);
   logger.info('mqtt', `Ingested ${pvcs.length} PVCs for cluster ${clusterId}`);
+}
+
+interface IngressesPayload {
+  items?: Array<{
+    namespace: string;
+    name: string;
+    ingress_class?: string | null;
+    hosts: string;
+    paths: string;
+    tls_hosts?: string | null;
+    external_ip?: string | null;
+    created_at?: string | null;
+    labels?: string | null;
+  }>;
+}
+
+function handleIngresses(db: Database.Database, clusterId: string, payload: IngressesPayload): void {
+  const ingresses = (payload.items || []).map(i => ({
+    namespace: i.namespace,
+    name: i.name,
+    ingressClass: i.ingress_class ?? null,
+    hosts: i.hosts,
+    paths: i.paths,
+    tlsHosts: i.tls_hosts ?? null,
+    externalIp: i.external_ip ?? null,
+    createdAt: i.created_at ?? null,
+    labels: i.labels ?? null,
+  }));
+  ingestIngresses(db, clusterId, ingresses);
+  logger.info('mqtt', `Ingested ${ingresses.length} ingresses for cluster ${clusterId}`);
 }
 
 function handleEvents(db: Database.Database, clusterId: string, payload: EventsPayload): void {

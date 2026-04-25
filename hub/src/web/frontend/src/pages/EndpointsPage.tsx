@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { api } from '@/lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import type { EndpointSummary } from '@/types/api';
+import type { DiscoveredIngress, EndpointSummary } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { StatusDot } from '@/components/StatusDot';
@@ -87,6 +87,11 @@ export function EndpointsPage() {
     queryFn: () => api<EndpointSummary[]>('/endpoints'),
     refetchInterval: 30_000,
   });
+  const { data: discovered } = useQuery({
+    queryKey: queryKeys.ingresses(),
+    queryFn: () => api<DiscoveredIngress[]>('/ingresses'),
+    refetchInterval: 60_000,
+  });
 
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -117,6 +122,10 @@ export function EndpointsPage() {
       >
         Endpoints
       </PageTitle>
+
+      {discovered && discovered.length > 0 && (
+        <DiscoveredIngressesCard ingresses={discovered} />
+      )}
 
       {!endpoints ? (
         <LoadingState />
@@ -180,5 +189,83 @@ function EndpointRow({ endpoint: ep }: { endpoint: EndpointSummary }) {
         </div>
       </Link>
     </li>
+  );
+}
+
+function DiscoveredIngressesCard({ ingresses }: { ingresses: DiscoveredIngress[] }) {
+  const { isAuthenticated, token } = useAuth();
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  const monitor = useMutation({
+    mutationFn: (ingressId: number) =>
+      apiAuth<{ id: number | string; url: string; name: string }>(
+        'POST', `/endpoints/from-ingress/${ingressId}`, {}, token,
+      ),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.endpoints() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.ingresses() });
+      navigate(`/endpoints/${created.id}`);
+    },
+  });
+
+  const dismiss = useMutation({
+    mutationFn: (ingressId: number) =>
+      apiAuth<{ dismissed: boolean }>('POST', `/ingresses/${ingressId}/dismiss`, {}, token),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.ingresses() }),
+  });
+
+  return (
+    <Card title="Discovered ingresses">
+      <p className="mb-3 text-xs text-muted">Kubernetes ingresses surfaced by your cluster — promote any to a monitored endpoint, or dismiss the ones you don't care about.</p>
+      <ul className="divide-y divide-border-light">
+        {ingresses.map(ing => {
+          const primary = ing.hosts[0] ?? ing.name;
+          const pendingMonitor = monitor.isPending && monitor.variables === ing.id;
+          const pendingDismiss = dismiss.isPending && dismiss.variables === ing.id;
+          return (
+            <li
+              key={ing.id}
+              className="grid grid-cols-[1fr_auto] items-center gap-4 px-3 py-3"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Badge text={ing.namespace} color="gray" />
+                  <span className="truncate text-sm font-semibold text-fg">{primary}</span>
+                  {ing.tlsHosts.includes(primary) && <Badge text="tls" color="green" />}
+                  {ing.ingressClass && <span className="font-mono text-[10px] text-muted">{ing.ingressClass}</span>}
+                </div>
+                <div className="mt-0.5 truncate font-mono text-xs text-muted">{ing.defaultUrl}</div>
+              </div>
+              <div className="flex items-center gap-2 justify-self-end">
+                {isAuthenticated ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={pendingMonitor || pendingDismiss}
+                      onClick={() => monitor.mutate(ing.id)}
+                      className="rounded border border-info/30 bg-info/10 px-2 py-1 text-xs font-medium text-info hover:bg-info/15 disabled:opacity-50"
+                    >
+                      {pendingMonitor ? '…' : 'monitor'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pendingMonitor || pendingDismiss}
+                      onClick={() => dismiss.mutate(ing.id)}
+                      className="rounded border border-border px-2 py-1 text-xs font-medium text-muted hover:bg-bg-secondary hover:text-fg disabled:opacity-50"
+                      title="Hide this ingress from the discovered list"
+                    >
+                      {pendingDismiss ? '…' : 'dismiss'}
+                    </button>
+                  </>
+                ) : (
+                  <span className="text-xs text-muted">log in to monitor</span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

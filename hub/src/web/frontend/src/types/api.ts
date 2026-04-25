@@ -584,6 +584,28 @@ export interface EndpointSummary extends Endpoint {
   recentChecks: { is_up: number; response_time_ms: number | null }[];
 }
 
+export interface DiscoveredIngress {
+  id: number;
+  clusterId: string;
+  namespace: string;
+  name: string;
+  ingressClass: string | null;
+  hosts: string[];
+  paths: Array<{
+    host: string;
+    path: string;
+    pathType: string | null;
+    serviceName: string | null;
+    servicePort: number | string | null;
+  }>;
+  tlsHosts: string[];
+  externalIp: string | null;
+  createdAt: string | null;
+  observedAt: string;
+  defaultUrl: string;
+  defaultName: string;
+}
+
 export interface EndpointDetail extends Endpoint {
   uptimePercent24h: number | null;
   uptimePercent7d: number | null;
