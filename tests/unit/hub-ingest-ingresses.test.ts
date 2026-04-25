@@ -44,8 +44,10 @@ describe('ingestIngresses', () => {
     ingestIngresses(db, 'c1', [seedIng('default', 'app', 'app.example.com', true)]);
     const rows = db.prepare('SELECT * FROM k8s_ingresses').all() as IngressRow[];
     assert.equal(rows.length, 1, 'no duplicate row on re-upsert');
-    assert.match(rows[0]!.hosts, /app\.example\.com/);
-    assert.match(rows[0]!.tls_hosts ?? '', /app\.example\.com/);
+    const hosts = JSON.parse(rows[0]!.hosts) as string[];
+    const tlsHosts = JSON.parse(rows[0]!.tls_hosts ?? '[]') as string[];
+    assert.deepEqual(hosts, ['app.example.com']);
+    assert.deepEqual(tlsHosts, ['app.example.com']);
   });
 
   it('stamps removed_at on rows missing from a later batch', async () => {
