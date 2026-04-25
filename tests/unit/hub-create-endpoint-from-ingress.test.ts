@@ -2,7 +2,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const { createTestDb } = require('../helpers/db');
 const { ingestIngresses } = require('../../hub/src/ingest');
-const { createEndpointFromIngress, getDiscoveredIngresses } = require('../../hub/src/http-monitor/queries');
+const { createEndpointFromIngress, getDiscoveredIngresses, dismissIngress, undismissIngress } = require('../../hub/src/http-monitor/queries');
 
 function seedIng(opts: { namespace: string; name: string; host: string; tls?: boolean; pathOverride?: string | null }) {
   const path = opts.pathOverride ?? '/';
@@ -93,28 +93,55 @@ describe('getDiscoveredIngresses', () => {
   beforeEach(() => { db = createTestDb(); });
   afterEach(() => { db.close(); });
 
-  it('marks monitoredEndpointId after promotion + hides removed ingresses', async () => {
+  it('hides ingresses that have been promoted to monitored endpoints', async () => {
+    ingestIngresses(db, 'c1', [
+      seedIng({ namespace: 'default', name: 'a', host: 'a.local' }),
+      seedIng({ namespace: 'default', name: 'b', host: 'b.local' }),
+    ]);
+    let list = getDiscoveredIngresses(db);
+    assert.equal(list.length, 2, 'both visible before promotion');
+
+    const idA = getIngressId(db, 'default', 'a');
+    createEndpointFromIngress(db, idA);
+    list = getDiscoveredIngresses(db);
+    assert.equal(list.length, 1, 'monitored ingress drops off the discovered list');
+    assert.equal(list[0].name, 'b');
+  });
+
+  it('hides ingresses that have been dismissed; un-dismissing brings them back', () => {
     ingestIngresses(db, 'c1', [
       seedIng({ namespace: 'default', name: 'a', host: 'a.local' }),
       seedIng({ namespace: 'default', name: 'b', host: 'b.local' }),
     ]);
     const idA = getIngressId(db, 'default', 'a');
-    createEndpointFromIngress(db, idA);
+    const r = dismissIngress(db, idA);
+    assert.equal(r.dismissed, true);
 
     let list = getDiscoveredIngresses(db);
-    assert.equal(list.length, 2);
-    const a = list.find((x: any) => x.name === 'a');
-    const b = list.find((x: any) => x.name === 'b');
-    assert.equal(typeof a.monitoredEndpointId, 'number');
-    assert.equal(b.monitoredEndpointId, null);
+    assert.equal(list.length, 1);
+    assert.equal(list[0].name, 'b');
 
-    // Wait so the next ingest's batchAt is strictly newer than these rows'
-    // observed_at — otherwise the stamp-removed UPDATE no-ops.
-    await new Promise(r => setTimeout(r, 5));
-    // Remove 'b' from cluster — it should fall out of the discovered list.
-    ingestIngresses(db, 'c1', [seedIng({ namespace: 'default', name: 'a', host: 'a.local' })]);
+    // Undismiss restores the row.
+    const u = undismissIngress(db, idA);
+    assert.equal(u.undismissed, true);
     list = getDiscoveredIngresses(db);
+    assert.equal(list.length, 2);
+  });
+
+  it('hides ingresses that have been removed from the cluster', async () => {
+    ingestIngresses(db, 'c1', [
+      seedIng({ namespace: 'default', name: 'a', host: 'a.local' }),
+      seedIng({ namespace: 'default', name: 'b', host: 'b.local' }),
+    ]);
+    await new Promise(r => setTimeout(r, 5));
+    ingestIngresses(db, 'c1', [seedIng({ namespace: 'default', name: 'a', host: 'a.local' })]);
+    const list = getDiscoveredIngresses(db);
     assert.equal(list.length, 1);
     assert.equal(list[0].name, 'a');
+  });
+
+  it('dismissIngress on an unknown id is a no-op', () => {
+    const r = dismissIngress(db, 999);
+    assert.equal(r.dismissed, false);
   });
 });

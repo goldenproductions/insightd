@@ -602,7 +602,6 @@ export interface DiscoveredIngress {
   externalIp: string | null;
   createdAt: string | null;
   observedAt: string;
-  monitoredEndpointId: number | null;
   defaultUrl: string;
   defaultName: string;
 }

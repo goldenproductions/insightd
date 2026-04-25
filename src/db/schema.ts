@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 37;
+const SCHEMA_VERSION = 38;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -218,6 +218,7 @@ function bootstrap(db: Database.Database): void {
       labels          TEXT,
       observed_at     TEXT NOT NULL DEFAULT (datetime('now')),
       removed_at      TEXT,
+      dismissed_at    TEXT,
       UNIQUE(cluster_id, namespace, name)
     );
 
@@ -863,12 +864,16 @@ function migrate(db: Database.Database, fromVersion: number): void {
         labels          TEXT,
         observed_at     TEXT NOT NULL DEFAULT (datetime('now')),
         removed_at      TEXT,
+        dismissed_at    TEXT,
         UNIQUE(cluster_id, namespace, name)
       );
     `);
     try {
       db.exec('ALTER TABLE http_endpoints ADD COLUMN source_ingress_id INTEGER REFERENCES k8s_ingresses(id) ON DELETE SET NULL');
     } catch { /* already exists */ }
+  }
+  if (fromVersion < 38) {
+    try { db.exec('ALTER TABLE k8s_ingresses ADD COLUMN dismissed_at TEXT'); } catch { /* already exists */ }
   }
 }
 

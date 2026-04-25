@@ -85,6 +85,8 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   // "from-ingress" as an integer endpoint id.
   router.add('POST', '/api/endpoints/from-ingress/:ingressId', handlers.handleCreateEndpointFromIngress);
   router.add('GET', '/api/ingresses', handlers.handleGetDiscoveredIngresses);
+  router.add('POST', '/api/ingresses/:ingressId/dismiss', handlers.handleDismissIngress);
+  router.add('DELETE', '/api/ingresses/:ingressId/dismiss', handlers.handleUndismissIngress);
   router.add('GET', '/api/endpoints/:endpointId/checks', handlers.handleEndpointChecks);
   router.add('GET', '/api/endpoints/:endpointId', handlers.handleGetEndpoint);
   router.add('PUT', '/api/endpoints/:endpointId', handlers.handleUpdateEndpoint);

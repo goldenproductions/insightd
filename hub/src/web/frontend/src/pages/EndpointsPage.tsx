@@ -209,13 +209,20 @@ function DiscoveredIngressesCard({ ingresses }: { ingresses: DiscoveredIngress[]
     },
   });
 
+  const dismiss = useMutation({
+    mutationFn: (ingressId: number) =>
+      apiAuth<{ dismissed: boolean }>('POST', `/ingresses/${ingressId}/dismiss`, {}, token),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.ingresses() }),
+  });
+
   return (
     <Card title="Discovered ingresses">
-      <p className="mb-3 text-xs text-muted">Kubernetes ingresses surfaced by your cluster — promote any to a monitored endpoint.</p>
+      <p className="mb-3 text-xs text-muted">Kubernetes ingresses surfaced by your cluster — promote any to a monitored endpoint, or dismiss the ones you don't care about.</p>
       <ul className="divide-y divide-border-light">
         {ingresses.map(ing => {
-          const monitored = ing.monitoredEndpointId != null;
           const primary = ing.hosts[0] ?? ing.name;
+          const pendingMonitor = monitor.isPending && monitor.variables === ing.id;
+          const pendingDismiss = dismiss.isPending && dismiss.variables === ing.id;
           return (
             <li
               key={ing.id}
@@ -230,23 +237,27 @@ function DiscoveredIngressesCard({ ingresses }: { ingresses: DiscoveredIngress[]
                 </div>
                 <div className="mt-0.5 truncate font-mono text-xs text-muted">{ing.defaultUrl}</div>
               </div>
-              <div className="justify-self-end">
-                {monitored ? (
-                  <Link
-                    to={`/endpoints/${ing.monitoredEndpointId}`}
-                    className="rounded border border-success/30 bg-success/10 px-2 py-1 text-xs font-medium text-success hover:bg-success/15"
-                  >
-                    monitored
-                  </Link>
-                ) : isAuthenticated ? (
-                  <button
-                    type="button"
-                    disabled={monitor.isPending && monitor.variables === ing.id}
-                    onClick={() => monitor.mutate(ing.id)}
-                    className="rounded border border-info/30 bg-info/10 px-2 py-1 text-xs font-medium text-info hover:bg-info/15 disabled:opacity-50"
-                  >
-                    {monitor.isPending && monitor.variables === ing.id ? '…' : 'monitor'}
-                  </button>
+              <div className="flex items-center gap-2 justify-self-end">
+                {isAuthenticated ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={pendingMonitor || pendingDismiss}
+                      onClick={() => monitor.mutate(ing.id)}
+                      className="rounded border border-info/30 bg-info/10 px-2 py-1 text-xs font-medium text-info hover:bg-info/15 disabled:opacity-50"
+                    >
+                      {pendingMonitor ? '…' : 'monitor'}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={pendingMonitor || pendingDismiss}
+                      onClick={() => dismiss.mutate(ing.id)}
+                      className="rounded border border-border px-2 py-1 text-xs font-medium text-muted hover:bg-bg-secondary hover:text-fg disabled:opacity-50"
+                      title="Hide this ingress from the discovered list"
+                    >
+                      {pendingDismiss ? '…' : 'dismiss'}
+                    </button>
+                  </>
                 ) : (
                   <span className="text-xs text-muted">log in to monitor</span>
                 )}

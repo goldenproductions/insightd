@@ -256,7 +256,6 @@ interface IngressRow {
   external_ip: string | null;
   created_at: string | null;
   observed_at: string;
-  monitored_endpoint_id: number | null;
 }
 
 interface DiscoveredIngress {
@@ -277,7 +276,6 @@ interface DiscoveredIngress {
   externalIp: string | null;
   createdAt: string | null;
   observedAt: string;
-  monitoredEndpointId: number | null;
   defaultUrl: string;
   defaultName: string;
 }
@@ -300,13 +298,22 @@ function parseJsonArray<T>(s: string | null | undefined, fallback: T[]): T[] {
   } catch { return fallback; }
 }
 
+/**
+ * Returns the list of ingresses the user hasn't decided about yet — present
+ * in the cluster (`removed_at IS NULL`), not yet dismissed, not yet promoted
+ * to a monitored endpoint. Once a row is monitored or dismissed it drops off
+ * the list; the card on the Endpoints page hides itself entirely when this
+ * list is empty.
+ */
 function getDiscoveredIngresses(db: Database.Database, clusterId?: string): DiscoveredIngress[] {
   const rows = db.prepare(`
     SELECT i.id, i.cluster_id, i.namespace, i.name, i.ingress_class,
-           i.hosts, i.paths, i.tls_hosts, i.external_ip, i.created_at, i.observed_at,
-           (SELECT e.id FROM http_endpoints e WHERE e.source_ingress_id = i.id LIMIT 1) AS monitored_endpoint_id
+           i.hosts, i.paths, i.tls_hosts, i.external_ip, i.created_at, i.observed_at
     FROM k8s_ingresses i
+    LEFT JOIN http_endpoints e ON e.source_ingress_id = i.id
     WHERE i.removed_at IS NULL
+      AND i.dismissed_at IS NULL
+      AND e.id IS NULL
     ${clusterId ? 'AND i.cluster_id = ?' : ''}
     ORDER BY i.namespace, i.name
   `).all(...(clusterId ? [clusterId] : [])) as IngressRow[];
@@ -329,11 +336,28 @@ function getDiscoveredIngresses(db: Database.Database, clusterId?: string): Disc
       externalIp: r.external_ip,
       createdAt: r.created_at,
       observedAt: r.observed_at,
-      monitoredEndpointId: r.monitored_endpoint_id,
       defaultUrl: primary ? defaultUrlFor(primary, tlsHosts, firstNonRoot) : '',
       defaultName: primary ? defaultNameFor(r.namespace, primary) : `${r.namespace}/${r.name}`,
     };
   });
+}
+
+/**
+ * Mark an ingress as dismissed so it stops showing up in the discovered
+ * list. Idempotent. Reversible via undismissIngress. Dismissal is sticky
+ * across publisher cycles — the ingress reappears only if it's deleted in
+ * the cluster (removed_at stamped) and recreated, which clears the row's
+ * dismissed_at on a separate code path? No — re-creation reuses the same
+ * id, so the dismissal persists. Users undo via the API.
+ */
+function dismissIngress(db: Database.Database, ingressId: number): { dismissed: boolean } {
+  const r = db.prepare(`UPDATE k8s_ingresses SET dismissed_at = datetime('now') WHERE id = ? AND removed_at IS NULL`).run(ingressId);
+  return { dismissed: r.changes > 0 };
+}
+
+function undismissIngress(db: Database.Database, ingressId: number): { undismissed: boolean } {
+  const r = db.prepare(`UPDATE k8s_ingresses SET dismissed_at = NULL WHERE id = ?`).run(ingressId);
+  return { undismissed: r.changes > 0 };
 }
 
 interface CreateFromIngressResult {
@@ -403,5 +427,5 @@ module.exports = {
   getEndpoints, getEndpoint, createEndpoint, updateEndpoint, deleteEndpoint,
   getChecks, insertCheck, getLastCheck, getEndpointSummary, getEndpointsSummary,
   getEndpointsForDigest, getLastNChecks,
-  getDiscoveredIngresses, createEndpointFromIngress,
+  getDiscoveredIngresses, createEndpointFromIngress, dismissIngress, undismissIngress,
 };

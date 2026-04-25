@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 37;
+const SCHEMA_VERSION = 38;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -227,6 +227,7 @@ function bootstrap(db: Database.Database): void {
       labels          TEXT,
       observed_at     TEXT NOT NULL DEFAULT (datetime('now')),
       removed_at      TEXT,
+      dismissed_at    TEXT,
       UNIQUE(cluster_id, namespace, name)
     );
     CREATE INDEX IF NOT EXISTS idx_k8s_ingresses_cluster
@@ -890,6 +891,7 @@ function migrate(db: Database.Database, fromVersion: number): void {
         labels          TEXT,
         observed_at     TEXT NOT NULL DEFAULT (datetime('now')),
         removed_at      TEXT,
+        dismissed_at    TEXT,
         UNIQUE(cluster_id, namespace, name)
       );
       CREATE INDEX IF NOT EXISTS idx_k8s_ingresses_cluster
@@ -898,6 +900,12 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try {
       db.exec('ALTER TABLE http_endpoints ADD COLUMN source_ingress_id INTEGER REFERENCES k8s_ingresses(id) ON DELETE SET NULL');
     } catch { /* already exists */ }
+  }
+  if (fromVersion < 38) {
+    // dismissed_at hides an ingress from the Endpoints page Discovered card
+    // without monitoring it. Runs as a separate migration so v37 installs
+    // (which already have k8s_ingresses but no dismissed_at) are upgraded.
+    try { db.exec('ALTER TABLE k8s_ingresses ADD COLUMN dismissed_at TEXT'); } catch { /* already exists */ }
   }
 }
 
