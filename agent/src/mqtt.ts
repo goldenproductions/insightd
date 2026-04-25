@@ -524,6 +524,58 @@ function publishEvents(clusterId: string, publisherHostId: string, events: Event
   });
 }
 
+interface IngressPayloadItem {
+  namespace: string;
+  name: string;
+  ingressClass: string | null;
+  hosts: string[];
+  paths: Array<{
+    host: string;
+    path: string;
+    pathType: string | null;
+    serviceName: string | null;
+    servicePort: number | string | null;
+  }>;
+  tlsHosts: string[];
+  externalIp: string | null;
+  createdAt: string | null;
+  labels: Record<string, string>;
+}
+
+function publishIngresses(clusterId: string, publisherHostId: string, ingresses: IngressPayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/ingresses`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: ingresses.map(i => ({
+      namespace: i.namespace,
+      name: i.name,
+      ingress_class: i.ingressClass,
+      hosts: JSON.stringify(i.hosts),
+      paths: JSON.stringify(i.paths),
+      tls_hosts: JSON.stringify(i.tlsHosts),
+      external_ip: i.externalIp,
+      created_at: i.createdAt,
+      labels: JSON.stringify(i.labels || {}),
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${ingresses.length} ingresses for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -557,4 +609,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, disconnect };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, disconnect };

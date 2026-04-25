@@ -386,6 +386,74 @@ function ingestEvents(db: Database.Database, clusterId: string, events: EventRec
   logger.info('ingest', `Upserted ${events.length} k8s events for cluster ${clusterId}`);
 }
 
+interface IngressRecord {
+  namespace: string;
+  name: string;
+  ingressClass?: string | null;
+  hosts: string | string[];
+  paths: string | unknown[];
+  tlsHosts?: string | string[] | null;
+  externalIp?: string | null;
+  createdAt?: string | null;
+  labels?: string | Record<string, string> | null;
+}
+
+/**
+ * Registry-style ingest for k8s ingresses. Upsert by (cluster_id, namespace,
+ * name) — the stable identity. After upserting a batch, stamp `removed_at`
+ * on rows in this cluster_id whose `observed_at` is older than the batch
+ * start time. Mirrors the `containers` registry pattern from PR #150 so that
+ * promotion to an http_endpoint via `source_ingress_id` survives every
+ * publisher cycle.
+ */
+function ingestIngresses(db: Database.Database, clusterId: string, ingresses: IngressRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO k8s_ingresses
+      (cluster_id, namespace, name, ingress_class, hosts, paths, tls_hosts,
+       external_ip, created_at, labels, observed_at, removed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(cluster_id, namespace, name) DO UPDATE SET
+      ingress_class = excluded.ingress_class,
+      hosts         = excluded.hosts,
+      paths         = excluded.paths,
+      tls_hosts     = excluded.tls_hosts,
+      external_ip   = excluded.external_ip,
+      created_at    = excluded.created_at,
+      labels        = excluded.labels,
+      observed_at   = excluded.observed_at,
+      removed_at    = NULL
+  `);
+  const stampRemoved = db.prepare(`
+    UPDATE k8s_ingresses
+       SET removed_at = ?
+     WHERE cluster_id = ? AND removed_at IS NULL AND observed_at < ?
+  `);
+
+  const stringify = (v: unknown): string => typeof v === 'string' ? v : JSON.stringify(v ?? []);
+
+  const tx = db.transaction((items: IngressRecord[]) => {
+    for (const i of items) {
+      upsert.run(
+        clusterId,
+        i.namespace,
+        i.name,
+        i.ingressClass ?? null,
+        stringify(i.hosts),
+        stringify(i.paths),
+        i.tlsHosts == null ? null : stringify(i.tlsHosts),
+        i.externalIp ?? null,
+        i.createdAt ?? null,
+        i.labels == null ? null : (typeof i.labels === 'string' ? i.labels : JSON.stringify(i.labels)),
+        batchAt,
+      );
+    }
+    stampRemoved.run(batchAt, clusterId, batchAt);
+  });
+  tx(ingresses);
+  logger.info('ingest', `Upserted ${ingresses.length} ingresses for cluster ${clusterId}`);
+}
+
 interface NodeConditionRecord {
   type: string;
   status: 'True' | 'False' | 'Unknown';
@@ -422,4 +490,4 @@ function ingestNodeConditions(db: Database.Database, hostId: string, conditions:
   upsertMany(conditions);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };

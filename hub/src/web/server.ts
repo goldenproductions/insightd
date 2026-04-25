@@ -80,6 +80,11 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('PUT', '/api/settings', handlers.handlePutSettings);
   router.add('GET', '/api/endpoints', handlers.handleGetEndpoints);
   router.add('POST', '/api/endpoints', handlers.handleCreateEndpoint);
+  // Order matters: /api/endpoints/from-ingress/:ingressId must be matched
+  // before the generic :endpointId route or the routerwill try to parse
+  // "from-ingress" as an integer endpoint id.
+  router.add('POST', '/api/endpoints/from-ingress/:ingressId', handlers.handleCreateEndpointFromIngress);
+  router.add('GET', '/api/ingresses', handlers.handleGetDiscoveredIngresses);
   router.add('GET', '/api/endpoints/:endpointId/checks', handlers.handleEndpointChecks);
   router.add('GET', '/api/endpoints/:endpointId', handlers.handleGetEndpoint);
   router.add('PUT', '/api/endpoints/:endpointId', handlers.handleUpdateEndpoint);

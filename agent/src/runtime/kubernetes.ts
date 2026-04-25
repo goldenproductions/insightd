@@ -125,6 +125,46 @@ export interface K8sEvent {
   eventTime?: string | null;
 }
 
+// ---- Ingress (cluster-scoped, leader-published) ----
+
+export interface K8sIngressBackendService {
+  name?: string;
+  port?: { number?: number; name?: string };
+}
+
+export interface K8sIngressPath {
+  path?: string;
+  pathType?: string;
+  backend?: { service?: K8sIngressBackendService };
+}
+
+export interface K8sIngressRule {
+  host?: string;
+  http?: { paths?: K8sIngressPath[] };
+}
+
+export interface K8sIngressTls {
+  hosts?: string[];
+  secretName?: string;
+}
+
+export interface K8sIngressSpec {
+  ingressClassName?: string;
+  rules?: K8sIngressRule[];
+  tls?: K8sIngressTls[];
+}
+
+export interface K8sIngressLoadBalancerEntry {
+  ip?: string;
+  hostname?: string;
+}
+
+export interface K8sIngress {
+  metadata?: K8sMeta;
+  spec?: K8sIngressSpec;
+  status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
+}
+
 export interface K8sLeaseSpec {
   holderIdentity?: string | null;
   leaseDurationSeconds?: number;
@@ -303,6 +343,15 @@ export class K8sClient {
   async listEvents(typeFilter?: 'Warning' | 'Normal'): Promise<K8sList<K8sEvent>> {
     const qs = typeFilter ? `?fieldSelector=${encodeURIComponent(`type=${typeFilter}`)}` : '';
     return this.get<K8sList<K8sEvent>>(`/api/v1/events${qs}`);
+  }
+
+  /**
+   * List cluster-wide Ingresses. The leader-elected publisher polls these on
+   * the same cadence as PV/PVC/events. Only `networking.k8s.io/v1` — older
+   * `extensions/v1beta1` was removed in k8s 1.22.
+   */
+  async listIngresses(): Promise<K8sList<K8sIngress>> {
+    return this.get<K8sList<K8sIngress>>('/apis/networking.k8s.io/v1/ingresses');
   }
 
   /** Returns null on 404 (lease doesn't exist yet). */

@@ -242,6 +242,156 @@ function getEndpointsForDigest(db: Database.Database): EndpointDigest[] {
   });
 }
 
+// ---- Ingress auto-discovery ----
+
+interface IngressRow {
+  id: number;
+  cluster_id: string;
+  namespace: string;
+  name: string;
+  ingress_class: string | null;
+  hosts: string;
+  paths: string;
+  tls_hosts: string | null;
+  external_ip: string | null;
+  created_at: string | null;
+  observed_at: string;
+  monitored_endpoint_id: number | null;
+}
+
+interface DiscoveredIngress {
+  id: number;
+  clusterId: string;
+  namespace: string;
+  name: string;
+  ingressClass: string | null;
+  hosts: string[];
+  paths: Array<{
+    host: string;
+    path: string;
+    pathType: string | null;
+    serviceName: string | null;
+    servicePort: number | string | null;
+  }>;
+  tlsHosts: string[];
+  externalIp: string | null;
+  createdAt: string | null;
+  observedAt: string;
+  monitoredEndpointId: number | null;
+  defaultUrl: string;
+  defaultName: string;
+}
+
+function defaultUrlFor(host: string, tlsHosts: string[], firstNonRootPath: string | null): string {
+  const scheme = tlsHosts.includes(host) ? 'https' : 'http';
+  if (firstNonRootPath && firstNonRootPath !== '/') return `${scheme}://${host}${firstNonRootPath}`;
+  return `${scheme}://${host}`;
+}
+
+function defaultNameFor(namespace: string, host: string): string {
+  return `${namespace}/${host}`;
+}
+
+function parseJsonArray<T>(s: string | null | undefined, fallback: T[]): T[] {
+  if (!s) return fallback;
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? (v as T[]) : fallback;
+  } catch { return fallback; }
+}
+
+function getDiscoveredIngresses(db: Database.Database, clusterId?: string): DiscoveredIngress[] {
+  const rows = db.prepare(`
+    SELECT i.id, i.cluster_id, i.namespace, i.name, i.ingress_class,
+           i.hosts, i.paths, i.tls_hosts, i.external_ip, i.created_at, i.observed_at,
+           (SELECT e.id FROM http_endpoints e WHERE e.source_ingress_id = i.id LIMIT 1) AS monitored_endpoint_id
+    FROM k8s_ingresses i
+    WHERE i.removed_at IS NULL
+    ${clusterId ? 'AND i.cluster_id = ?' : ''}
+    ORDER BY i.namespace, i.name
+  `).all(...(clusterId ? [clusterId] : [])) as IngressRow[];
+
+  return rows.map(r => {
+    const hosts = parseJsonArray<string>(r.hosts, []);
+    const paths = parseJsonArray<{ host: string; path: string; pathType: string | null; serviceName: string | null; servicePort: number | string | null }>(r.paths, []);
+    const tlsHosts = parseJsonArray<string>(r.tls_hosts, []);
+    const primary = hosts[0] ?? '';
+    const firstNonRoot = paths.find(p => p.host === primary && p.path && p.path !== '/')?.path ?? null;
+    return {
+      id: r.id,
+      clusterId: r.cluster_id,
+      namespace: r.namespace,
+      name: r.name,
+      ingressClass: r.ingress_class,
+      hosts,
+      paths,
+      tlsHosts,
+      externalIp: r.external_ip,
+      createdAt: r.created_at,
+      observedAt: r.observed_at,
+      monitoredEndpointId: r.monitored_endpoint_id,
+      defaultUrl: primary ? defaultUrlFor(primary, tlsHosts, firstNonRoot) : '',
+      defaultName: primary ? defaultNameFor(r.namespace, primary) : `${r.namespace}/${r.name}`,
+    };
+  });
+}
+
+interface CreateFromIngressResult {
+  id: number | bigint;
+  url: string;
+  name: string;
+}
+
+/**
+ * Promote a discovered ingress to a polling http_endpoint. Idempotent at the
+ * "already monitored" level — throws { code: 'ALREADY_MONITORED', endpointId }
+ * if a row already exists with this `source_ingress_id`. Name collisions get
+ * a -2/-3 suffix.
+ */
+function createEndpointFromIngress(db: Database.Database, ingressId: number): CreateFromIngressResult {
+  const row = db.prepare('SELECT * FROM k8s_ingresses WHERE id = ? AND removed_at IS NULL').get(ingressId) as IngressRow | undefined;
+  if (!row) {
+    const err = new Error('Ingress not found') as Error & { code?: string };
+    err.code = 'NOT_FOUND';
+    throw err;
+  }
+  const existing = db.prepare('SELECT id FROM http_endpoints WHERE source_ingress_id = ?').get(ingressId) as { id: number } | undefined;
+  if (existing) {
+    const err = new Error('Ingress already monitored') as Error & { code?: string; endpointId?: number };
+    err.code = 'ALREADY_MONITORED';
+    err.endpointId = existing.id;
+    throw err;
+  }
+
+  const hosts = parseJsonArray<string>(row.hosts, []);
+  const paths = parseJsonArray<{ host: string; path: string; pathType: string | null; serviceName: string | null; servicePort: number | string | null }>(row.paths, []);
+  const tlsHosts = parseJsonArray<string>(row.tls_hosts, []);
+  const primary = hosts[0];
+  if (!primary) {
+    const err = new Error('Ingress has no host — cannot derive URL') as Error & { code?: string };
+    err.code = 'NO_HOST';
+    throw err;
+  }
+  const firstNonRoot = paths.find(p => p.host === primary && p.path && p.path !== '/')?.path ?? null;
+  const url = defaultUrlFor(primary, tlsHosts, firstNonRoot);
+  const baseName = defaultNameFor(row.namespace, primary);
+
+  // Resolve name collisions: append -2, -3, ...
+  let name = baseName;
+  let suffix = 2;
+  const nameExists = db.prepare('SELECT 1 FROM http_endpoints WHERE name = ?');
+  while (nameExists.get(name)) {
+    name = `${baseName}-${suffix++}`;
+  }
+
+  const result = db.prepare(`
+    INSERT INTO http_endpoints
+      (name, url, method, expected_status, interval_seconds, timeout_ms, headers, enabled, source_ingress_id)
+    VALUES (?, ?, 'GET', 200, 60, 10000, NULL, 1, ?)
+  `).run(name, url, ingressId);
+  return { id: result.lastInsertRowid, url, name };
+}
+
 function getLastNChecks(db: Database.Database, endpointId: number, n: number): { is_up: number }[] {
   return db.prepare(`
     SELECT is_up FROM http_checks
@@ -253,4 +403,5 @@ module.exports = {
   getEndpoints, getEndpoint, createEndpoint, updateEndpoint, deleteEndpoint,
   getChecks, insertCheck, getLastCheck, getEndpointSummary, getEndpointsSummary,
   getEndpointsForDigest, getLastNChecks,
+  getDiscoveredIngresses, createEndpointFromIngress,
 };

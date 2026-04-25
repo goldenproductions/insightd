@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
-import { api } from '@/lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
+import { api, apiAuth } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
-import type { EndpointSummary } from '@/types/api';
+import type { DiscoveredIngress, EndpointSummary } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { StatusDot } from '@/components/StatusDot';
@@ -87,6 +87,11 @@ export function EndpointsPage() {
     queryFn: () => api<EndpointSummary[]>('/endpoints'),
     refetchInterval: 30_000,
   });
+  const { data: discovered } = useQuery({
+    queryKey: queryKeys.ingresses(),
+    queryFn: () => api<DiscoveredIngress[]>('/ingresses'),
+    refetchInterval: 60_000,
+  });
 
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -117,6 +122,10 @@ export function EndpointsPage() {
       >
         Endpoints
       </PageTitle>
+
+      {discovered && discovered.length > 0 && (
+        <DiscoveredIngressesCard ingresses={discovered} />
+      )}
 
       {!endpoints ? (
         <LoadingState />
@@ -180,5 +189,72 @@ function EndpointRow({ endpoint: ep }: { endpoint: EndpointSummary }) {
         </div>
       </Link>
     </li>
+  );
+}
+
+function DiscoveredIngressesCard({ ingresses }: { ingresses: DiscoveredIngress[] }) {
+  const { isAuthenticated, token } = useAuth();
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  const monitor = useMutation({
+    mutationFn: (ingressId: number) =>
+      apiAuth<{ id: number | string; url: string; name: string }>(
+        'POST', `/endpoints/from-ingress/${ingressId}`, {}, token,
+      ),
+    onSuccess: (created) => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.endpoints() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.ingresses() });
+      navigate(`/endpoints/${created.id}`);
+    },
+  });
+
+  return (
+    <Card title="Discovered ingresses">
+      <p className="mb-3 text-xs text-muted">Kubernetes ingresses surfaced by your cluster — promote any to a monitored endpoint.</p>
+      <ul className="divide-y divide-border-light">
+        {ingresses.map(ing => {
+          const monitored = ing.monitoredEndpointId != null;
+          const primary = ing.hosts[0] ?? ing.name;
+          return (
+            <li
+              key={ing.id}
+              className="grid grid-cols-[1fr_auto] items-center gap-4 px-3 py-3"
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Badge text={ing.namespace} color="gray" />
+                  <span className="truncate text-sm font-semibold text-fg">{primary}</span>
+                  {ing.tlsHosts.includes(primary) && <Badge text="tls" color="green" />}
+                  {ing.ingressClass && <span className="font-mono text-[10px] text-muted">{ing.ingressClass}</span>}
+                </div>
+                <div className="mt-0.5 truncate font-mono text-xs text-muted">{ing.defaultUrl}</div>
+              </div>
+              <div className="justify-self-end">
+                {monitored ? (
+                  <Link
+                    to={`/endpoints/${ing.monitoredEndpointId}`}
+                    className="rounded border border-success/30 bg-success/10 px-2 py-1 text-xs font-medium text-success hover:bg-success/15"
+                  >
+                    monitored
+                  </Link>
+                ) : isAuthenticated ? (
+                  <button
+                    type="button"
+                    disabled={monitor.isPending && monitor.variables === ing.id}
+                    onClick={() => monitor.mutate(ing.id)}
+                    className="rounded border border-info/30 bg-info/10 px-2 py-1 text-xs font-medium text-info hover:bg-info/15 disabled:opacity-50"
+                  >
+                    {monitor.isPending && monitor.variables === ing.id ? '…' : 'monitor'}
+                  </button>
+                ) : (
+                  <span className="text-xs text-muted">log in to monitor</span>
+                )}
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

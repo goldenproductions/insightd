@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 36;
+const SCHEMA_VERSION = 37;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -208,6 +208,30 @@ function bootstrap(db: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_node_conditions_host_observed
       ON node_conditions (host_id, observed_at DESC);
 
+    -- Kubernetes Ingress inventory (cluster-scoped, leader-published).
+    -- Registry-style upsert by (cluster_id, namespace, name) so promotion to
+    -- an http_endpoint via source_ingress_id survives every publisher cycle.
+    -- removed_at is stamped when a publish batch lacks the row; cleared on
+    -- re-appearance (delete-then-recreate reuses the same id).
+    CREATE TABLE IF NOT EXISTS k8s_ingresses (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      cluster_id      TEXT NOT NULL,
+      namespace       TEXT NOT NULL,
+      name            TEXT NOT NULL,
+      ingress_class   TEXT,
+      hosts           TEXT NOT NULL,
+      paths           TEXT NOT NULL,
+      tls_hosts       TEXT,
+      external_ip     TEXT,
+      created_at      TEXT,
+      labels          TEXT,
+      observed_at     TEXT NOT NULL DEFAULT (datetime('now')),
+      removed_at      TEXT,
+      UNIQUE(cluster_id, namespace, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_k8s_ingresses_cluster
+      ON k8s_ingresses (cluster_id, observed_at DESC);
+
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       host_id         TEXT NOT NULL DEFAULT 'local',
@@ -258,6 +282,7 @@ function bootstrap(db: Database.Database): void {
       timeout_ms       INTEGER NOT NULL DEFAULT 10000,
       headers          TEXT,
       enabled          INTEGER NOT NULL DEFAULT 1,
+      source_ingress_id INTEGER REFERENCES k8s_ingresses(id) ON DELETE SET NULL,
       created_at       TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -845,6 +870,35 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN cpu_limit_percent REAL'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN memory_limit_mb REAL'); } catch { /* already exists */ }
   }
+  if (fromVersion < 37) {
+    // K8s Ingress inventory + optional FK on http_endpoints so manually-
+    // promoted endpoints can be traced back to the ingress that spawned
+    // them. ON DELETE SET NULL: removing the inventory row leaves the
+    // user's polling history intact; the endpoint becomes "manual".
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS k8s_ingresses (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_id      TEXT NOT NULL,
+        namespace       TEXT NOT NULL,
+        name            TEXT NOT NULL,
+        ingress_class   TEXT,
+        hosts           TEXT NOT NULL,
+        paths           TEXT NOT NULL,
+        tls_hosts       TEXT,
+        external_ip     TEXT,
+        created_at      TEXT,
+        labels          TEXT,
+        observed_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        removed_at      TEXT,
+        UNIQUE(cluster_id, namespace, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_k8s_ingresses_cluster
+        ON k8s_ingresses (cluster_id, observed_at DESC);
+    `);
+    try {
+      db.exec('ALTER TABLE http_endpoints ADD COLUMN source_ingress_id INTEGER REFERENCES k8s_ingresses(id) ON DELETE SET NULL');
+    } catch { /* already exists */ }
+  }
 }
 
 /**
@@ -874,6 +928,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const rPv  = db.prepare(`DELETE FROM pv_snapshots  WHERE collected_at < ${rawCutoff}`).run();
   const rPvc = db.prepare(`DELETE FROM pvc_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const rEv  = db.prepare(`DELETE FROM k8s_events    WHERE last_seen_at < ${rawCutoff}`).run();
+  const rIng = db.prepare(`DELETE FROM k8s_ingresses WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
   const rC = db.prepare(`DELETE FROM containers WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
   const rNc = db.prepare(`DELETE FROM node_conditions WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
@@ -892,7 +947,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
-    + rEv.changes + rNc.changes + r9.changes + r10.changes + r11.changes + r12.changes;
+    + rEv.changes + rIng.changes + rNc.changes + r9.changes + r10.changes + r11.changes + r12.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);

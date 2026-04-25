@@ -1,5 +1,5 @@
 import { parseQuantity } from '../runtime/kubernetes';
-import type { K8sClient, K8sPv, K8sPvc, K8sEvent } from '../runtime/kubernetes';
+import type { K8sClient, K8sPv, K8sPvc, K8sEvent, K8sIngress } from '../runtime/kubernetes';
 
 export interface PvInfo {
   name: string;
@@ -128,4 +128,89 @@ export function mapEvent(ev: K8sEvent): EventInfo | null {
 export async function collectEvents(client: K8sClient): Promise<EventInfo[]> {
   const list = await client.listEvents('Warning');
   return (list.items || []).map(mapEvent).filter((x): x is EventInfo => x !== null);
+}
+
+// ---- Ingresses ----
+
+export interface IngressPath {
+  host: string;
+  path: string;
+  pathType: string | null;
+  serviceName: string | null;
+  servicePort: number | string | null;
+}
+
+export interface IngressInfo {
+  namespace: string;
+  name: string;
+  ingressClass: string | null;
+  hosts: string[];
+  paths: IngressPath[];
+  tlsHosts: string[];
+  externalIp: string | null;
+  createdAt: string | null;
+  labels: Record<string, string>;
+}
+
+/**
+ * Map a k8s Ingress into our flattened shape. Returns null for ingresses
+ * with no actionable rule (no rule has a `host`) — those can't be turned
+ * into a URL without an external IP, so they're dropped at the source.
+ */
+export function mapIngress(ing: K8sIngress): IngressInfo | null {
+  const namespace = ing.metadata?.namespace;
+  const name = ing.metadata?.name;
+  if (!namespace || !name) return null;
+
+  const rules = ing.spec?.rules ?? [];
+  const hosts: string[] = [];
+  const paths: IngressPath[] = [];
+  for (const rule of rules) {
+    const host = rule.host;
+    if (!host) continue;
+    if (!hosts.includes(host)) hosts.push(host);
+    const httpPaths = rule.http?.paths ?? [];
+    if (httpPaths.length === 0) {
+      paths.push({ host, path: '/', pathType: null, serviceName: null, servicePort: null });
+      continue;
+    }
+    for (const p of httpPaths) {
+      const svc = p.backend?.service;
+      paths.push({
+        host,
+        path: p.path ?? '/',
+        pathType: p.pathType ?? null,
+        serviceName: svc?.name ?? null,
+        servicePort: svc?.port?.number ?? svc?.port?.name ?? null,
+      });
+    }
+  }
+  if (hosts.length === 0) return null;
+
+  const tlsHosts: string[] = [];
+  for (const tls of ing.spec?.tls ?? []) {
+    for (const h of tls.hosts ?? []) {
+      if (!tlsHosts.includes(h)) tlsHosts.push(h);
+    }
+  }
+
+  const lb = ing.status?.loadBalancer?.ingress?.[0];
+  const externalIp = lb?.ip ?? lb?.hostname ?? null;
+
+  return {
+    namespace,
+    name,
+    ingressClass: ing.spec?.ingressClassName ?? null,
+    hosts,
+    paths,
+    tlsHosts,
+    externalIp,
+    createdAt: ing.metadata?.creationTimestamp ?? null,
+    labels: ing.metadata?.labels ?? {},
+  };
+}
+
+export async function collectIngresses(client: K8sClient): Promise<IngressInfo[]> {
+  const list = await client.listIngresses();
+  return (list.items || []).map(mapIngress).filter((x): x is IngressInfo => x !== null);
 }

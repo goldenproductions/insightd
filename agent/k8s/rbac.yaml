@@ -35,6 +35,11 @@ rules:
   - apiGroups: [""]
     resources: ["events"]
     verbs: ["get", "list"]
+  # Cluster-scoped Ingress inventory — leader publishes to the hub for
+  # auto-discovery. Existing deployments must re-apply this manifest.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
