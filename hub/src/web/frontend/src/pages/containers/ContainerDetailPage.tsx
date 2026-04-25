@@ -308,7 +308,9 @@ export function ContainerDetailPage() {
         )}
       </div>
 
-      {data.is_stale && (
+      {/* `is_stale` is 0/1 from SQL — coerce to bool so a 0 doesn't leak into
+          the DOM as the literal "0" via &&-short-circuit. */}
+      {!!data.is_stale && (
         <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg">
           <div className="font-medium">Agent not reporting</div>
           <div className="mt-0.5 text-xs text-muted">
