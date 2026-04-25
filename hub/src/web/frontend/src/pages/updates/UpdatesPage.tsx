@@ -13,6 +13,21 @@ import { ImageUpdatesCard } from './ImageUpdatesCard';
 import type { VersionInfo, HostWithAgent, ImageUpdate } from '@/types/api';
 import { queryKeys } from '@/lib/queryKeys';
 
+/**
+ * Compare two semver-ish strings (e.g. "0.15.0" vs "0.16.0"). Returns a
+ * negative/0/positive number so the result can drop straight into Array#sort.
+ * Tolerates missing components and non-numeric tails (treated as 0).
+ */
+function compareSemver(a: string, b: string): number {
+  const pa = a.split('.').map(s => parseInt(s, 10) || 0);
+  const pb = b.split('.').map(s => parseInt(s, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const diff = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
 export function UpdatesPage() {
   const { isAuthenticated, token } = useAuth();
   const queryClient = useQueryClient();
@@ -38,6 +53,19 @@ export function UpdatesPage() {
   const checkedAt = version?.checkedAt ? new Date(version.checkedAt).toLocaleString() : null;
   const outdatedCount = (hosts || []).filter(h => latestAgent && h.agent_version && h.agent_version !== latestAgent).length;
 
+  // Pick the OLDEST agent version across the fleet — that's what determines
+  // whether anything's outdated. Includes k8s agents for an accurate signal,
+  // even though the hub can't auto-update those.
+  const agentVersions = (hosts || [])
+    .map(h => h.agent_version)
+    .filter((v): v is string => Boolean(v));
+  const lowestAgent: string | null = agentVersions.length > 0
+    ? [...agentVersions].sort(compareSemver)[0] ?? null
+    : null;
+
+  const hubAtLatest = !!latestHub && latestHub === version?.currentVersion;
+  const agentAllAtLatest = !!latestAgent && !!lowestAgent && lowestAgent === latestAgent;
+
   return (
     <div className="space-y-6">
       <PageTitle>Updates</PageTitle>
@@ -48,8 +76,10 @@ export function UpdatesPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="w-12 font-medium text-fg">Hub</span>
-              <Badge text={`v${version?.currentVersion || '?'}`} color="blue" />
-              {latestHub && latestHub !== version?.currentVersion && (
+              {/* Blue = current (when behind), green = latest (or current
+                  when already at latest). */}
+              <Badge text={`v${version?.currentVersion || '?'}`} color={hubAtLatest ? 'green' : 'blue'} />
+              {!!latestHub && !hubAtLatest && (
                 <>
                   <span className="text-muted">&rarr;</span>
                   <Badge text={`v${latestHub}`} color="green" />
@@ -65,8 +95,18 @@ export function UpdatesPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <span className="w-12 font-medium text-fg">Agent</span>
-              {latestAgent ? (
-                <Badge text={`v${latestAgent}`} color="blue" />
+              {lowestAgent ? (
+                <>
+                  <Badge text={`v${lowestAgent}`} color={agentAllAtLatest ? 'green' : 'blue'} />
+                  {!!latestAgent && !agentAllAtLatest && (
+                    <>
+                      <span className="text-muted">&rarr;</span>
+                      <Badge text={`v${latestAgent}`} color="green" />
+                    </>
+                  )}
+                </>
+              ) : latestAgent ? (
+                <Badge text={`v${latestAgent}`} color="green" />
               ) : (
                 <span className="text-muted">Checking...</span>
               )}
