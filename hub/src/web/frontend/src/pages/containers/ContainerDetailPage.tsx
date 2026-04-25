@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { api, apiAuth } from '@/lib/api';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, Finding } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -121,40 +121,20 @@ function formatBytesPerSec(v: number): string {
   return `${(v / 1024 / 1024 / 1024).toFixed(2)} GB/s`;
 }
 
-function findingConclusionTag(finding: Finding): string {
-  // Mirror conclusionTag() in hub/src/insights/diagnosis/calibration.ts:
-  // prefer the top ranked evidence kind (which maps 1:1 to primary signal),
-  // fall back to a slug of the conclusion text.
-  const topKind = finding.evidenceRanked?.find((e) => e.kind !== 'ppr_root')?.kind;
-  if (topKind) return topKind;
-  return finding.conclusion.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 64);
-}
+// TODO(calibration): findingConclusionTag() and the per-tag feedback hooks
+// were removed 2026-04-25 with the FindingCard "helpful?" UI. The matching
+// helper still exists in hub/src/insights/diagnosis/calibration.ts —
+// re-derive it here when the UI is restored.
 
 export function ContainerDetailPage() {
   const { hostId, containerName } = useParams();
   const hid = encodeURIComponent(hostId!);
   const cname = encodeURIComponent(containerName!);
-  const { isAuthenticated, token } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
-  // Per-tag feedback state so the thumbs buttons reflect the user's vote
-  // immediately. Submitted votes also go to the calibration table via the
-  // mutation below.
-  const [feedbackState, setFeedbackState] = useState<Record<string, 'helpful' | 'unhelpful'>>({});
   const navigate = useNavigate();
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
-
-  const feedbackMutation = useMutation({
-    mutationFn: (vars: { tag: string; helpful: boolean }) =>
-      apiAuth('POST', '/insights/feedback', {
-        entity_type: 'container',
-        entity_id: `${hostId}/${containerName}`,
-        category: 'health',
-        helpful: vars.helpful,
-        diagnoser: 'unified',
-        conclusion_tag: vars.tag,
-      }, token),
-  });
 
   const { data, error, isLoading } = useQuery({
     queryKey: queryKeys.container(hostId, containerName),
@@ -425,18 +405,11 @@ export function ContainerDetailPage() {
                 disabled: actionLoading != null,
                 title: 'Restart (r)',
               } : undefined;
-              const tag = findingConclusionTag(finding);
-              const feedbackCbs = isAuthenticated ? {
-                current: feedbackState[tag] ?? null,
-                onHelpful: () => {
-                  setFeedbackState((s) => ({ ...s, [tag]: 'helpful' }));
-                  feedbackMutation.mutate({ tag, helpful: true });
-                },
-                onNotHelpful: () => {
-                  setFeedbackState((s) => ({ ...s, [tag]: 'unhelpful' }));
-                  feedbackMutation.mutate({ tag, helpful: false });
-                },
-              } : undefined;
+              // TODO(calibration): the FindingCard supports a `feedback` prop
+              // for thumbs-up/down votes that feed Phase 4 confidence
+              // calibration. UI removed 2026-04-25 — backend POST
+              // /api/insights/feedback still works. To re-enable, build a
+              // FindingFeedbackCallbacks object here and pass `feedback={...}`.
               return (
                 <FindingCard
                   key={i}
@@ -449,7 +422,6 @@ export function ContainerDetailPage() {
                     memoryMb: data.memory_mb,
                   }}
                   primaryAction={primaryAction}
-                  feedback={feedbackCbs}
                 />
               );
             })}

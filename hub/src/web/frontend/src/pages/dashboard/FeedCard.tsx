@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Card } from '@/components/Card';
 import { LinkButton } from '@/components/FormField';
 import { FeedRow } from '@/components/FeedRow';
-import { api, apiAuth } from '@/lib/api';
-import { queryKeys } from '@/lib/queryKeys';
-import { useAuth } from '@/context/AuthContext';
-import type { InsightFeedback, DashboardInsight } from '@/types/api';
+import type { DashboardInsight } from '@/types/api';
 import type { FeedItem } from '@/hooks/useFeedItems';
+
+// TODO(calibration): per-insight 👍/👎 buttons removed 2026-04-25 — see
+// the matching note in InsightsPage.tsx. Backend POST /api/insights/feedback
+// is still wired; restore <InsightActions> here when re-enabling.
 
 const DISMISSED_STORAGE_KEY = 'insightd-dismissed-insights';
 
@@ -125,7 +125,7 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
               time={item.time}
               to={item.to}
               footer={item.kind === 'insight' && item.insight ? (
-                <InsightActions insight={item.insight} onDismiss={() => dismiss(item)} />
+                <DismissAction onDismiss={() => dismiss(item)} />
               ) : undefined}
             />
           ))}
@@ -139,56 +139,9 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
   );
 }
 
-function InsightActions({ insight, onDismiss }: { insight: DashboardInsight; onDismiss: () => void }) {
-  const { token } = useAuth();
-  const queryClient = useQueryClient();
-
-  const { data: allFeedback } = useQuery({
-    queryKey: queryKeys.insightFeedback(),
-    queryFn: () => api<InsightFeedback[]>('/insights/feedback'),
-    staleTime: 60_000,
-  });
-
-  const key = insightKey(insight);
-  const existing = allFeedback?.find(f =>
-    `${f.entity_type}:${f.entity_id}:${f.category}` === key
-  );
-
-  const mutation = useMutation({
-    mutationFn: (helpful: boolean) =>
-      apiAuth('POST', '/insights/feedback', {
-        entity_type: insight.entity_type,
-        entity_id: insight.entity_id,
-        category: insight.category,
-        metric: null,
-        helpful,
-      }, token),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.insightFeedback() }),
-  });
-
+function DismissAction({ onDismiss }: { onDismiss: () => void }) {
   return (
-    <div className="flex items-center justify-between border-t border-border-light px-3 py-1.5">
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-muted mr-1">Helpful?</span>
-        <button
-          onClick={() => mutation.mutate(true)}
-          className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
-            existing?.helpful === 1 ? 'bg-success/20 text-success' : 'text-muted hover:text-success hover:bg-success/10'
-          }`}
-          aria-label="Mark insight as helpful"
-        >
-          👍
-        </button>
-        <button
-          onClick={() => mutation.mutate(false)}
-          className={`rounded px-1.5 py-0.5 text-xs transition-colors ${
-            existing?.helpful === 0 ? 'bg-danger/20 text-danger' : 'text-muted hover:text-danger hover:bg-danger/10'
-          }`}
-          aria-label="Mark insight as not helpful"
-        >
-          👎
-        </button>
-      </div>
+    <div className="flex items-center justify-end border-t border-border-light px-3 py-1.5">
       <button
         onClick={onDismiss}
         className="rounded px-1.5 py-0.5 text-xs text-muted transition-colors hover:text-fg"
