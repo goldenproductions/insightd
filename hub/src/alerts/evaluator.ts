@@ -33,6 +33,8 @@ interface AlertsConfig {
   endpointFailureThreshold: number;
   containerMemoryLimitPercent: number;
   containerCpuLimitPercent: number;
+  certExpiry?: boolean;
+  certExpiryWarnDays?: number;
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
@@ -145,6 +147,13 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
   // HTTP endpoints — hub-level checks
   if (alerts.endpointDown !== false) {
     triggered.push(...checkEndpointDown(db, alerts.endpointFailureThreshold || 3));
+  }
+
+  // TLS certificate checks — three alert types: expired (critical), invalid
+  // (error, e.g. chain/hostname), expiring_soon (warning). All keyed by
+  // endpoint name so cooldown/resolution flow through alert_state.
+  if (alerts.certExpiry !== false) {
+    triggered.push(...checkCertAlerts(db, alerts.certExpiryWarnDays || 14));
   }
 
   // Check for resolutions of active alerts
@@ -459,6 +468,69 @@ function checkContainerUnhealthy(db: Database.Database, hostId: string): AlertIt
   });
 }
 
+interface CertEndpointRow {
+  id: number;
+  name: string;
+  url: string;
+  enabled: number;
+  tls_expires_at: string | null;
+  tls_error: string | null;
+  tls_last_checked_at: string | null;
+}
+
+const TLS_TRANSIENT_ERRORS = new Set(['timeout', 'ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'tls-error']);
+
+function checkCertAlerts(db: Database.Database, warnDays: number): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT id, name, url, enabled, tls_expires_at, tls_error, tls_last_checked_at
+    FROM http_endpoints
+    WHERE enabled = 1 AND url LIKE 'https://%' AND tls_last_checked_at IS NOT NULL
+  `).all() as CertEndpointRow[];
+
+  const out: AlertItem[] = [];
+  const now = Date.now();
+  for (const ep of rows) {
+    const expiryMs = ep.tls_expires_at ? Date.parse(ep.tls_expires_at) : NaN;
+    const hasExpiry = Number.isFinite(expiryMs);
+
+    if (ep.tls_error === 'expired' || (hasExpiry && expiryMs < now)) {
+      out.push({
+        type: 'cert_expired',
+        hostId: 'hub',
+        target: ep.name,
+        message: `Certificate for "${ep.name}" (${ep.url}) has expired`,
+        value: ep.tls_expires_at,
+      });
+      continue;
+    }
+    if (ep.tls_error && !TLS_TRANSIENT_ERRORS.has(ep.tls_error) && ep.tls_error !== 'expired') {
+      out.push({
+        type: 'cert_invalid',
+        hostId: 'hub',
+        target: ep.name,
+        message: `Certificate for "${ep.name}" (${ep.url}) is invalid: ${ep.tls_error}`,
+        value: ep.tls_error,
+      });
+      continue;
+    }
+    if (hasExpiry && warnDays > 0) {
+      const daysLeft = (expiryMs - now) / 86400000;
+      if (daysLeft <= warnDays) {
+        const rounded = Math.max(0, Math.ceil(daysLeft));
+        out.push({
+          type: 'cert_expiring_soon',
+          hostId: 'hub',
+          target: ep.name,
+          message: `Certificate for "${ep.name}" (${ep.url}) expires in ${rounded} day${rounded === 1 ? '' : 's'}`,
+          value: ep.tls_expires_at,
+          threshold: warnDays,
+        });
+      }
+    }
+  }
+  return out;
+}
+
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {
   const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
   const endpoints = (getEndpoints(db) as Array<{ id: number; name: string; url: string; enabled: number }>).filter(ep => ep.enabled);
@@ -608,6 +680,32 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
         const checks = getLastNChecks(db, ep.id, 1) as { is_up: number }[];
         isResolved = checks.length > 0 && checks[0].is_up === 1;
       }
+    } else if (alert.alert_type === 'cert_expired' || alert.alert_type === 'cert_expiring_soon' || alert.alert_type === 'cert_invalid') {
+      // Resolved when the latest TLS probe shows the cert is healthy and
+      // (for expiring_soon) past the warn window. If the endpoint was
+      // deleted or is no longer https, that also counts as resolved.
+      const ep = db.prepare(`
+        SELECT id, url, tls_expires_at, tls_error, tls_last_checked_at
+        FROM http_endpoints WHERE name = ? AND enabled = 1
+      `).get(alert.target) as { id: number; url: string; tls_expires_at: string | null; tls_error: string | null; tls_last_checked_at: string | null } | undefined;
+      if (!ep || !ep.url.startsWith('https://')) {
+        isResolved = true;
+      } else if (ep.tls_last_checked_at) {
+        const expiryMs = ep.tls_expires_at ? Date.parse(ep.tls_expires_at) : NaN;
+        const hasExpiry = Number.isFinite(expiryMs);
+        const stillExpired = ep.tls_error === 'expired' || (hasExpiry && expiryMs < Date.now());
+        const stillInvalid = !!ep.tls_error && !TLS_TRANSIENT_ERRORS.has(ep.tls_error) && ep.tls_error !== 'expired';
+        if (alert.alert_type === 'cert_expired') {
+          isResolved = !stillExpired;
+        } else if (alert.alert_type === 'cert_invalid') {
+          isResolved = !stillInvalid;
+        } else {
+          // cert_expiring_soon: clear when no longer in the warn window AND not expired
+          const warn = alertsConfig.certExpiryWarnDays || 14;
+          const daysLeft = hasExpiry ? (expiryMs - Date.now()) / 86400000 : Infinity;
+          isResolved = !stillExpired && !stillInvalid && daysLeft > warn;
+        }
+      }
     } else if (alert.alert_type === 'host_offline') {
       // Resolved when the host has reported within the configured window.
       const windowMinutes = alertsConfig.hostOfflineMinutes || 15;
@@ -662,6 +760,9 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'node_not_ready': return `Node "${hostId}" is Ready again`;
     case 'container_memory_saturation': return `Container "${target}"${on} memory back under limit`;
     case 'container_cpu_saturation': return `Container "${target}"${on} CPU back under limit`;
+    case 'cert_expired': return `Certificate for "${target}" is no longer expired`;
+    case 'cert_expiring_soon': return `Certificate for "${target}" is no longer expiring soon`;
+    case 'cert_invalid': return `Certificate for "${target}" is valid again`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

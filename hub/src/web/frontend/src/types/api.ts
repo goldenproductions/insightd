@@ -572,6 +572,16 @@ export interface Endpoint {
   timeout_ms: number;
   headers: string | null;
   enabled: number;
+  /** ISO timestamp of cert `not_after`. NULL until first probe; NULL for http:// endpoints. */
+  tls_expires_at: string | null;
+  /** Issuer CN (or O if CN missing). */
+  tls_issuer: string | null;
+  /** Comma-separated SANs (DNS: prefix stripped). */
+  tls_subject_alt_names: string | null;
+  /** SQLite-format timestamp of the last TLS probe attempt. */
+  tls_last_checked_at: string | null;
+  /** `expired` | `self-signed` | `hostname-mismatch` | `untrusted-root` | `timeout` | `no-cert` | other code, or NULL when valid. */
+  tls_error: string | null;
   created_at: string;
   updated_at: string;
 }

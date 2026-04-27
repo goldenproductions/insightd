@@ -414,17 +414,20 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   host_offline: 'critical',
   endpoint_down: 'critical',
   node_not_ready: 'critical',
+  cert_expired: 'critical',
   container_unhealthy: 'error',
   restart_loop: 'error',
   disk_full: 'error',
   node_pressure: 'error',
   container_memory_saturation: 'error',
+  cert_invalid: 'error',
   high_cpu: 'warning',
   high_memory: 'warning',
   high_host_cpu: 'warning',
   low_host_memory: 'warning',
   high_load: 'warning',
   container_cpu_saturation: 'warning',
+  cert_expiring_soon: 'warning',
 };
 
 /** The CASE expression equivalent of LEVEL_BY_ALERT_TYPE — used in SQL filters/facets. */
@@ -434,17 +437,20 @@ const LEVEL_CASE_SQL = `
     WHEN 'host_offline' THEN 'critical'
     WHEN 'endpoint_down' THEN 'critical'
     WHEN 'node_not_ready' THEN 'critical'
+    WHEN 'cert_expired' THEN 'critical'
     WHEN 'container_unhealthy' THEN 'error'
     WHEN 'restart_loop' THEN 'error'
     WHEN 'disk_full' THEN 'error'
     WHEN 'node_pressure' THEN 'error'
     WHEN 'container_memory_saturation' THEN 'error'
+    WHEN 'cert_invalid' THEN 'error'
     WHEN 'high_cpu' THEN 'warning'
     WHEN 'high_memory' THEN 'warning'
     WHEN 'high_host_cpu' THEN 'warning'
     WHEN 'low_host_memory' THEN 'warning'
     WHEN 'high_load' THEN 'warning'
     WHEN 'container_cpu_saturation' THEN 'warning'
+    WHEN 'cert_expiring_soon' THEN 'warning'
     ELSE 'info'
   END
 `;

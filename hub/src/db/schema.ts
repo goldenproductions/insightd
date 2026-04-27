@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 38;
+const SCHEMA_VERSION = 39;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -284,6 +284,11 @@ function bootstrap(db: Database.Database): void {
       headers          TEXT,
       enabled          INTEGER NOT NULL DEFAULT 1,
       source_ingress_id INTEGER REFERENCES k8s_ingresses(id) ON DELETE SET NULL,
+      tls_expires_at        TEXT,
+      tls_issuer            TEXT,
+      tls_subject_alt_names TEXT,
+      tls_last_checked_at   TEXT,
+      tls_error             TEXT,
       created_at       TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -906,6 +911,16 @@ function migrate(db: Database.Database, fromVersion: number): void {
     // without monitoring it. Runs as a separate migration so v37 installs
     // (which already have k8s_ingresses but no dismissed_at) are upgraded.
     try { db.exec('ALTER TABLE k8s_ingresses ADD COLUMN dismissed_at TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 39) {
+    // TLS cert facts are stored on the endpoint row (cert changes rarely;
+    // don't bloat http_checks). Probed independently of HTTP polling on
+    // a longer cadence (default 6h) by tlsChecker.
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_expires_at TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_issuer TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_subject_alt_names TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_last_checked_at TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_error TEXT'); } catch { /* already exists */ }
   }
 }
 

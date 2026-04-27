@@ -14,6 +14,11 @@ interface HttpEndpoint {
   timeout_ms: number;
   headers: string | null;
   enabled: number;
+  tls_expires_at: string | null;
+  tls_issuer: string | null;
+  tls_subject_alt_names: string | null;
+  tls_last_checked_at: string | null;
+  tls_error: string | null;
   created_at: string;
   updated_at: string;
 }

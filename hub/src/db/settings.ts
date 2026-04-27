@@ -66,6 +66,9 @@ interface AlertsConfig {
   endpointFailureThreshold: number;
   containerMemoryLimitPercent: number;
   containerCpuLimitPercent: number;
+  certExpiry: boolean;
+  certExpiryWarnDays: number;
+  certCheckIntervalHours: number;
 }
 
 interface AiConfig {
@@ -124,6 +127,9 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'alerts.endpointFailureThreshold', env: 'INSIGHTD_ALERT_ENDPOINT_FAILURES', type: 'int', category: 'Alerts', label: 'Endpoint Failure Threshold', hotReload: true, default: '3', description: 'Consecutive failures before alerting' },
   { key: 'alerts.containerMemoryLimitPercent', env: 'INSIGHTD_ALERT_MEMORY_LIMIT', type: 'int', category: 'Alerts', label: 'K8s Memory Limit Saturation (%)', hotReload: true, default: '90', description: 'Fire when a k8s container is above this percent of its pod memory limit. Predicts OOMKill. Set 0 to disable.' },
   { key: 'alerts.containerCpuLimitPercent', env: 'INSIGHTD_ALERT_CPU_LIMIT', type: 'int', category: 'Alerts', label: 'K8s CPU Limit Saturation (%)', hotReload: true, default: '90', description: 'Fire when a k8s container is above this percent of its pod CPU limit. Set 0 to disable.' },
+  { key: 'alerts.certExpiry', env: 'INSIGHTD_ALERT_CERT_EXPIRY', type: 'bool', category: 'Alerts', label: 'TLS Certificate Alerts', hotReload: true, default: 'true', description: 'Fire alerts when an https endpoint certificate is expiring soon, expired, or invalid (chain/hostname).' },
+  { key: 'alerts.certExpiryWarnDays', env: 'INSIGHTD_ALERT_CERT_WARN_DAYS', type: 'int', category: 'Alerts', label: 'TLS Expiry Warning (days)', hotReload: true, default: '14', description: 'Fire a warning when the certificate expires within this many days.' },
+  { key: 'alerts.certCheckIntervalHours', env: 'INSIGHTD_CERT_CHECK_INTERVAL_HOURS', type: 'int', category: 'Alerts', label: 'TLS Check Interval (hours)', hotReload: true, default: '6', description: 'How often to re-fetch certificate metadata for monitored https endpoints.' },
 
   // Collection
   { key: 'collectIntervalMinutes', env: 'INSIGHTD_COLLECT_INTERVAL', type: 'int', category: 'Collection', label: 'Collection Interval (minutes)', hotReload: false, default: '5' },
@@ -287,6 +293,9 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       endpointFailureThreshold: get('alerts.endpointFailureThreshold') || baseConfig.alerts?.endpointFailureThreshold || 3,
       containerMemoryLimitPercent: get('alerts.containerMemoryLimitPercent') ?? baseConfig.alerts?.containerMemoryLimitPercent ?? 90,
       containerCpuLimitPercent: get('alerts.containerCpuLimitPercent') ?? baseConfig.alerts?.containerCpuLimitPercent ?? 90,
+      certExpiry: get('alerts.certExpiry'),
+      certExpiryWarnDays: get('alerts.certExpiryWarnDays') ?? baseConfig.alerts?.certExpiryWarnDays ?? 14,
+      certCheckIntervalHours: get('alerts.certCheckIntervalHours') ?? baseConfig.alerts?.certCheckIntervalHours ?? 6,
     },
     web: {
       baseUrl: (get('web.baseUrl') as string) || baseConfig.web?.baseUrl || '',

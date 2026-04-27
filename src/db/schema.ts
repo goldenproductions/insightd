@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 38;
+const SCHEMA_VERSION = 39;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -273,6 +273,11 @@ function bootstrap(db: Database.Database): void {
       headers          TEXT,
       enabled          INTEGER NOT NULL DEFAULT 1,
       source_ingress_id INTEGER REFERENCES k8s_ingresses(id) ON DELETE SET NULL,
+      tls_expires_at        TEXT,
+      tls_issuer            TEXT,
+      tls_subject_alt_names TEXT,
+      tls_last_checked_at   TEXT,
+      tls_error             TEXT,
       created_at       TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -874,6 +879,13 @@ function migrate(db: Database.Database, fromVersion: number): void {
   }
   if (fromVersion < 38) {
     try { db.exec('ALTER TABLE k8s_ingresses ADD COLUMN dismissed_at TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 39) {
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_expires_at TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_issuer TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_subject_alt_names TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_last_checked_at TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_error TEXT'); } catch { /* already exists */ }
   }
 }
 

@@ -16,6 +16,7 @@ import { LinkButton } from '@/components/FormField';
 import { timeAgo } from '@/lib/formatters';
 import { BackLink } from '@/components/BackLink';
 import { LoadingState } from '@/components/LoadingState';
+import { getTlsStatus, tlsBadgeClass, type TlsStatus } from '@/lib/tls';
 
 function parseCheckTime(raw: string): Date {
   return new Date(raw.includes('T') ? raw : raw.replace(' ', 'T') + 'Z');
@@ -214,6 +215,8 @@ export function EndpointDetailPage() {
         <StatCard value={data.lastCheck?.response_time_ms != null ? `${data.lastCheck.response_time_ms}ms` : '-'} label="Last Response" />
       </StatsGrid>
 
+      {data.url.startsWith('https://') && <TlsCard endpoint={data} />}
+
       {totalChecks > 0 && (
         <Card title={`Check Status (last 24h, ${totalChecks} checks)`}>
           <CheckStatusStrip checks={checks!} />
@@ -241,5 +244,73 @@ export function EndpointDetailPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+function describeTlsState(s: TlsStatus): { headline: string; sub: string } {
+  switch (s.state) {
+    case 'expired': return { headline: 'Certificate expired', sub: 'Browsers will block this endpoint until the certificate is renewed.' };
+    case 'expiring': return { headline: `Expires in ${s.daysLeft} day${s.daysLeft === 1 ? '' : 's'}`, sub: 'Renew before expiry to avoid downtime.' };
+    case 'invalid': return { headline: `Certificate invalid (${s.label})`, sub: 'Connections may fail or trigger browser warnings.' };
+    case 'valid': return { headline: `Valid for ${s.daysLeft} day${s.daysLeft === 1 ? '' : 's'}`, sub: 'Healthy.' };
+    default: return { headline: 'No certificate data', sub: 'Waiting for the next probe.' };
+  }
+}
+
+function TlsCard({ endpoint }: { endpoint: EndpointDetail }) {
+  const status = getTlsStatus(endpoint);
+  if (!status) {
+    return (
+      <Card title="TLS certificate">
+        <p className="text-sm text-muted">Waiting for first certificate probe.</p>
+      </Card>
+    );
+  }
+  const desc = describeTlsState(status);
+  const sans = endpoint.tls_subject_alt_names ? endpoint.tls_subject_alt_names.split(',').filter(Boolean) : [];
+  return (
+    <Card title="TLS certificate">
+      <div className="flex flex-wrap items-baseline gap-3">
+        <span className={`rounded px-2 py-0.5 text-xs font-medium ${tlsBadgeClass(status.tone)}`}>
+          {status.label}
+        </span>
+        <span className="text-sm font-semibold text-fg">{desc.headline}</span>
+      </div>
+      <p className="mt-1 text-xs text-muted">{desc.sub}</p>
+
+      <dl className="mt-4 grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-xs text-muted">Expires</dt>
+          <dd className="text-fg">
+            {endpoint.tls_expires_at
+              ? new Date(endpoint.tls_expires_at).toLocaleString()
+              : '—'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs text-muted">Issuer</dt>
+          <dd className="truncate text-fg" title={endpoint.tls_issuer || ''}>{endpoint.tls_issuer || '—'}</dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs text-muted">Subject alternative names</dt>
+          <dd className="flex flex-wrap gap-1.5">
+            {sans.length > 0
+              ? sans.map(s => <span key={s} className="rounded bg-bg-secondary px-1.5 py-0.5 font-mono text-xs text-secondary">{s}</span>)
+              : <span className="text-fg">—</span>}
+          </dd>
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-xs text-muted">Last probed</dt>
+          <dd className="text-fg">
+            {endpoint.tls_last_checked_at
+              ? <span title={endpoint.tls_last_checked_at}>{timeAgo(endpoint.tls_last_checked_at)}</span>
+              : '—'}
+            {endpoint.tls_error && status.state !== 'invalid' && status.state !== 'expired' && (
+              <span className="ml-2 text-xs text-warning">last probe error: {endpoint.tls_error}</span>
+            )}
+          </dd>
+        </div>
+      </dl>
+    </Card>
   );
 }

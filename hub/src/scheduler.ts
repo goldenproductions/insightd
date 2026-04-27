@@ -75,6 +75,9 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
   scheduledTasks.push(cron.schedule('* * * * *', async () => {
     const { runChecks } = require('./http-monitor/checker');
     await safeCollect('http-checks', () => runChecks(db));
+    const liveCfg = getEffectiveConfig(db, config);
+    const { runTlsChecks } = require('./http-monitor/tlsChecker');
+    await safeCollect('tls-checks', () => runTlsChecks(db, liveCfg.alerts.certCheckIntervalHours || 6));
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'HTTP endpoint checks scheduled: every minute');
 
@@ -199,6 +202,9 @@ function startStandaloneScheduler(db: Database.Database, docker: Dockerode, conf
   scheduledTasks.push(cron.schedule('* * * * *', async () => {
     const { runChecks } = require('./http-monitor/checker');
     await safeCollect('http-checks', () => runChecks(db));
+    const liveCfg = getEffectiveConfig(db, config);
+    const { runTlsChecks } = require('./http-monitor/tlsChecker');
+    await safeCollect('tls-checks', () => runTlsChecks(db, liveCfg.alerts.certCheckIntervalHours || 6));
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'HTTP endpoint checks scheduled: every minute');
 }
