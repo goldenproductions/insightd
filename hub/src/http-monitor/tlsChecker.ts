@@ -49,6 +49,22 @@ function classifyAuthError(code: string | undefined): string {
  * Probe a single https URL for cert metadata. Connects with rejectUnauthorized:false
  * so we can retrieve the cert even when it's invalid, then surfaces the
  * authorization status as a structured error.
+ *
+ * SECURITY: rejectUnauthorized:false is intentional and required for this feature.
+ * This is a TLS *monitoring* probe whose entire purpose is to detect and report
+ * invalid certs (self-signed, expired, hostname-mismatch, untrusted-root) so the
+ * user gets a `cert_invalid` / `cert_expired` alert. If we let Node reject
+ * invalid certs, the connection would fail before getPeerCertificate() returns,
+ * and the user would only see "endpoint down" with no diagnostic — strictly
+ * worse for them, not better.
+ *
+ * The MITM threat model that CodeQL js/disabling-certificate-validation warns
+ * about does not apply here:
+ *   - Read-only handshake: we never send a request body, headers, or credentials.
+ *   - Immediate close: socket.end() is called as soon as the cert is read.
+ *   - The validation result is *recorded and surfaced* as an alert, not silently
+ *     ignored — so MITM-as-a-result-of-invalid-cert is precisely what we report on.
+ *   - Connection has a 10s timeout cap.
  */
 export function probeTls(url: string): Promise<TlsResult> {
   const target = parseHostPort(url);
@@ -68,6 +84,7 @@ export function probeTls(url: string): Promise<TlsResult> {
       host: target.host,
       port: target.port,
       servername: target.host,
+      // rejectUnauthorized:false is required to inspect invalid certs — see SECURITY note above.
       rejectUnauthorized: false,
       timeout: TLS_PROBE_TIMEOUT_MS,
     }, () => {
