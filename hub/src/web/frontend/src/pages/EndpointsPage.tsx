@@ -8,6 +8,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Card } from '@/components/Card';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
+import { getTlsStatus, tlsBadgeClass } from '@/lib/tls';
 import { LinkButton } from '@/components/FormField';
 import { PageTitle } from '@/components/PageTitle';
 import { LoadingState } from '@/components/LoadingState';
@@ -156,6 +157,19 @@ export function EndpointsPage() {
   );
 }
 
+function TlsPill({ endpoint }: { endpoint: EndpointSummary }) {
+  const status = getTlsStatus(endpoint);
+  if (!status) return null;
+  return (
+    <span
+      className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${tlsBadgeClass(status.tone)}`}
+      title={endpoint.tls_expires_at ? `Cert expires ${endpoint.tls_expires_at.slice(0, 10)}` : 'TLS status'}
+    >
+      TLS · {status.label}
+    </span>
+  );
+}
+
 function EndpointRow({ endpoint: ep }: { endpoint: EndpointSummary }) {
   const status = statusOf(ep);
   const pill = STATUS_PILL[status];
@@ -172,6 +186,7 @@ function EndpointRow({ endpoint: ep }: { endpoint: EndpointSummary }) {
           <div className="flex items-center gap-2">
             <span className="truncate text-sm font-semibold text-fg">{ep.name}</span>
             <Badge text={pill.label} color={pill.color} />
+            <TlsPill endpoint={ep} />
           </div>
           <div className="mt-0.5 flex items-center gap-1.5 truncate font-mono text-xs text-muted">
             <MethodChip method={ep.method} />

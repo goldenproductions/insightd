@@ -82,6 +82,9 @@ const config = Object.freeze({
     endpointFailureThreshold: parseInt(process.env.INSIGHTD_ALERT_ENDPOINT_FAILURES || '3', 10),
     containerMemoryLimitPercent: parseInt(process.env.INSIGHTD_ALERT_MEMORY_LIMIT || '90', 10),
     containerCpuLimitPercent: parseInt(process.env.INSIGHTD_ALERT_CPU_LIMIT || '90', 10),
+    certExpiry: process.env.INSIGHTD_ALERT_CERT_EXPIRY !== 'false',
+    certExpiryWarnDays: parseInt(process.env.INSIGHTD_ALERT_CERT_WARN_DAYS || '14', 10),
+    certCheckIntervalHours: parseInt(process.env.INSIGHTD_CERT_CHECK_INTERVAL_HOURS || '6', 10),
   }),
 
   // AI diagnosis (Gemini)

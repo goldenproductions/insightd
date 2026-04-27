@@ -85,6 +85,9 @@ const ALERT_TYPE_LABELS: Record<string, string> = {
   high_load: 'Host load high',
   host_offline: 'Host offline',
   endpoint_down: 'Endpoint down',
+  cert_expired: 'Certificate expired',
+  cert_expiring_soon: 'Certificate expiring',
+  cert_invalid: 'Certificate invalid',
 };
 
 /** Map a backend alert_type to a friendlier display label. Falls back to the
