@@ -17,7 +17,7 @@ export function LoginPage() {
     setError(null);
     try {
       await login(password);
-      navigate('/settings');
+      navigate('/');
     } catch {
       setError('Invalid password');
     } finally {
