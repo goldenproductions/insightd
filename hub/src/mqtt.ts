@@ -57,6 +57,7 @@ interface CollectionPayload {
     cpu_limit_cores?: number | null;
     cpu_limit_percent?: number | null;
     memory_limit_mb?: number | null;
+    last_oom_killed_at?: string | null;
   }>;
   disk?: Array<{
     mount_point: string;
@@ -260,8 +261,15 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
   });
 }
 
-function handleCollection(db: Database.Database, hostId: string, payload: CollectionPayload): void {
-  const containers = (payload.containers || []).map(c => ({
+/**
+ * Map a snake_case MQTT container payload entry into the camelCase shape
+ * the hub's ingest layer expects. Exported so tests can pin the round-trip
+ * behaviour — every field the agent publishes must land here, otherwise
+ * the column silently stays NULL in the DB (caught the hard way for
+ * last_oom_killed_at).
+ */
+export function payloadContainerToSnapshot(c: NonNullable<CollectionPayload['containers']>[number]): any {
+  return {
     name: c.name,
     id: c.id,
     status: c.status,
@@ -281,7 +289,12 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     cpuLimitCores: c.cpu_limit_cores ?? null,
     cpuLimitPercent: c.cpu_limit_percent ?? null,
     memoryLimitMb: c.memory_limit_mb ?? null,
-  }));
+    lastOomKilledAt: c.last_oom_killed_at ?? null,
+  };
+}
+
+function handleCollection(db: Database.Database, hostId: string, payload: CollectionPayload): void {
+  const containers = (payload.containers || []).map(payloadContainerToSnapshot);
 
   // Detect containers transitioning to unhealthy — pre-warm the log cache for diagnosis
   const unhealthyTransitions: Array<{ name: string; id: string }> = [];
@@ -708,4 +721,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot };
