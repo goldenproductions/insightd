@@ -201,9 +201,9 @@ function checkRestartLoop(db: Database.Database, hostId: string, threshold: numb
 
   for (const { container_name } of containers) {
     const latest = db.prepare(`
-      SELECT restart_count FROM container_snapshots
+      SELECT restart_count, last_oom_killed_at FROM container_snapshots
       WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1
-    `).get(hostId, container_name) as { restart_count: number } | undefined;
+    `).get(hostId, container_name) as { restart_count: number; last_oom_killed_at: string | null } | undefined;
 
     const older = db.prepare(`
       SELECT restart_count FROM container_snapshots
@@ -214,17 +214,33 @@ function checkRestartLoop(db: Database.Database, hostId: string, threshold: numb
     if (!latest || !older) continue;
     const delta = latest.restart_count - older.restart_count;
     if (delta >= threshold) {
+      const base = `Container "${container_name}" on ${hostId} restarted ${delta} times in 30 minutes (threshold: ${threshold})`;
+      const oomSuffix = oomCauseSuffix(latest.last_oom_killed_at);
       alerts.push({
         type: 'restart_loop',
         hostId,
         target: container_name,
-        message: `Container "${container_name}" on ${hostId} restarted ${delta} times in 30 minutes (threshold: ${threshold})`,
+        message: oomSuffix ? `${base}${oomSuffix}` : base,
         value: delta,
         threshold,
       });
     }
   }
   return alerts;
+}
+
+/**
+ * Format an "— last killed by OOM" suffix for restart_loop / container_unhealthy
+ * alert messages, when the kernel-reported OOMKill was within the last 30
+ * minutes. Returns "" when the signal is missing or stale, so callers can
+ * unconditionally concat without a branch.
+ */
+function oomCauseSuffix(lastOomKilledAt: string | null | undefined): string {
+  if (!lastOomKilledAt) return '';
+  const ts = Date.parse(lastOomKilledAt);
+  if (!Number.isFinite(ts)) return '';
+  if (Date.now() - ts > 30 * 60 * 1000) return '';
+  return ' — last killed by OOM (memory limit reached, consider raising it)';
 }
 
 function checkHighCpu(db: Database.Database, hostId: string, threshold: number): AlertItem[] {
@@ -451,18 +467,20 @@ function checkHostOffline(db: Database.Database, thresholdMinutes: number): Aler
 
 function checkContainerUnhealthy(db: Database.Database, hostId: string): AlertItem[] {
   const rows = db.prepare(`
-    SELECT container_name, health_status, health_check_output FROM container_snapshots
+    SELECT container_name, health_status, health_check_output, last_oom_killed_at FROM container_snapshots
     WHERE host_id = ? AND collected_at = (
       SELECT MAX(collected_at) FROM container_snapshots WHERE host_id = ?
     ) AND health_status = 'unhealthy'
-  `).all(hostId, hostId) as { container_name: string; health_status: string; health_check_output: string | null }[];
+  `).all(hostId, hostId) as { container_name: string; health_status: string; health_check_output: string | null; last_oom_killed_at: string | null }[];
 
   return rows.map(r => {
     const base = `Container "${r.container_name}" on ${hostId} is unhealthy`;
     const output = r.health_check_output?.slice(0, 200);
+    const oomSuffix = oomCauseSuffix(r.last_oom_killed_at);
+    const message = output ? `${base} — ${output}${oomSuffix}` : `${base}${oomSuffix}`;
     return {
       type: 'container_unhealthy', hostId, target: r.container_name,
-      message: output ? `${base} — ${output}` : base,
+      message,
       value: 'unhealthy',
     };
   });

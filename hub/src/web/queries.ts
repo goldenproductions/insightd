@@ -47,6 +47,7 @@ interface ContainerRow {
   cpu_limit_percent: number | null;
   memory_limit_mb: number | null;
   memory_limit_percent: number | null;
+  last_oom_killed_at: string | null;
   collected_at: string;
   is_stale: number;
 }
@@ -981,6 +982,7 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
+           cs.last_oom_killed_at,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')

@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 39;
+const SCHEMA_VERSION = 40;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -42,6 +42,7 @@ function bootstrap(db: Database.Database): void {
       cpu_limit_cores REAL,
       cpu_limit_percent REAL,
       memory_limit_mb REAL,
+      last_oom_killed_at TEXT,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -886,6 +887,9 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_subject_alt_names TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_last_checked_at TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE http_endpoints ADD COLUMN tls_error TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 40) {
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN last_oom_killed_at TEXT'); } catch { /* already exists */ }
   }
 }
 

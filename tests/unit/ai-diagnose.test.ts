@@ -28,6 +28,7 @@ function makeCtx(overrides: any = {}): any {
       healthStatus: 'unhealthy',
       healthCheckOutput: 'curl: (7) Failed to connect',
       collectedAt: '2026-04-12 09:59:00',
+      lastOomKilledAt: null,
     },
     recent: {
       snapshots: [],

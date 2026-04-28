@@ -278,6 +278,10 @@ export interface ContainerSnapshot {
   cpu_limit_percent: number | null;
   memory_limit_mb: number | null;
   memory_limit_percent: number | null;
+  // ISO timestamp of the most recent kernel-reported OOMKill (Docker
+  // State.OOMKilled or K8s terminated.reason==='OOMKilled'). Null if never
+  // observed. Used to surface a "killed by OOM" chip on the detail page.
+  last_oom_killed_at: string | null;
   collected_at: string;
   // 1 when the owning host hasn't reported within the offline threshold —
   // the snapshot is last-known state, not current truth.

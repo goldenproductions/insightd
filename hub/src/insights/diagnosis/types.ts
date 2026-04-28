@@ -47,6 +47,12 @@ export interface DiagnosisLatest {
   healthStatus: string | null;
   healthCheckOutput: string | null;
   collectedAt: string;
+  /**
+   * ISO timestamp of the most recent kernel-reported OOMKill, or null. Sourced
+   * from container_snapshots.last_oom_killed_at — Docker State.OOMKilled or
+   * K8s containerStatus terminated.reason==='OOMKilled'.
+   */
+  lastOomKilledAt: string | null;
 }
 
 export interface DiagnosisRecent {

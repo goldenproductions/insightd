@@ -26,8 +26,15 @@ export class DockerRuntime implements ContainerRuntime {
   private socketPath: string;
   private allowActions: boolean;
 
-  // In-memory state — restart tracking across collection cycles
-  private restartState = new Map<string, { restartCount: number; lastStartedAt: string | null }>();
+  // In-memory state — restart tracking across collection cycles. Also caches
+  // the last observed OOMKill timestamp so a container that's now running
+  // still reports the signal until it exits cleanly. Cleared when a container
+  // disappears from the listing.
+  private restartState = new Map<string, {
+    restartCount: number;
+    lastStartedAt: string | null;
+    lastOomKilledAt: string | null;
+  }>();
   // In-memory state — only the two CPU fields needed for delta calculation
   private prevStats = new Map<string, { totalUsage: number; systemUsage: number }>();
   // Fires once if Docker rejects size:true (old daemon, restricted socket).
@@ -98,11 +105,21 @@ export class DockerRuntime implements ContainerRuntime {
     for (const p of parsed) {
       if (p.status !== 'running') {
         const prev = this.restartState.get(p.name);
-        if (prev) p.restartCount = prev.restartCount;
+        if (prev) {
+          p.restartCount = prev.restartCount;
+          p.lastOomKilledAt = prev.lastOomKilledAt;
+        }
         try {
           const info = await docker.getContainer(p.id).inspect();
           const code = info.State?.ExitCode;
           if (typeof code === 'number') p.exitCode = code;
+          const oomAt = extractOomKilledAt(info);
+          if (oomAt) p.lastOomKilledAt = oomAt;
+          this.restartState.set(p.name, {
+            restartCount: p.restartCount,
+            lastStartedAt: prev?.lastStartedAt ?? null,
+            lastOomKilledAt: p.lastOomKilledAt ?? null,
+          });
         } catch {
           // container removed between list and inspect — leave exitCode undefined
         }
@@ -128,9 +145,17 @@ export class DockerRuntime implements ContainerRuntime {
           p.restartCount = prev.restartCount;
         }
 
+        // OOMKilled is "true" while the LAST exit was an OOM kill — Docker
+        // resets it to false on the next start. Record the FinishedAt of any
+        // observed OOM and propagate via restartState so a container that
+        // restarted after an OOM still reports the cause.
+        const oomAt = extractOomKilledAt(info);
+        p.lastOomKilledAt = oomAt ?? prev?.lastOomKilledAt ?? null;
+
         this.restartState.set(p.name, {
           restartCount: p.restartCount,
           lastStartedAt: startedAt || null,
+          lastOomKilledAt: p.lastOomKilledAt ?? null,
         });
 
         // Extract last health check output (if health checks are configured)
@@ -142,7 +167,10 @@ export class DockerRuntime implements ContainerRuntime {
       } catch {
         // container may have been removed between list and inspect
         const prev = this.restartState.get(p.name);
-        if (prev) p.restartCount = prev.restartCount;
+        if (prev) {
+          p.restartCount = prev.restartCount;
+          p.lastOomKilledAt = prev.lastOomKilledAt;
+        }
       }
     }
 
@@ -361,6 +389,22 @@ export class DockerRuntime implements ContainerRuntime {
     logger.info('updates', `Checked ${checked} images, ${updatesFound} updates available`);
     return results;
   }
+}
+
+/**
+ * Extract a timestamped OOMKill from a Docker inspect result. Docker sets
+ * State.OOMKilled=true when the kernel killed the container's main process;
+ * State.FinishedAt is the exit time. Returns null when the last exit wasn't
+ * an OOM (or the container has never exited).
+ */
+export function extractOomKilledAt(info: any): string | null {
+  if (info?.State?.OOMKilled !== true) return null;
+  const finishedAt = info?.State?.FinishedAt;
+  // Docker reports "0001-01-01T00:00:00Z" for never-finished containers.
+  if (typeof finishedAt !== 'string' || finishedAt.startsWith('0001-')) {
+    return new Date().toISOString();
+  }
+  return finishedAt;
 }
 
 // --- Docker Hub registry helpers (used by checkImageUpdates) ---
