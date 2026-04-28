@@ -605,3 +605,73 @@ describe('KubernetesRuntime.listContainers: healthStatus mapping', () => {
     assert.equal((await r.listContainers())[0].healthStatus, 'unhealthy');
   });
 });
+
+describe('KubernetesRuntime.listContainers: lastOomKilledAt extraction', () => {
+  // Stub a runtime so listContainers walks our hand-built pod fixtures.
+  function makeRuntime(pods: any[]): any {
+    const runtime: any = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    runtime.coreApi = { listPods: async () => ({ items: pods }) };
+    runtime.appsApi = runtime.coreApi;
+    return runtime;
+  }
+  function basePod(containerStatus: any): any {
+    return {
+      metadata: { name: 'app', namespace: 'default', uid: 'uid-1', labels: {} },
+      status: {
+        phase: 'Running',
+        containerStatuses: [{
+          name: 'app', ready: false, restartCount: 0, image: 'busybox:latest',
+          ...containerStatus,
+        }],
+      },
+    };
+  }
+
+  it('extracts terminated.finishedAt when current state is OOMKilled', async () => {
+    const finishedAt = '2026-04-28T10:00:00Z';
+    const r = makeRuntime([basePod({
+      state: { terminated: { reason: 'OOMKilled', exitCode: 137, finishedAt } },
+    })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].lastOomKilledAt, finishedAt);
+  });
+
+  it('extracts lastState.terminated.finishedAt when current state is running', async () => {
+    const finishedAt = '2026-04-28T09:30:00Z';
+    const r = makeRuntime([basePod({
+      ready: true,
+      state: { running: { startedAt: new Date().toISOString() } },
+      lastState: { terminated: { reason: 'OOMKilled', exitCode: 137, finishedAt } },
+    })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].lastOomKilledAt, finishedAt);
+  });
+
+  it('returns null when termination reason is not OOMKilled', async () => {
+    const r = makeRuntime([basePod({
+      state: { terminated: { reason: 'Error', exitCode: 1, finishedAt: '2026-04-28T08:00:00Z' } },
+    })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].lastOomKilledAt, null);
+  });
+
+  it('returns null when there is no termination at all', async () => {
+    const r = makeRuntime([basePod({
+      ready: true,
+      state: { running: { startedAt: new Date().toISOString() } },
+    })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].lastOomKilledAt, null);
+  });
+
+  it('falls back to current time when finishedAt is missing on an OOMKilled status', async () => {
+    const r = makeRuntime([basePod({
+      state: { terminated: { reason: 'OOMKilled', exitCode: 137 } },
+    })]);
+    const containers = await r.listContainers();
+    assert.ok(containers[0].lastOomKilledAt, 'lastOomKilledAt should not be null');
+    // The fallback uses new Date().toISOString() — sanity-check it parses recent.
+    const ts = Date.parse(containers[0].lastOomKilledAt!);
+    assert.ok(Math.abs(Date.now() - ts) < 5000, 'fallback timestamp should be near "now"');
+  });
+});

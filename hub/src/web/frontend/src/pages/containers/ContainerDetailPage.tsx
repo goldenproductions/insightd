@@ -273,6 +273,17 @@ export function ContainerDetailPage() {
     ? 'red'
     : 'yellow';
 
+  // Surface a kernel-reported OOMKill within the last 24h so the user knows
+  // the cause behind a restart_loop / unhealthy alert without hunting through
+  // logs. Older OOMs roll off — they're history at that point.
+  const oomChip = (() => {
+    if (!data.last_oom_killed_at) return null;
+    const ts = new Date(/[TZ]/.test(data.last_oom_killed_at) ? data.last_oom_killed_at : data.last_oom_killed_at + 'Z').getTime();
+    if (!Number.isFinite(ts)) return null;
+    if (Date.now() - ts > 24 * 60 * 60 * 1000) return null;
+    return `OOM-killed ${timeAgo(data.last_oom_killed_at)}`;
+  })();
+
   const tabs = [
     { id: 'overview', label: 'Overview', shortcut: '1' },
     { id: 'logs', label: 'Logs', shortcut: '2' },
@@ -364,6 +375,11 @@ export function ContainerDetailPage() {
             {!data.is_stale && healthPillText && (
               <span title="Docker runs a health check command inside the container. This is a probe signal — the service may still be responding.">
                 <Badge text={healthPillText} color={healthPillColor} />
+              </span>
+            )}
+            {oomChip && (
+              <span title="The kernel killed this container because it exceeded its memory limit. Consider raising the limit or investigating a memory leak.">
+                <Badge text={oomChip} color="red" />
               </span>
             )}
           </div>

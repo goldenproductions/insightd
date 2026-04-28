@@ -34,6 +34,7 @@ interface CollectionData {
     cpuLimitCores?: number | null;
     cpuLimitPercent?: number | null;
     memoryLimitMb?: number | null;
+    lastOomKilledAt?: string | null;
   }>;
   disk: Array<{
     mountPoint: string;
@@ -280,6 +281,36 @@ function connect(config: AgentConfig, runtime: ContainerRuntime): Promise<MqttCl
   });
 }
 
+/**
+ * Map a ContainerInfo-like object into the snake_case JSON shape published
+ * over MQTT. Exported so tests can pin the round-trip behaviour against the
+ * hub's `payloadContainerToSnapshot` — every field needs both ends wired.
+ */
+export function containerInfoToPayload(c: CollectionData['containers'][number]): Record<string, any> {
+  return {
+    name: c.name,
+    id: c.id,
+    status: c.status,
+    cpu_percent: c.cpuPercent ?? null,
+    memory_mb: c.memoryMb ?? null,
+    restart_count: c.restartCount,
+    network_rx_bytes: c.networkRxBytes ?? null,
+    network_tx_bytes: c.networkTxBytes ?? null,
+    blkio_read_bytes: c.blkioReadBytes ?? null,
+    blkio_write_bytes: c.blkioWriteBytes ?? null,
+    health_status: c.healthStatus ?? null,
+    health_check_output: c.healthCheckOutput ?? null,
+    labels: JSON.stringify(c.labels || {}),
+    exit_code: c.exitCode ?? null,
+    size_rootfs_bytes: c.sizeRootfsBytes ?? null,
+    size_rw_bytes: c.sizeRwBytes ?? null,
+    cpu_limit_cores: c.cpuLimitCores ?? null,
+    cpu_limit_percent: c.cpuLimitPercent ?? null,
+    memory_limit_mb: c.memoryLimitMb ?? null,
+    last_oom_killed_at: c.lastOomKilledAt ?? null,
+  };
+}
+
 function publishCollection(hostId: string, data: CollectionData): Promise<void> {
   const topic = `insightd/${hostId}/collection`;
   const { VERSION } = require('./config') as { VERSION: string };
@@ -290,27 +321,7 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
     runtime_type: data.runtimeName ?? 'docker',
     host_group: data.hostGroup || null,
     collected_at: new Date().toISOString(),
-    containers: data.containers.map(c => ({
-      name: c.name,
-      id: c.id,
-      status: c.status,
-      cpu_percent: c.cpuPercent ?? null,
-      memory_mb: c.memoryMb ?? null,
-      restart_count: c.restartCount,
-      network_rx_bytes: c.networkRxBytes ?? null,
-      network_tx_bytes: c.networkTxBytes ?? null,
-      blkio_read_bytes: c.blkioReadBytes ?? null,
-      blkio_write_bytes: c.blkioWriteBytes ?? null,
-      health_status: c.healthStatus ?? null,
-      health_check_output: c.healthCheckOutput ?? null,
-      labels: JSON.stringify(c.labels || {}),
-      exit_code: c.exitCode ?? null,
-      size_rootfs_bytes: c.sizeRootfsBytes ?? null,
-      size_rw_bytes: c.sizeRwBytes ?? null,
-      cpu_limit_cores: c.cpuLimitCores ?? null,
-      cpu_limit_percent: c.cpuLimitPercent ?? null,
-      memory_limit_mb: c.memoryLimitMb ?? null,
-    })),
+    containers: data.containers.map(containerInfoToPayload),
     disk: data.disk.map(d => ({
       mount_point: d.mountPoint,
       total_gb: d.totalGb,
@@ -609,4 +620,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, disconnect };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, disconnect, containerInfoToPayload };

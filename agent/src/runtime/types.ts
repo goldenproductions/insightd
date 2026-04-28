@@ -37,6 +37,15 @@ export interface ContainerInfo {
    * container_fs_usage_bytes onto sizeRootfsBytes instead.
    */
   sizeRwBytes?: number | null;
+  /**
+   * ISO timestamp of the most recent observed OOMKill, or null if never.
+   * Docker: State.OOMKilled boolean → State.FinishedAt. K8s: containerStatus
+   * terminated.reason==='OOMKilled' (current or last state) → finishedAt.
+   * Persisted across collection cycles by the runtime so a container that
+   * was killed once but is now running keeps reporting the signal until it
+   * exits cleanly or the snapshot ages out of retention.
+   */
+  lastOomKilledAt?: string | null;
 }
 
 export interface ContainerWithResources extends ContainerInfo {

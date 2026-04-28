@@ -21,6 +21,7 @@ function makeCtx(overrides: any = {}): any {
       healthStatus: 'unhealthy',
       healthCheckOutput: null,
       collectedAt: new Date().toISOString(),
+      lastOomKilledAt: null,
       ...overrides.latest,
     },
     recent: {
@@ -88,6 +89,36 @@ describe('detectOom', () => {
 
   it('returns null when neither condition applies', () => {
     assert.equal(detectOom(makeCtx()), null);
+  });
+
+  it('fires oom_confirmed from the kernel signal when last_oom_killed_at is recent', () => {
+    // Relative-to-now so the test stays valid as time marches on. The factory's
+    // `now: new Date()` matches Date.now() at the moment of the call.
+    const oomAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const ctx = makeCtx({ latest: { lastOomKilledAt: oomAt } });
+    const signal = detectOom(ctx);
+    assert.ok(signal);
+    assert.equal(signal!.kind, 'oom_confirmed');
+    assert.ok(signal!.evidence.some((e: string) => /Kernel reported OOMKilled/.test(e)),
+      'evidence should cite the kernel-reported OOM');
+  });
+
+  it('prefers the kernel signal over a log-based signal when both are present', () => {
+    const oomAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const ctx = makeCtx({
+      latest: { lastOomKilledAt: oomAt },
+      logs: { available: true, errorPatterns: ['oom'] },
+    });
+    const signal = detectOom(ctx);
+    assert.ok(signal);
+    assert.ok(signal!.evidence.some((e: string) => /Kernel reported OOMKilled/.test(e)),
+      'kernel branch should take precedence');
+  });
+
+  it('ignores stale kernel signal (older than 1h) and falls through', () => {
+    const oomAt = new Date(Date.now() - 2 * 60 * 60_000).toISOString();  // 2h ago
+    const ctx = makeCtx({ latest: { lastOomKilledAt: oomAt } });
+    assert.equal(detectOom(ctx), null);
   });
 });
 

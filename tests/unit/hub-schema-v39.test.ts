@@ -9,11 +9,7 @@ function getColumns(db: any, table: string): string[] {
 
 const TLS_COLUMNS = ['tls_expires_at', 'tls_issuer', 'tls_subject_alt_names', 'tls_last_checked_at', 'tls_error'];
 
-describe('schema v39', () => {
-  it('reports version 39', () => {
-    assert.equal(SCHEMA_VERSION, 39);
-  });
-
+describe('schema v39 (TLS cert columns)', () => {
   it('fresh bootstrap has TLS columns on http_endpoints', () => {
     const db = new Database(':memory:');
     bootstrap(db);
@@ -43,10 +39,10 @@ describe('schema v39', () => {
     bootstrap(db);
     const cols = getColumns(db, 'http_endpoints');
     for (const c of TLS_COLUMNS) {
-      assert.ok(cols.includes(c), `v38→v39 migration adds ${c}`);
+      assert.ok(cols.includes(c), `v38→v40 migration adds ${c}`);
     }
     const v = (db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string }).value;
-    assert.equal(v, '39');
+    assert.equal(v, String(SCHEMA_VERSION));
     db.close();
   });
 });

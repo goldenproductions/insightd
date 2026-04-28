@@ -25,7 +25,7 @@ interface K8sMeta {
 interface K8sContainerState {
   running?: { startedAt?: string };
   waiting?: { reason?: string; message?: string };
-  terminated?: { reason?: string; message?: string; exitCode?: number };
+  terminated?: { reason?: string; message?: string; exitCode?: number; finishedAt?: string };
 }
 
 interface K8sContainerStatus {
@@ -572,6 +572,20 @@ export class KubernetesRuntime implements ContainerRuntime {
         // K8s terminated state includes exitCode — surface it so the hub can
         // tell completed (0) from failed (non-zero) pods.
         const termCode = (cs.state?.terminated ?? cs.lastState?.terminated)?.exitCode;
+
+        // OOMKilled signal: kernel-reported termination reason on either
+        // current or last state. Prefer the current-state finishedAt, fall
+        // back to last-state, then to "now" if neither carries a timestamp
+        // (rare but possible on some kubelets).
+        let lastOomKilledAt: string | null = null;
+        const oomCurrent = cs.state?.terminated;
+        const oomLast = cs.lastState?.terminated;
+        if (oomCurrent?.reason === 'OOMKilled') {
+          lastOomKilledAt = oomCurrent.finishedAt ?? new Date().toISOString();
+        } else if (oomLast?.reason === 'OOMKilled') {
+          lastOomKilledAt = oomLast.finishedAt ?? new Date().toISOString();
+        }
+
         containers.push({
           name,
           id,
@@ -582,6 +596,7 @@ export class KubernetesRuntime implements ContainerRuntime {
           labels: { ...podLabels }, // container-level labels don't exist in K8s
           image: cs.image,
           exitCode: typeof termCode === 'number' ? termCode : null,
+          lastOomKilledAt,
         });
 
         // Capture resource limits from the pod spec. These are current-state

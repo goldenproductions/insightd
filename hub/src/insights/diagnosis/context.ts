@@ -35,6 +35,7 @@ interface LatestContainerRow {
   health_status: string | null;
   health_check_output: string | null;
   collected_at: string;
+  last_oom_killed_at: string | null;
 }
 
 interface HostMetricRow {
@@ -131,7 +132,7 @@ export function buildContext(db: Database.Database, entity: DiagnosisEntity, log
 
   // --- Latest snapshot ---
   const latestRow = db.prepare(`
-    SELECT status, cpu_percent, memory_mb, restart_count, health_status, health_check_output, collected_at
+    SELECT status, cpu_percent, memory_mb, restart_count, health_status, health_check_output, collected_at, last_oom_killed_at
     FROM container_snapshots
     WHERE host_id = ? AND container_name = ?
     ORDER BY collected_at DESC LIMIT 1
@@ -254,6 +255,7 @@ export function buildContext(db: Database.Database, entity: DiagnosisEntity, log
       healthStatus: latestRow.health_status,
       healthCheckOutput: latestRow.health_check_output,
       collectedAt: latestRow.collected_at,
+      lastOomKilledAt: latestRow.last_oom_killed_at,
     },
     recent: {
       snapshots: recentSnapshots,
