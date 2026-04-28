@@ -423,7 +423,11 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
       try {
         const { getEndpoints, getLastNChecks } = require('../../hub/src/http-monitor/queries') as any;
         const ep = getEndpoints(db).find((e: any) => e.name === alert.target);
-        if (ep) {
+        // Endpoint deleted or disabled → no further checks will ever roll
+        // in, so the alert is resolved by definition. Mirrors cert_*.
+        if (!ep || ep.enabled === 0) {
+          isResolved = true;
+        } else {
           const checks = getLastNChecks(db, ep.id, 1) as { is_up: number }[];
           isResolved = checks.length > 0 && checks[0].is_up === 1;
         }

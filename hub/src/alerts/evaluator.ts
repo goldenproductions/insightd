@@ -692,9 +692,15 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
       const latest = db.prepare('SELECT health_status FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target) as { health_status: string } | undefined;
       isResolved = !!latest && latest.health_status !== 'unhealthy';
     } else if (alert.alert_type === 'endpoint_down') {
+      // If the endpoint was deleted or disabled, the http-monitor stops
+      // probing it — no new is_up=1 check is ever going to roll in. Treat
+      // that as resolved so the alert doesn't sit active forever and the
+      // user can clean it up via DELETE. Mirrors the cert_* handlers below.
       const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
-      const ep = (getEndpoints(db) as Array<{ id: number; name: string }>).find(e => e.name === alert.target);
-      if (ep) {
+      const ep = (getEndpoints(db) as Array<{ id: number; name: string; enabled?: number }>).find(e => e.name === alert.target);
+      if (!ep || ep.enabled === 0) {
+        isResolved = true;
+      } else {
         const checks = getLastNChecks(db, ep.id, 1) as { is_up: number }[];
         isResolved = checks.length > 0 && checks[0].is_up === 1;
       }

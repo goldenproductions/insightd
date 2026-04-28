@@ -355,6 +355,30 @@ describe('evaluateAlerts', () => {
       assert.ok(epResolved[0].message.includes('reachable again'));
     });
 
+    it('resolves endpoint_down when the endpoint has been deleted', () => {
+      // No endpoints seeded — the alert references a target that no longer
+      // exists. Without this fix the alert would sit active forever, taking
+      // up space on the Alerts page and refusing to be deleted.
+      seedAlertState(db, [
+        { hostId: 'hub', type: 'endpoint_down', target: 'Gone API', triggeredAt: ts(new Date(NOW - 3600000)), lastNotified: ts(new Date(NOW - 3600000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+      const epResolved = resolved.filter((a: any) => a.type === 'endpoint_down');
+      assert.equal(epResolved.length, 1);
+    });
+
+    it('resolves endpoint_down when the endpoint is disabled', () => {
+      seedHttpEndpoints(db, [{ name: 'Paused API', url: 'https://api.example.com', enabled: false }]);
+      seedAlertState(db, [
+        { hostId: 'hub', type: 'endpoint_down', target: 'Paused API', triggeredAt: ts(new Date(NOW - 3600000)), lastNotified: ts(new Date(NOW - 3600000)) },
+      ]);
+
+      const { resolved } = evaluateAlerts(db, { alerts: alertsConfig });
+      const epResolved = resolved.filter((a: any) => a.type === 'endpoint_down');
+      assert.equal(epResolved.length, 1);
+    });
+
     it('resolves high_cpu when CPU drops below threshold', () => {
       seedContainerSnapshots(db, [
         { name: 'postgres', status: 'running', cpu: 50, mem: 100, at: ts(NOW) },
