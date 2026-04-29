@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, HostMetricsSnapshot, Host, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
+import type { HostDetail, HostMetricsSnapshot, Host, TimelineResponse, Trends, EventItem } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { NodeConditionBadges } from '@/components/NodeConditionBadges';
@@ -37,10 +37,9 @@ export function HostDetailPage() {
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['host', hostId, showInternal]], confirm);
 
   const { data } = useQuery({ queryKey: queryKeys.host(hostId, showInternal), queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`), refetchInterval: 30_000 });
-  const { data: timeline } = useQuery({ queryKey: queryKeys.timeline(hostId), queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
+  const { data: timeline } = useQuery({ queryKey: queryKeys.timeline(hostId), queryFn: () => api<TimelineResponse>(`/hosts/${hid}/timeline?days=7`).catch(() => ({ host: null, containers: [] }) as TimelineResponse) });
   const { data: trends } = useQuery({ queryKey: queryKeys.trends(hostId), queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
   const { data: events } = useQuery({ queryKey: queryKeys.events(hostId), queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
-  const { data: baselines, isFetched: baselinesReady } = useQuery({ queryKey: queryKeys.hostBaselines(hostId), queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
   const { data: metricsHistory } = useQuery({ queryKey: queryKeys.hostMetricsHistory(hostId), queryFn: () => api<HostMetricsSnapshot[]>(`/hosts/${hid}/metrics?hours=24`).catch(() => []), refetchInterval: 60_000 });
   const { data: allHosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<Host[]>('/hosts'), staleTime: 30_000 });
 
@@ -141,13 +140,11 @@ export function HostDetailPage() {
           data={data}
           timeline={timeline}
           hostId={hostId!}
-          hid={hid}
           navigate={navigate}
           isAuthenticated={isAuthenticated}
           actionLoading={actionLoading}
           runAction={runAction}
           removeContainer={removeContainer}
-          baselines={baselinesReady ? baselines : undefined}
           metricsHistory={metricsHistory}
         />
       )}

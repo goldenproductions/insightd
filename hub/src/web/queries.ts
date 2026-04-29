@@ -48,6 +48,8 @@ interface ContainerRow {
   memory_limit_mb: number | null;
   memory_limit_percent: number | null;
   last_oom_killed_at: string | null;
+  size_rootfs_bytes: number | null;
+  size_rw_bytes: number | null;
   collected_at: string;
   is_stale: number;
 }
@@ -329,6 +331,7 @@ function getLatestContainers(db: Database.Database, hostId: string, onlineThresh
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
+           cs.size_rootfs_bytes, cs.size_rw_bytes,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
@@ -982,6 +985,7 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
+           cs.size_rootfs_bytes, cs.size_rw_bytes,
            cs.last_oom_killed_at,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
@@ -1009,7 +1013,13 @@ function getHostRuntimeType(db: Database.Database, hostId: string): string {
   return row?.runtime_type ?? 'docker';
 }
 
-function getUptimeTimeline(db: Database.Database, hostId: string, days: number): Array<{ name: string; slots: string[]; uptimePercent: number | null }> {
+interface UptimeTimelineRow { name: string; slots: string[]; uptimePercent: number | null }
+
+function getUptimeTimeline(db: Database.Database, hostId: string, days: number): { host: UptimeTimelineRow | null; containers: UptimeTimelineRow[] } {
+  const totalHours = days * 24;
+  const now = Date.now();
+  const startMs = now - days * 86400000;
+
   const rows = db.prepare(`
     SELECT cs.container_name, cs.status, cs.collected_at
     FROM container_snapshots cs
@@ -1018,17 +1028,13 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
     ORDER BY cs.container_name, cs.collected_at
   `).all(hostId, days) as UptimeSnapshotRow[];
 
-  const containers: Record<string, UptimeSnapshotRow[]> = {};
+  const containerMap: Record<string, UptimeSnapshotRow[]> = {};
   for (const r of rows) {
-    if (!containers[r.container_name]) containers[r.container_name] = [];
-    containers[r.container_name].push(r);
+    if (!containerMap[r.container_name]) containerMap[r.container_name] = [];
+    containerMap[r.container_name].push(r);
   }
 
-  const totalHours = days * 24;
-  const now = Date.now();
-  const startMs = now - days * 86400000;
-
-  return Object.entries(containers).map(([name, snapshots]) => {
+  const containers = Object.entries(containerMap).map(([name, snapshots]) => {
     const slots: string[] = [];
     let runningCount = 0;
     for (let h = 0; h < totalHours; h++) {
@@ -1051,6 +1057,40 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
     const uptimePercent = slotsWithData > 0 ? Math.round((runningCount / slotsWithData) * 100 * 10) / 10 : null;
     return { name, slots, uptimePercent };
   });
+
+  // Host uptime: any host_snapshot in a slot ⇒ host was reporting (up).
+  // No snapshot ⇒ either host was offline or the agent/hub couldn't reach it.
+  const hostSnapshots = db.prepare(`
+    SELECT collected_at FROM host_snapshots
+    WHERE host_id = ? AND collected_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY collected_at
+  `).all(hostId, days) as { collected_at: string }[];
+  const hostExists = db.prepare('SELECT 1 FROM hosts WHERE host_id = ?').get(hostId);
+
+  let host: UptimeTimelineRow | null = null;
+  if (hostExists) {
+    const hostTs = hostSnapshots.map(s => new Date(s.collected_at + 'Z').getTime());
+    const slots: string[] = [];
+    let upCount = 0;
+    let firstSlotWithDataIdx = -1;
+    for (let h = 0; h < totalHours; h++) {
+      const slotStart = startMs + h * 3600000;
+      const slotEnd = slotStart + 3600000;
+      const hasSnapshot = hostTs.some(t => t >= slotStart && t < slotEnd);
+      if (hasSnapshot) {
+        slots.push('up');
+        upCount++;
+        if (firstSlotWithDataIdx === -1) firstSlotWithDataIdx = h;
+      } else {
+        slots.push(firstSlotWithDataIdx === -1 ? 'none' : 'down');
+      }
+    }
+    const slotsWithData = slots.filter(s => s !== 'none').length;
+    const uptimePercent = slotsWithData > 0 ? Math.round((upCount / slotsWithData) * 100 * 10) / 10 : null;
+    host = { name: hostId, slots, uptimePercent };
+  }
+
+  return { host, containers };
 }
 
 function getResourceRankings(db: Database.Database, limit: number, showInternal: boolean = false): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
