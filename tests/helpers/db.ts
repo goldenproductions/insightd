@@ -64,6 +64,7 @@ interface BaselineSeed {
   entityType: string; entityId: string; metric?: string; timeBucket?: string;
   p50?: number; p75?: number; p90?: number; p95?: number; p99?: number;
   min?: number; max?: number; sampleCount?: number;
+  mad?: number | null; madSampleCount?: number | null;
 }
 
 interface HealthScoreSeed {
@@ -211,12 +212,15 @@ function seedWebhooks(db: Database.Database, rows: WebhookSeed[]): (number | big
 
 function seedBaselines(db: Database.Database, rows: BaselineSeed[]): void {
   const insert = db.prepare(`
-    INSERT INTO baselines (entity_type, entity_id, metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, sample_count, computed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO baselines (entity_type, entity_id, metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, mad, mad_sample_count, sample_count, computed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `);
   for (const r of rows) {
     insert.run(r.entityType, r.entityId, r.metric || 'cpu_percent', r.timeBucket || 'all',
-      r.p50 ?? 10, r.p75 ?? 20, r.p90 ?? 30, r.p95 ?? 40, r.p99 ?? 50, r.min ?? 1, r.max ?? 60, r.sampleCount ?? 100);
+      r.p50 ?? 10, r.p75 ?? 20, r.p90 ?? 30, r.p95 ?? 40, r.p99 ?? 50, r.min ?? 1, r.max ?? 60,
+      r.mad === undefined ? null : r.mad,
+      r.madSampleCount === undefined ? null : r.madSampleCount,
+      r.sampleCount ?? 100);
   }
 }
 

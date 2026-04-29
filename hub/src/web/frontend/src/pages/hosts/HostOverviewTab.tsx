@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react';
 import type { HostDetail, HostMetricsSnapshot, TimelineResponse, TimelineEntry, ContainerSnapshot } from '@/types/api';
 import { Card } from '@/components/Card';
-import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
-import { fmtPercent, fmtUptime, fmtBytesPerSec } from '@/lib/formatters';
+import { fmtPercent, fmtBytesPerSec } from '@/lib/formatters';
 import { isInternalContainer, getContainerNamespace, deriveContainerDisplayStatus } from '@/lib/containers';
 import { useNamespaceFilter } from '@/hooks/useNamespaceFilter';
 import { NamespaceFilterBar } from '@/components/NamespaceFilterBar';
@@ -71,7 +70,6 @@ interface Props {
 }
 
 export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, isAuthenticated, actionLoading, runAction, removeContainer, metricsHistory }: Props) {
-  const hm = data.hostMetrics;
   const [advanced, setAdvanced] = useState(false);
 
   const chartData = useMemo(
@@ -187,19 +185,9 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
           <div className="space-y-4">
             {timeline.host && (
               <div className="rounded-lg border border-border bg-bg-secondary p-3">
-                <div className="mb-3 flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <StatusDot status={data.is_online ? 'online' : 'offline'} size="md" />
-                    <div>
-                      <div className="text-[11px] font-semibold uppercase tracking-wider text-secondary">
-                        {data.is_online ? 'Currently online' : 'Offline'}
-                      </div>
-                      <div className="text-lg font-bold text-fg tabular-nums">
-                        {hm?.uptime_seconds != null ? `Up for ${fmtUptime(hm.uptime_seconds)}` : 'Uptime unknown'}
-                      </div>
-                    </div>
-                  </div>
+                <div className="mb-2 flex items-center justify-between gap-3">
                   <span className="rounded border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-secondary">Host</span>
+                  <span className="font-mono text-[10px] text-muted">the machine itself</span>
                 </div>
                 <UptimeTimeline containers={[timeline.host]} rowHeight={22} />
               </div>

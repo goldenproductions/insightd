@@ -126,6 +126,14 @@ pre, code, .log-line, [data-no-transition] {
   animation: dot-pulse 3s ease-in-out infinite;
 }
 
+/* Explore drawer — shifts <main> content left when ExploreDrawer is open
+   (toggled via body[data-explore-open]). 420px drawer + viewport breakpoint
+   padding. */
+main { transition: padding-right 300ms cubic-bezier(0.32, 0.72, 0, 1); }
+@media (min-width: 1024px) {
+  body[data-explore-open] main { padding-right: calc(1.5rem + 420px); }
+}
+
 /* Clickable card hover lift */
 .card-interactive {
   transition: transform 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
