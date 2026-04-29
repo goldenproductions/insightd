@@ -791,7 +791,7 @@ function handleGetBaselines(req: HandlerReq, res: ServerResponse, db: Database.D
 // `hub/src/insights/thresholds.ts` next time anyone touches detector
 // thresholds. Ship-now / extract-later was an explicit user call.
 
-const { TIME_PERIODS, getTimePeriod } = require('../insights/baselines');
+const { getTimePeriod } = require('../insights/baselines');
 const { robustZ } = require('../insights/stats');
 
 interface CapacityFloor {
