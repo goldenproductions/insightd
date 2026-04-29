@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerSnapshot } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -24,6 +24,8 @@ import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
 import { FindingCard } from '@/components/FindingCard';
 import { AnomaliesList } from '@/components/AnomaliesList';
+import { BaselinesViewer } from '@/components/BaselinesViewer';
+import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { LogTemplatesList } from '@/components/LogTemplatesList';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
@@ -149,6 +151,11 @@ export function ContainerDetailPage() {
     queryKey: queryKeys.hostContainers(hostId),
     queryFn: () => api<ContainerSnapshot[]>(`/hosts/${hid}/containers`),
     staleTime: 30_000,
+  });
+  const { data: baselines } = useQuery({
+    queryKey: queryKeys.containerBaselines(hostId, containerName),
+    queryFn: () => api<ContainerBaselinesResponse>(`/hosts/${hid}/containers/${cname}/baselines`).catch(() => ({ host_id: hostId!, container_name: containerName!, metrics: [], computed_at: null }) as ContainerBaselinesResponse),
+    refetchInterval: 5 * 60_000,
   });
 
   // Prev/next sibling navigation. Server-orders alphabetically by container_name,
@@ -451,12 +458,15 @@ export function ContainerDetailPage() {
             without competing with the calm-by-default state. */}
         {showHealthFailure && <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />}
 
-        {/* v26 observability: historical anomalies + Drain template patterns.
-            These are secondary to the main finding, so they live outside the
-            hero as collapsible cards that only render when data is present. */}
-        <AnomaliesList anomalies={data.anomalies} scope="container" />
-        <LogTemplatesList templates={data.logTemplates} />
       </section>
+
+      {((data.anomalies?.length ?? 0) > 0 || (data.logTemplates?.length ?? 0) > 0 || (baselines?.metrics?.length ?? 0) > 0) && (
+        <ExploreDrawer description="Baselines, historical anomalies, and mined log patterns for this container.">
+          <BaselinesViewer data={baselines} />
+          <AnomaliesList anomalies={data.anomalies} scope="container" />
+          <LogTemplatesList templates={data.logTemplates} />
+        </ExploreDrawer>
+      )}
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 

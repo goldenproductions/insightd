@@ -1,7 +1,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const http = require('http');
-const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedUpdateChecks, seedBaselines, seedHealthScores } = require('../helpers/db');
+const { createTestDb, seedContainerSnapshots, seedDiskSnapshots, seedAlertState, seedUpdateChecks, seedBaselines, seedHealthScores, seedHostSnapshots } = require('../helpers/db');
 const { ts, NOW } = require('../helpers/fixtures');
 
 const recent = ts(new Date(NOW - 2 * 60 * 1000));
@@ -646,6 +646,68 @@ describe('Web API integration', () => {
     const res = await fetch(port, '/api/baselines/container/h1%2Fnginx');
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.json()));
+  });
+
+  it('GET /api/hosts/:hostId/baselines bundles per-metric buckets + live value + capacity floor', async () => {
+    seedHost(db, 'h1', recent);
+    seedHostSnapshots(db, [{ hostId: 'h1', cpu: 65, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: recent }]);
+    seedBaselines(db, [
+      { entityType: 'host', entityId: 'h1', metric: 'cpu_percent', timeBucket: 'all', p50: 30, p75: 40, p90: 50, p95: 55, p99: 60, min: 5, max: 70, mad: 8, madSampleCount: 500, sampleCount: 500 },
+      { entityType: 'host', entityId: 'h1', metric: 'cpu_percent', timeBucket: 'morning', p50: 35, p75: 45, p90: 55, p95: 60, p99: 65, min: 10, max: 70, mad: 9, madSampleCount: 80, sampleCount: 80 },
+      { entityType: 'host', entityId: 'h1', metric: 'memory_used_mb', timeBucket: 'all', p50: 3500, p75: 3800, p90: 4100, p95: 4200, p99: 4400, min: 2000, max: 4500, mad: 200, madSampleCount: 500, sampleCount: 500 },
+    ]);
+
+    const res = await fetch(port, '/api/hosts/h1/baselines');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.equal(data.host_id, 'h1');
+    assert.ok(typeof data.computed_at === 'string');
+
+    const cpu = data.metrics.find((m: any) => m.metric === 'cpu_percent');
+    assert.ok(cpu, 'cpu_percent metric is present');
+    assert.equal(cpu.unit, 'percent');
+    assert.equal(cpu.live_value, 65);
+    assert.equal(cpu.capacity_floor, 80);          // host CPU absolute floor
+    assert.equal(cpu.capacity_floor_kind, 'absolute');
+    assert.equal(cpu.buckets.length, 2);
+    const allBucket = cpu.buckets.find((b: any) => b.time_bucket === 'all');
+    assert.ok(allBucket.live_robust_z != null && allBucket.live_robust_z > 0, 'robust z computed server-side');
+    // is_current must be set on at least one bucket (the 'all' bucket always qualifies).
+    assert.ok(cpu.buckets.some((b: any) => b.is_current));
+
+    const mem = data.metrics.find((m: any) => m.metric === 'memory_used_mb');
+    assert.ok(mem);
+    assert.equal(mem.capacity_floor_kind, 'capacity');
+    assert.equal(mem.capacity_floor, 6400);         // 8000 * 0.8
+    assert.equal(mem.live_value, 4000);
+  });
+
+  it('GET /api/hosts/:hostId/containers/:name/baselines returns container shape with p95+500 floor', async () => {
+    seedHost(db, 'h1', recent);
+    seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', cpu: 25, mem: 600, at: recent }]);
+    seedBaselines(db, [
+      { entityType: 'container', entityId: 'h1/nginx', metric: 'cpu_percent', timeBucket: 'all', p50: 10, p75: 15, p90: 20, p95: 22, p99: 30, min: 1, max: 35, mad: 5, madSampleCount: 300, sampleCount: 300 },
+      { entityType: 'container', entityId: 'h1/nginx', metric: 'memory_mb', timeBucket: 'all', p50: 200, p75: 250, p90: 280, p95: 300, p99: 330, min: 100, max: 400, mad: 30, madSampleCount: 300, sampleCount: 300 },
+    ]);
+
+    const res = await fetch(port, '/api/hosts/h1/containers/nginx/baselines');
+    assert.equal(res.status, 200);
+    const data = res.json();
+    assert.equal(data.host_id, 'h1');
+    assert.equal(data.container_name, 'nginx');
+
+    const cpu = data.metrics.find((m: any) => m.metric === 'cpu_percent');
+    assert.equal(cpu.capacity_floor, 50);              // container CPU absolute floor
+    assert.equal(cpu.capacity_floor_kind, 'absolute');
+    assert.equal(cpu.live_value, 25);
+
+    const mem = data.metrics.find((m: any) => m.metric === 'memory_mb');
+    assert.equal(mem.capacity_floor_kind, 'p95_plus');
+    assert.equal(mem.capacity_floor, 800);             // p95 (300) + 500
+    assert.equal(mem.live_value, 600);
+    // 600 is above p95 (300) but below p95+500 (800) — UI will surface "won't alert" pill.
+    assert.ok(mem.live_value > mem.buckets[0].p95);
+    assert.ok(mem.live_value < mem.capacity_floor);
   });
 
   it('GET /api/health-scores returns all scores', async () => {

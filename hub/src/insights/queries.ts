@@ -18,6 +18,11 @@ interface BaselineRow {
   computed_at: string;
 }
 
+interface BaselineRowWithMad extends BaselineRow {
+  mad: number | null;
+  mad_sample_count: number | null;
+}
+
 interface HealthScoreRow {
   entity_type: string;
   entity_id: string;
@@ -44,6 +49,12 @@ function getBaselines(db: Database.Database, entityType: string, entityId: strin
   return db.prepare(
     'SELECT metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, sample_count, computed_at FROM baselines WHERE entity_type = ? AND entity_id = ?'
   ).all(entityType, entityId) as BaselineRow[];
+}
+
+function getBaselinesWithMad(db: Database.Database, entityType: string, entityId: string): BaselineRowWithMad[] {
+  return db.prepare(
+    'SELECT metric, time_bucket, p50, p75, p90, p95, p99, min_val, max_val, mad, mad_sample_count, sample_count, computed_at FROM baselines WHERE entity_type = ? AND entity_id = ?'
+  ).all(entityType, entityId) as BaselineRowWithMad[];
 }
 
 function getHostBaselines(db: Database.Database, hostId: string): { host: BaselineRow[]; containers: Record<string, BaselineRow[]> } {
@@ -92,4 +103,4 @@ function getHostInsights(db: Database.Database, hostId: string): InsightRow[] {
   `).all(hostId, `${hostId}/%`) as InsightRow[];
 }
 
-module.exports = { getBaselines, getHostBaselines, getAllHealthScores, getHealthScore, getInsights, getEntityInsights, getHostInsights };
+module.exports = { getBaselines, getBaselinesWithMad, getHostBaselines, getAllHealthScores, getHealthScore, getInsights, getEntityInsights, getHostInsights };

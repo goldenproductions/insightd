@@ -1,7 +1,7 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, HostMetricsSnapshot, Host, TimelineResponse, Trends, EventItem } from '@/types/api';
+import type { HostDetail, HostMetricsSnapshot, Host, TimelineResponse, Trends, EventItem, HostBaselinesResponse } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { NodeConditionBadges } from '@/components/NodeConditionBadges';
@@ -23,7 +23,9 @@ import { HostResourcesTab } from './HostResourcesTab';
 import { HostAlertsTab } from './HostAlertsTab';
 import { HostK8sEventsTab } from './HostK8sEventsTab';
 import { AnomaliesList } from '@/components/AnomaliesList';
-import { timeAgo } from '@/lib/formatters';
+import { BaselinesViewer } from '@/components/BaselinesViewer';
+import { ExploreDrawer } from '@/components/ExploreDrawer';
+import { HostUptimeHero } from '@/components/HostUptimeHero';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -42,6 +44,11 @@ export function HostDetailPage() {
   const { data: events } = useQuery({ queryKey: queryKeys.events(hostId), queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
   const { data: metricsHistory } = useQuery({ queryKey: queryKeys.hostMetricsHistory(hostId), queryFn: () => api<HostMetricsSnapshot[]>(`/hosts/${hid}/metrics?hours=24`).catch(() => []), refetchInterval: 60_000 });
   const { data: allHosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<Host[]>('/hosts'), staleTime: 30_000 });
+  const { data: baselines } = useQuery({
+    queryKey: queryKeys.hostBaselines(hostId),
+    queryFn: () => api<HostBaselinesResponse>(`/hosts/${hid}/baselines`).catch(() => ({ host_id: hostId!, metrics: [], computed_at: null }) as HostBaselinesResponse),
+    refetchInterval: 5 * 60_000,
+  });
 
   // Prev/next sibling navigation — alphabetical by host_id, matching the hosts page order.
   const hostIds = allHosts?.map(h => h.host_id) ?? [];
@@ -121,15 +128,7 @@ export function HostDetailPage() {
         <RemoveHostButton hostId={hostId!} confirm={confirm} />
       </div>
 
-      {!data.is_online && (
-        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg">
-          <div className="font-medium">Agent not reporting</div>
-          <div className="mt-0.5 text-xs text-muted">
-            Last contact {timeAgo(data.last_seen)}. Metrics and container state shown below are the
-            last values received — treat as stale until the agent reconnects.
-          </div>
-        </div>
-      )}
+      <HostUptimeHero data={data} timeline={timeline} />
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
@@ -161,9 +160,12 @@ export function HostDetailPage() {
         <HostK8sEventsTab hostId={hostId!} />
       )}
 
-      {/* v26 — historical S-H-ESD anomalies for this host. Always visible
-          (but the card hides itself when there's nothing to show). */}
-      <AnomaliesList anomalies={data.anomalies} scope="host" />
+      {((data.anomalies?.length ?? 0) > 0 || (baselines?.metrics?.length ?? 0) > 0) && (
+        <ExploreDrawer description="Baselines and historical anomalies for this host.">
+          <BaselinesViewer data={baselines} />
+          <AnomaliesList anomalies={data.anomalies} scope="host" />
+        </ExploreDrawer>
+      )}
 
       <ConfirmDialog {...dialogProps} />
     </div>

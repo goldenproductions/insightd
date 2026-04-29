@@ -135,6 +135,40 @@ describe('baselines', () => {
     });
   });
 
+  describe('mad / mad_sample_count storage', () => {
+    it('persists mad + mad_sample_count when sample count >= 10', () => {
+      // Spread snapshots across 10 different timestamps so dedup doesn't collapse them.
+      for (let i = 0; i < 10; i++) {
+        seedHostSnapshots(db, [{
+          hostId: 'h1', cpu: 10 + i * 3, memTotal: 8000, memUsed: 4000, memAvail: 4000,
+          load1: 1, at: ts(new Date(NOW - i * 60000)),
+        }]);
+      }
+      computeBaselines(db);
+
+      const row = db.prepare("SELECT mad, mad_sample_count, sample_count FROM baselines WHERE entity_id = 'h1' AND metric = 'cpu_percent' AND time_bucket = 'all'").get() as { mad: number | null; mad_sample_count: number | null; sample_count: number };
+      assert.ok(row, 'baseline row exists');
+      assert.equal(row.sample_count, 10);
+      assert.ok(row.mad != null && row.mad > 0, 'mad is computed and non-zero');
+      assert.equal(row.mad_sample_count, 10);
+    });
+
+    it('leaves mad null when sample count is below 10', () => {
+      for (let i = 0; i < 5; i++) {
+        seedHostSnapshots(db, [{
+          hostId: 'h2', cpu: 10 + i, memTotal: 8000, memUsed: 4000, memAvail: 4000,
+          load1: 1, at: ts(new Date(NOW - i * 60000)),
+        }]);
+      }
+      computeBaselines(db);
+
+      const row = db.prepare("SELECT mad, mad_sample_count FROM baselines WHERE entity_id = 'h2' AND metric = 'cpu_percent' AND time_bucket = 'all'").get() as { mad: number | null; mad_sample_count: number | null } | undefined;
+      assert.ok(row, 'baseline row exists');
+      assert.equal(row!.mad, null);
+      assert.equal(row!.mad_sample_count, 0);
+    });
+  });
+
   describe('getTimePeriod', () => {
     it('should return correct period for each hour', () => {
       assert.equal(getTimePeriod(0), 'night');

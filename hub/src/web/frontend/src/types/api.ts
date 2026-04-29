@@ -344,6 +344,60 @@ export interface LogTemplate {
   last_seen: string;
 }
 
+// Baselines viewer (Explore drawer)
+export type BaselineMetricUnit = 'percent' | 'mb' | 'load' | 'celsius' | 'bytes_per_sec' | 'raw';
+export type BaselineCapacityKind = 'absolute' | 'capacity' | 'p95_plus' | 'none';
+export type BaselineTimeBucket =
+  | 'all' | 'weekday' | 'weekend'
+  | 'night' | 'early_morning' | 'morning'
+  | 'afternoon' | 'evening' | 'late_evening';
+
+export interface BaselineBucket {
+  time_bucket: BaselineTimeBucket;
+  p50: number | null;
+  p75: number | null;
+  p90: number | null;
+  p95: number | null;
+  p99: number | null;
+  min_val: number | null;
+  max_val: number | null;
+  mad: number | null;
+  mad_sample_count: number | null;
+  sample_count: number;
+  /** Server-computed robust z of the live value vs this bucket. Null when mad
+   *  is unknown/zero or when there is no live value. */
+  live_robust_z: number | null;
+  /** True for the bucket that matches "now" — current time-of-day period,
+   *  weekday/weekend membership, or the catch-all 'all' bucket. */
+  is_current: boolean;
+}
+
+export interface BaselineMetricView {
+  metric: string;
+  unit: BaselineMetricUnit;
+  /** Latest live value from the most recent snapshot. Null when stale/missing. */
+  live_value: number | null;
+  /** Floor a live value would have to clear before an alert fires. Null for
+   *  metrics that drive no alerts (network/disk i/o, gpu, temperature). */
+  capacity_floor: number | null;
+  capacity_floor_kind: BaselineCapacityKind;
+  buckets: BaselineBucket[];
+}
+
+export interface HostBaselinesResponse {
+  host_id: string;
+  metrics: BaselineMetricView[];
+  /** Newest computed_at across the bundle, or null if there are no rows. */
+  computed_at: string | null;
+}
+
+export interface ContainerBaselinesResponse {
+  host_id: string;
+  container_name: string;
+  metrics: BaselineMetricView[];
+  computed_at: string | null;
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';

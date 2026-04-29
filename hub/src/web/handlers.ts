@@ -779,6 +779,194 @@ function handleGetBaselines(req: HandlerReq, res: ServerResponse, db: Database.D
   return insightQueries.getBaselines(db, params.entityType, decodeURIComponent(params.entityId));
 }
 
+// ── Baselines viewer (Explore drawer) ────────────────────────────────────────
+//
+// These two handlers power the BaselinesViewer component. Each one bundles
+// the per-bucket baseline rows (including mad / mad_sample_count) with the
+// latest live value, the capacity floor an alert would need to clear, and
+// a server-computed robust z so the UI doesn't have to recreate the formula.
+//
+// TODO(thresholds): the capacity-floor numbers below duplicate the alert
+// thresholds in `hub/src/insights/detector.ts`. Extract both to
+// `hub/src/insights/thresholds.ts` next time anyone touches detector
+// thresholds. Ship-now / extract-later was an explicit user call.
+
+const { TIME_PERIODS, getTimePeriod } = require('../insights/baselines');
+const { robustZ } = require('../insights/stats');
+
+interface CapacityFloor {
+  /** Threshold in the metric's native unit. Null when the metric drives no
+   *  alert at all (network/disk i/o, gpu, temperature). */
+  threshold: number | null;
+  /** Human-readable kind for the UI:
+   *   'absolute'   – fixed numeric threshold (e.g. CPU 80%)
+   *   'capacity'   – % of a moving capacity (host memory: 80% of total)
+   *   'p95_plus'   – p95 + N (container memory: p95 + 500 MB)
+   *   'none'       – no alert applies; threshold is null */
+  kind: 'absolute' | 'capacity' | 'p95_plus' | 'none';
+}
+
+function hostCapacityFloor(metric: string, memoryTotalMb: number | null): CapacityFloor {
+  if (metric === 'cpu_percent') return { threshold: 80, kind: 'absolute' };
+  if (metric === 'load_5') return { threshold: 4, kind: 'absolute' };
+  if (metric === 'memory_used_mb' && memoryTotalMb && memoryTotalMb > 0) {
+    return { threshold: Math.round(memoryTotalMb * 0.8 * 100) / 100, kind: 'capacity' };
+  }
+  return { threshold: null, kind: 'none' };
+}
+
+function containerCapacityFloor(metric: string, allBucketP95: number | null): CapacityFloor {
+  if (metric === 'cpu_percent') return { threshold: 50, kind: 'absolute' };
+  if (metric === 'memory_mb' && allBucketP95 != null) {
+    return { threshold: Math.round((allBucketP95 + 500) * 100) / 100, kind: 'p95_plus' };
+  }
+  return { threshold: null, kind: 'none' };
+}
+
+const METRIC_UNITS: Record<string, string> = {
+  cpu_percent: 'percent',
+  memory_used_mb: 'mb',
+  memory_mb: 'mb',
+  swap_used_mb: 'mb',
+  load_1: 'load',
+  load_5: 'load',
+  load_15: 'load',
+  gpu_utilization_percent: 'percent',
+  cpu_temperature_celsius: 'celsius',
+  gpu_temperature_celsius: 'celsius',
+  disk_read_bytes_per_sec: 'bytes_per_sec',
+  disk_write_bytes_per_sec: 'bytes_per_sec',
+  net_rx_bytes_per_sec: 'bytes_per_sec',
+  net_tx_bytes_per_sec: 'bytes_per_sec',
+};
+
+interface RawBaseline {
+  metric: string;
+  time_bucket: string;
+  p50: number | null;
+  p75: number | null;
+  p90: number | null;
+  p95: number | null;
+  p99: number | null;
+  min_val: number | null;
+  max_val: number | null;
+  mad: number | null;
+  mad_sample_count: number | null;
+  sample_count: number;
+  computed_at: string;
+}
+
+function currentBuckets(): { period: string; isWeekend: boolean } {
+  const now = new Date();
+  const hour = now.getUTCHours();
+  const dow = now.getUTCDay(); // 0 = Sunday, 6 = Saturday
+  return { period: getTimePeriod(hour), isWeekend: dow === 0 || dow === 6 };
+}
+
+function buildMetricViews(
+  rows: RawBaseline[],
+  liveValues: Record<string, number | null>,
+  floorFor: (metric: string, allBucketP95: number | null) => CapacityFloor,
+): any[] {
+  // Group by metric → list of buckets
+  const byMetric = new Map<string, RawBaseline[]>();
+  for (const r of rows) {
+    if (!byMetric.has(r.metric)) byMetric.set(r.metric, []);
+    byMetric.get(r.metric)!.push(r);
+  }
+
+  const { period, isWeekend } = currentBuckets();
+
+  const out: any[] = [];
+  for (const [metric, buckets] of byMetric) {
+    const live = liveValues[metric] ?? null;
+    const allBucket = buckets.find(b => b.time_bucket === 'all');
+    const floor = floorFor(metric, allBucket?.p95 ?? null);
+
+    const bucketViews = buckets.map(b => {
+      const isCurrent =
+        b.time_bucket === 'all' ||
+        b.time_bucket === period ||
+        (b.time_bucket === 'weekday' && !isWeekend) ||
+        (b.time_bucket === 'weekend' && isWeekend);
+      const z = (live != null && b.p50 != null) ? robustZ(live, b.p50, b.mad) : null;
+      return {
+        time_bucket: b.time_bucket,
+        p50: b.p50,
+        p75: b.p75,
+        p90: b.p90,
+        p95: b.p95,
+        p99: b.p99,
+        min_val: b.min_val,
+        max_val: b.max_val,
+        mad: b.mad,
+        mad_sample_count: b.mad_sample_count,
+        sample_count: b.sample_count,
+        live_robust_z: z,
+        is_current: isCurrent,
+      };
+    });
+
+    out.push({
+      metric,
+      unit: METRIC_UNITS[metric] ?? 'raw',
+      live_value: live,
+      capacity_floor: floor.threshold,
+      capacity_floor_kind: floor.kind,
+      buckets: bucketViews,
+    });
+  }
+  return out;
+}
+
+function newestComputedAt(rows: { computed_at: string }[]): string | null {
+  let newest: string | null = null;
+  for (const r of rows) {
+    if (newest == null || r.computed_at > newest) newest = r.computed_at;
+  }
+  return newest;
+}
+
+function handleGetHostBaselinesView(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+  const hostId = decodeURIComponent(params.hostId);
+  const rows = insightQueries.getBaselinesWithMad(db, 'host', hostId) as RawBaseline[];
+
+  const latest = db.prepare(
+    'SELECT cpu_percent, memory_used_mb, memory_total_mb, load_1, load_5, swap_used_mb, gpu_utilization_percent, cpu_temperature_celsius, gpu_temperature_celsius, disk_read_bytes_per_sec, disk_write_bytes_per_sec, net_rx_bytes_per_sec, net_tx_bytes_per_sec FROM host_snapshots WHERE host_id = ? ORDER BY collected_at DESC LIMIT 1'
+  ).get(hostId) as Record<string, number | null> | undefined;
+
+  const memoryTotalMb = latest?.memory_total_mb ?? null;
+  const liveValues: Record<string, number | null> = latest
+    ? { ...latest, load_15: null }   // baselines don't track load_15, harmless
+    : {};
+
+  return {
+    host_id: hostId,
+    metrics: buildMetricViews(rows, liveValues, (m, _p95) => hostCapacityFloor(m, memoryTotalMb)),
+    computed_at: newestComputedAt(rows),
+  };
+}
+
+function handleGetContainerBaselinesView(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+  const hostId = decodeURIComponent(params.hostId);
+  const containerName = decodeURIComponent(params.containerName);
+  const entityId = `${hostId}/${containerName}`;
+  const rows = insightQueries.getBaselinesWithMad(db, 'container', entityId) as RawBaseline[];
+
+  const latest = db.prepare(
+    'SELECT cpu_percent, memory_mb FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1'
+  ).get(hostId, containerName) as Record<string, number | null> | undefined;
+
+  const liveValues: Record<string, number | null> = latest ?? {};
+
+  return {
+    host_id: hostId,
+    container_name: containerName,
+    metrics: buildMetricViews(rows, liveValues, containerCapacityFloor),
+    computed_at: newestComputedAt(rows),
+  };
+}
+
 function handleGetAllHealthScores(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return insightQueries.getAllHealthScores(db);
 }
@@ -1280,7 +1468,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
