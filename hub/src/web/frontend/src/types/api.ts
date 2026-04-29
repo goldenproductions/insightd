@@ -282,6 +282,11 @@ export interface ContainerSnapshot {
   // State.OOMKilled or K8s terminated.reason==='OOMKilled'). Null if never
   // observed. Used to surface a "killed by OOM" chip on the detail page.
   last_oom_killed_at: string | null;
+  // v30 — container disk usage. rootfs = base image + writable layer in
+  // Docker; cAdvisor's container_fs_usage_bytes for k8s. rw = writable layer
+  // only. Both null when the runtime didn't report them.
+  size_rootfs_bytes: number | null;
+  size_rw_bytes: number | null;
   collected_at: string;
   // 1 when the owning host hasn't reported within the offline threshold —
   // the snapshot is last-known state, not current truth.
@@ -436,6 +441,11 @@ export interface TimelineEntry {
   name: string;
   slots: ('up' | 'down' | 'none')[];
   uptimePercent: number | null;
+}
+
+export interface TimelineResponse {
+  host: TimelineEntry | null;
+  containers: TimelineEntry[];
 }
 
 // Container Availability (explainable uptime)

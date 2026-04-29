@@ -615,11 +615,13 @@ describe('Web API integration', () => {
     assert.ok(Array.isArray(data.byMemory));
   });
 
-  it('GET /api/hosts/:hostId/timeline returns slot data', async () => {
+  it('GET /api/hosts/:hostId/timeline returns host + containers', async () => {
     seedContainerSnapshots(db, [{ hostId: 'h1', name: 'nginx', status: 'running', at: recent }]);
     const res = await fetch(port, '/api/hosts/h1/timeline?days=7');
     assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.json()));
+    const body = res.json();
+    assert.ok('host' in body);
+    assert.ok(Array.isArray(body.containers));
   });
 
   it('GET /api/hosts/:hostId/events returns events array', async () => {
