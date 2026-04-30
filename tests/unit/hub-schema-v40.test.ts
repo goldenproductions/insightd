@@ -8,10 +8,6 @@ function getColumns(db: any, table: string): string[] {
 }
 
 describe('schema v40', () => {
-  it('reports version 40', () => {
-    assert.equal(SCHEMA_VERSION, 40);
-  });
-
   it('fresh bootstrap has last_oom_killed_at on container_snapshots', () => {
     const db = new Database(':memory:');
     bootstrap(db);
@@ -66,7 +62,7 @@ describe('schema v40', () => {
     const cols = getColumns(db, 'container_snapshots');
     assert.ok(cols.includes('last_oom_killed_at'), 'v39→v40 migration adds last_oom_killed_at');
     const v = (db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string }).value;
-    assert.equal(v, '40');
+    assert.equal(parseInt(v, 10), SCHEMA_VERSION);
     db.close();
   });
 });

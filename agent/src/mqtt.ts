@@ -587,6 +587,50 @@ function publishIngresses(clusterId: string, publisherHostId: string, ingresses:
   });
 }
 
+interface PendingPodPayloadItem {
+  namespace: string;
+  podName: string;
+  reason: string | null;
+  message: string | null;
+  podPhase: string;
+  podCreatedAt: string | null;
+  workloadKind: string | null;
+  workloadName: string | null;
+}
+
+function publishPendingPods(clusterId: string, publisherHostId: string, pods: PendingPodPayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/pending-pods`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: pods.map(p => ({
+      namespace: p.namespace,
+      pod_name: p.podName,
+      reason: p.reason,
+      message: p.message,
+      pod_phase: p.podPhase,
+      pod_created_at: p.podCreatedAt,
+      workload_kind: p.workloadKind,
+      workload_name: p.workloadName,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${pods.length} pending pods for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -620,4 +664,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, disconnect, containerInfoToPayload };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, disconnect, containerInfoToPayload };

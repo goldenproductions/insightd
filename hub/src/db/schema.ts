@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 40;
+const SCHEMA_VERSION = 41;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -233,6 +233,28 @@ function bootstrap(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_k8s_ingresses_cluster
       ON k8s_ingresses (cluster_id, observed_at DESC);
+
+    -- Pods stuck in Pending phase (cluster-scoped, leader-published).
+    -- Current-state UPSERT model — same row keyed by (cluster_id, namespace,
+    -- pod_name) is refreshed each leader cycle. first_seen_at is preserved
+    -- across cycles so the alert evaluator can age out by duration.
+    -- Rows are deleted when the pod leaves Pending or disappears.
+    CREATE TABLE IF NOT EXISTS pending_pods (
+      cluster_id      TEXT NOT NULL,
+      namespace       TEXT NOT NULL,
+      pod_name        TEXT NOT NULL,
+      reason          TEXT,
+      message         TEXT,
+      pod_phase       TEXT NOT NULL,
+      pod_created_at  TEXT,
+      workload_kind   TEXT,
+      workload_name   TEXT,
+      first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_pods_cluster_first
+      ON pending_pods (cluster_id, first_seen_at);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -930,6 +952,29 @@ function migrate(db: Database.Database, fromVersion: number): void {
     // evaluator and diagnosis framework name the cause behind a restart
     // loop / unhealthy container instead of word-matching health output.
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN last_oom_killed_at TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 41) {
+    // Pods stuck Pending (unschedulable, PVC unbound, image pull, etc.).
+    // Cluster-scoped registry; the alert evaluator fires `pod_pending`
+    // when a row's first_seen_at is older than the threshold.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_pods (
+        cluster_id      TEXT NOT NULL,
+        namespace       TEXT NOT NULL,
+        pod_name        TEXT NOT NULL,
+        reason          TEXT,
+        message         TEXT,
+        pod_phase       TEXT NOT NULL,
+        pod_created_at  TEXT,
+        workload_kind   TEXT,
+        workload_name   TEXT,
+        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_pods_cluster_first
+        ON pending_pods (cluster_id, first_seen_at);
+    `);
   }
 }
 

@@ -1,5 +1,5 @@
 import { parseQuantity } from '../runtime/kubernetes';
-import type { K8sClient, K8sPv, K8sPvc, K8sEvent, K8sIngress } from '../runtime/kubernetes';
+import type { K8sClient, K8sPv, K8sPvc, K8sEvent, K8sIngress, K8sPod } from '../runtime/kubernetes';
 
 export interface PvInfo {
   name: string;
@@ -213,4 +213,107 @@ export function mapIngress(ing: K8sIngress): IngressInfo | null {
 export async function collectIngresses(client: K8sClient): Promise<IngressInfo[]> {
   const list = await client.listIngresses();
   return (list.items || []).map(mapIngress).filter((x): x is IngressInfo => x !== null);
+}
+
+// ---- Pending pods ----
+
+export interface PendingPodInfo {
+  namespace: string;
+  podName: string;
+  reason: string | null;
+  message: string | null;
+  podPhase: string;
+  podCreatedAt: string | null;
+  workloadKind: string | null;
+  workloadName: string | null;
+}
+
+/**
+ * Reduce a Pending pod's status to the most actionable {reason, message}.
+ *
+ * Priority (highest first):
+ *   1. PodScheduled=False — scheduler refused to place the pod (Unschedulable
+ *      with "0/N nodes available: ..." message). Most actionable.
+ *   2. ContainersReady=False with a waiting reason on a containerStatus —
+ *      ImagePullBackOff / ErrImagePull / CreateContainerConfigError /
+ *      CreateContainerError. Pulled from the first non-transient waiting
+ *      container so the user sees *why* the pod can't run.
+ *   3. Initialized=False — typically waiting on initContainers or PVC bind.
+ *   4. Fall through to phase reason ("ContainerCreating" pre-image-pull).
+ */
+export function summarizePendingPod(pod: K8sPod): { reason: string | null; message: string | null } {
+  const conditions = pod.status?.conditions ?? [];
+
+  const scheduled = conditions.find(c => c.type === 'PodScheduled');
+  if (scheduled && scheduled.status === 'False') {
+    return {
+      reason: scheduled.reason ?? 'Unschedulable',
+      message: scheduled.message ?? null,
+    };
+  }
+
+  const containerStatuses = pod.status?.containerStatuses ?? [];
+  for (const cs of containerStatuses) {
+    const waiting = cs.state?.waiting;
+    if (waiting?.reason && waiting.reason !== 'ContainerCreating' && waiting.reason !== 'PodInitializing') {
+      return { reason: waiting.reason, message: waiting.message ?? null };
+    }
+  }
+
+  const initialized = conditions.find(c => c.type === 'Initialized');
+  if (initialized && initialized.status === 'False') {
+    return {
+      reason: initialized.reason ?? 'NotInitialized',
+      message: initialized.message ?? null,
+    };
+  }
+
+  // Pod is genuinely still coming up — surface the first waiting reason if any.
+  for (const cs of containerStatuses) {
+    const waiting = cs.state?.waiting;
+    if (waiting?.reason) {
+      return { reason: waiting.reason, message: waiting.message ?? null };
+    }
+  }
+
+  return { reason: null, message: null };
+}
+
+/**
+ * Resolve the workload (kind, name) that owns a pod. Walks one level via
+ * ownerReferences. ReplicaSet is left as-is — the leader collector has no
+ * RS→Deployment lookup cache here, and "ReplicaSet/foo-7d9f8" is a clear
+ * enough pointer for the user to find the parent Deployment.
+ */
+export function podWorkload(pod: K8sPod): { kind: string | null; name: string | null } {
+  const owner = pod.metadata?.ownerReferences?.[0];
+  if (!owner) return { kind: null, name: null };
+  return { kind: owner.kind, name: owner.name };
+}
+
+export function mapPendingPod(pod: K8sPod): PendingPodInfo | null {
+  if (pod.status?.phase !== 'Pending') return null;
+  const namespace = pod.metadata?.namespace;
+  const podName = pod.metadata?.name;
+  if (!namespace || !podName) return null;
+
+  const { reason, message } = summarizePendingPod(pod);
+  const { kind, name } = podWorkload(pod);
+  return {
+    namespace,
+    podName,
+    reason,
+    message,
+    podPhase: 'Pending',
+    podCreatedAt: pod.metadata?.creationTimestamp ?? null,
+    workloadKind: kind,
+    workloadName: name,
+  };
+}
+
+export async function collectPendingPods(client: K8sClient): Promise<PendingPodInfo[]> {
+  // Cluster-wide list (no fieldSelector) so unscheduled pods (no nodeName) are
+  // included — those are the ones the per-node collectors miss entirely.
+  const list = await client.listPods();
+  return (list.items || []).map(mapPendingPod).filter((x): x is PendingPodInfo => x !== null);
 }

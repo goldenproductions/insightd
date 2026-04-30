@@ -456,6 +456,69 @@ function ingestIngresses(db: Database.Database, clusterId: string, ingresses: In
   logger.info('ingest', `Upserted ${ingresses.length} ingresses for cluster ${clusterId}`);
 }
 
+interface PendingPodRecord {
+  namespace: string;
+  podName: string;
+  reason: string | null;
+  message: string | null;
+  podPhase: string;
+  podCreatedAt: string | null;
+  workloadKind: string | null;
+  workloadName: string | null;
+}
+
+/**
+ * Current-state UPSERT for pending pods. After upserting the batch, delete
+ * any rows for this cluster_id whose last_seen_at is older than the batch
+ * start time — those pods have either left Pending or no longer exist.
+ *
+ * first_seen_at is preserved across cycles (UPSERT doesn't touch it), so
+ * the alert evaluator can age pods by their original observation time
+ * regardless of how many publish cycles have elapsed.
+ */
+function ingestPendingPods(db: Database.Database, clusterId: string, pods: PendingPodRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO pending_pods
+      (cluster_id, namespace, pod_name, reason, message, pod_phase,
+       pod_created_at, workload_kind, workload_name, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cluster_id, namespace, pod_name) DO UPDATE SET
+      reason         = excluded.reason,
+      message        = excluded.message,
+      pod_phase      = excluded.pod_phase,
+      pod_created_at = excluded.pod_created_at,
+      workload_kind  = excluded.workload_kind,
+      workload_name  = excluded.workload_name,
+      last_seen_at   = excluded.last_seen_at
+  `);
+  const prune = db.prepare(`
+    DELETE FROM pending_pods
+     WHERE cluster_id = ? AND last_seen_at < ?
+  `);
+
+  const tx = db.transaction((items: PendingPodRecord[]) => {
+    for (const p of items) {
+      upsert.run(
+        clusterId,
+        p.namespace,
+        p.podName,
+        p.reason,
+        p.message,
+        p.podPhase,
+        p.podCreatedAt,
+        p.workloadKind,
+        p.workloadName,
+        batchAt,
+        batchAt,
+      );
+    }
+    prune.run(clusterId, batchAt);
+  });
+  tx(pods);
+  logger.info('ingest', `Upserted ${pods.length} pending pods for cluster ${clusterId}`);
+}
+
 interface NodeConditionRecord {
   type: string;
   status: 'True' | 'False' | 'Unknown';
@@ -492,4 +555,4 @@ function ingestNodeConditions(db: Database.Database, hostId: string, conditions:
   upsertMany(conditions);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestPendingPods, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };

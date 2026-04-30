@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mapPv, mapPvc, mapEvent } from '../../agent/src/collectors/k8s-cluster';
-import type { K8sPv, K8sPvc, K8sEvent } from '../../agent/src/runtime/kubernetes';
+import { mapPv, mapPvc, mapEvent, mapPendingPod, summarizePendingPod, podWorkload } from '../../agent/src/collectors/k8s-cluster';
+import type { K8sPv, K8sPvc, K8sEvent, K8sPod } from '../../agent/src/runtime/kubernetes';
 
 describe('mapPv', () => {
   it('maps a bound PV with claimRef', () => {
@@ -168,5 +168,144 @@ describe('mapEvent', () => {
     assert.equal(mapEvent({ metadata: { uid: 'u' }, involvedObject: { kind: 'Pod' }, reason: 'X', type: 'Warning' }), null, 'missing name');
     assert.equal(mapEvent({ metadata: { uid: 'u' }, involvedObject: { kind: 'Pod', name: 'x' }, type: 'Warning' }), null, 'missing reason');
     assert.equal(mapEvent({ metadata: { uid: 'u' }, involvedObject: { kind: 'Pod', name: 'x' }, reason: 'X' }), null, 'missing type');
+  });
+});
+
+describe('summarizePendingPod', () => {
+  it('prefers PodScheduled=False (Unschedulable) over container waiting reasons', () => {
+    const pod: K8sPod = {
+      metadata: { namespace: 'default', name: 'web-7d-xyz' },
+      status: {
+        phase: 'Pending',
+        conditions: [{
+          type: 'PodScheduled',
+          status: 'False',
+          reason: 'Unschedulable',
+          message: '0/3 nodes available: 3 Insufficient memory',
+        }],
+        containerStatuses: [{
+          name: 'app', ready: false, restartCount: 0, image: 'nginx',
+          state: { waiting: { reason: 'ContainerCreating' } },
+        }],
+      },
+    };
+    const out = summarizePendingPod(pod);
+    assert.equal(out.reason, 'Unschedulable');
+    assert.match(out.message ?? '', /Insufficient memory/);
+  });
+
+  it('surfaces ImagePullBackOff from a container waiting state', () => {
+    const pod: K8sPod = {
+      metadata: { namespace: 'default', name: 'app-xyz' },
+      status: {
+        phase: 'Pending',
+        conditions: [{ type: 'PodScheduled', status: 'True' }],
+        containerStatuses: [{
+          name: 'app', ready: false, restartCount: 0, image: 'foo:bad',
+          state: { waiting: { reason: 'ImagePullBackOff', message: 'Back-off pulling image foo:bad' } },
+        }],
+      },
+    };
+    const out = summarizePendingPod(pod);
+    assert.equal(out.reason, 'ImagePullBackOff');
+    assert.match(out.message ?? '', /Back-off pulling/);
+  });
+
+  it('skips transient ContainerCreating in favor of Initialized=False (e.g. PVC unbound)', () => {
+    const pod: K8sPod = {
+      metadata: { namespace: 'default', name: 'db-0' },
+      status: {
+        phase: 'Pending',
+        conditions: [
+          { type: 'PodScheduled', status: 'True' },
+          { type: 'Initialized', status: 'False', reason: 'ContainersNotInitialized', message: 'containers with incomplete status: [init-volume]' },
+        ],
+        containerStatuses: [{
+          name: 'db', ready: false, restartCount: 0, image: 'postgres',
+          state: { waiting: { reason: 'PodInitializing' } },
+        }],
+      },
+    };
+    const out = summarizePendingPod(pod);
+    assert.equal(out.reason, 'ContainersNotInitialized');
+  });
+
+  it('falls back to first waiting reason when no condition is False', () => {
+    const pod: K8sPod = {
+      metadata: { namespace: 'default', name: 'app-xyz' },
+      status: {
+        phase: 'Pending',
+        conditions: [{ type: 'PodScheduled', status: 'True' }],
+        containerStatuses: [{
+          name: 'app', ready: false, restartCount: 0, image: 'busybox',
+          state: { waiting: { reason: 'ContainerCreating' } },
+        }],
+      },
+    };
+    const out = summarizePendingPod(pod);
+    assert.equal(out.reason, 'ContainerCreating');
+  });
+
+  it('returns nulls when nothing is informative', () => {
+    const pod: K8sPod = { metadata: { name: 'x', namespace: 'd' }, status: { phase: 'Pending' } };
+    const out = summarizePendingPod(pod);
+    assert.equal(out.reason, null);
+    assert.equal(out.message, null);
+  });
+});
+
+describe('podWorkload', () => {
+  it('returns the first ownerReference', () => {
+    const pod: K8sPod = {
+      metadata: {
+        name: 'web-7d', namespace: 'default',
+        ownerReferences: [{ kind: 'ReplicaSet', name: 'web-7d-abc' }],
+      },
+    };
+    assert.deepEqual(podWorkload(pod), { kind: 'ReplicaSet', name: 'web-7d-abc' });
+  });
+
+  it('returns nulls for standalone pod', () => {
+    assert.deepEqual(podWorkload({ metadata: { name: 'p', namespace: 'd' } }), { kind: null, name: null });
+  });
+});
+
+describe('mapPendingPod', () => {
+  it('returns null for non-Pending pods', () => {
+    const out = mapPendingPod({
+      metadata: { namespace: 'd', name: 'p' },
+      status: { phase: 'Running' },
+    });
+    assert.equal(out, null);
+  });
+
+  it('returns null when namespace or name is missing', () => {
+    assert.equal(mapPendingPod({ metadata: { name: 'p' }, status: { phase: 'Pending' } }), null);
+    assert.equal(mapPendingPod({ metadata: { namespace: 'd' }, status: { phase: 'Pending' } }), null);
+  });
+
+  it('captures Unschedulable pod with workload owner', () => {
+    const out = mapPendingPod({
+      metadata: {
+        namespace: 'default', name: 'web-7d-xyz',
+        creationTimestamp: '2026-04-30T10:00:00Z',
+        ownerReferences: [{ kind: 'ReplicaSet', name: 'web-7d' }],
+      },
+      status: {
+        phase: 'Pending',
+        conditions: [{
+          type: 'PodScheduled', status: 'False', reason: 'Unschedulable',
+          message: '0/3 nodes available: 3 Insufficient memory',
+        }],
+      },
+    });
+    assert.ok(out);
+    assert.equal(out!.namespace, 'default');
+    assert.equal(out!.podName, 'web-7d-xyz');
+    assert.equal(out!.reason, 'Unschedulable');
+    assert.equal(out!.podPhase, 'Pending');
+    assert.equal(out!.podCreatedAt, '2026-04-30T10:00:00Z');
+    assert.equal(out!.workloadKind, 'ReplicaSet');
+    assert.equal(out!.workloadName, 'web-7d');
   });
 });
