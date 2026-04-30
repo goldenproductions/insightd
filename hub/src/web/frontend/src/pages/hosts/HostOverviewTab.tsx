@@ -7,7 +7,7 @@ import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart'
 import { fmtPercent, fmtBytesPerSec } from '@/lib/formatters';
 import { isInternalContainer, getContainerNamespace, deriveContainerDisplayStatus } from '@/lib/containers';
 import { useNamespaceFilter } from '@/hooks/useNamespaceFilter';
-import { NamespaceFilterBar } from '@/components/NamespaceFilterBar';
+import { NamespaceFilterDropdown } from '@/components/NamespaceFilterDropdown';
 
 interface HostChartDataset {
   timestamps: number[];
@@ -78,8 +78,6 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
   );
 
   const { namespaces, hidden, filtered, toggle, showAll, isKubernetes } = useNamespaceFilter(data.containers, hostId);
-  const totalUnfiltered = data.containers.length;
-  const visibleCount = filtered.length;
 
   // Lookup container snapshot by name for the advanced details row.
   const containerByName = useMemo(() => {
@@ -172,6 +170,14 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-danger" />Down</span>
               <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-sm bg-border" />No data</span>
             </div>
+            {isKubernetes && (
+              <NamespaceFilterDropdown
+                namespaces={namespaces}
+                hidden={hidden}
+                onToggle={toggle}
+                onShowAll={showAll}
+              />
+            )}
             <button
               type="button"
               onClick={() => setAdvanced(v => !v)}
@@ -197,7 +203,7 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
                 <div className="mb-3 flex items-center gap-2">
                   <span className="rounded border border-border bg-surface px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-secondary">Containers</span>
                   <span className="font-mono text-[10px] text-muted">
-                    {visibleCount} on this host{hidden.size > 0 ? ` (filtered from ${totalUnfiltered})` : ''}
+                    {filtered.length} on this host{hidden.size > 0 ? ` (filtered from ${data.containers.length})` : ''}
                   </span>
                 </div>
                 <UptimeTimeline
@@ -275,16 +281,6 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
         </Card>
       )}
 
-      {isKubernetes && (
-        <NamespaceFilterBar
-          namespaces={namespaces}
-          hidden={hidden}
-          onToggle={toggle}
-          onShowAll={showAll}
-          totalCount={totalUnfiltered}
-          visibleCount={visibleCount}
-        />
-      )}
     </div>
   );
 }
