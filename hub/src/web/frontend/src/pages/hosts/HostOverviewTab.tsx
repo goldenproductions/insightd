@@ -176,6 +176,7 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
                 hidden={hidden}
                 onToggle={toggle}
                 onShowAll={showAll}
+                clusterId={resolveClusterId(data, hostId)}
               />
             )}
             <button
@@ -283,4 +284,16 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
 
     </div>
   );
+}
+
+/**
+ * Mirror the agent's cluster-id resolution (agent/src/scheduler.ts):
+ *   clusterId = host_group_override || host_group || `cluster-${hostId}`.
+ * The hub's getClusterIdForHost uses the same precedence, so this stays in
+ * sync with the value the topology endpoint expects in its URL.
+ */
+function resolveClusterId(data: HostDetail, hostId: string): string {
+  return data.host_group_override
+    || data.host_group
+    || `cluster-${hostId}`;
 }

@@ -26,6 +26,8 @@ import { AnomaliesList } from '@/components/AnomaliesList';
 import { BaselinesViewer } from '@/components/BaselinesViewer';
 import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { HostUptimeHero } from '@/components/HostUptimeHero';
+import { TopologyLinkCard } from '@/components/TopologyLinkCard';
+import { getContainerNamespace } from '@/lib/containers';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -160,12 +162,29 @@ export function HostDetailPage() {
         <HostK8sEventsTab hostId={hostId!} />
       )}
 
-      {((data.anomalies?.length ?? 0) > 0 || (baselines?.metrics?.length ?? 0) > 0) && (
-        <ExploreDrawer description="Baselines and historical anomalies for this host.">
-          <BaselinesViewer data={baselines} />
-          <AnomaliesList anomalies={data.anomalies} scope="host" />
-        </ExploreDrawer>
-      )}
+      {(() => {
+        const k8sNamespaces = isK8s
+          ? Array.from(new Set(data.containers.map(c => getContainerNamespace(c.container_name)).filter((n): n is string => n != null))).sort()
+          : [];
+        const clusterId = isK8s ? (data.host_group_override || data.host_group || `cluster-${hostId}`) : null;
+        const showDrawer = (data.anomalies?.length ?? 0) > 0
+          || (baselines?.metrics?.length ?? 0) > 0
+          || k8sNamespaces.length > 0;
+        if (!showDrawer) return null;
+        return (
+          <ExploreDrawer description="Baselines, historical anomalies, and (k8s) cluster topology for this host.">
+            <BaselinesViewer data={baselines} />
+            {clusterId && k8sNamespaces.length > 0 && (
+              <TopologyLinkCard
+                clusterId={clusterId}
+                namespaces={k8sNamespaces}
+                description={`Namespaces with pods on this node (${k8sNamespaces.length}). Each link opens the topology graph.`}
+              />
+            )}
+            <AnomaliesList anomalies={data.anomalies} scope="host" />
+          </ExploreDrawer>
+        );
+      })()}
 
       <ConfirmDialog {...dialogProps} />
     </div>

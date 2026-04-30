@@ -13,7 +13,7 @@ import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
 import { fmtDurationMs, timeAgo } from '@/lib/formatters';
-import { sumPositiveRestartDeltas, deriveContainerDisplayStatus, getContainerDisplayName } from '@/lib/containers';
+import { sumPositiveRestartDeltas, deriveContainerDisplayStatus, getContainerDisplayName, getContainerNamespace } from '@/lib/containers';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
 import { CardSkeleton } from '@/components/Skeleton';
@@ -31,6 +31,7 @@ import { LogTemplatesList } from '@/components/LogTemplatesList';
 import { K8sIdentityStrip } from '@/components/K8sIdentityStrip';
 import { PodEventsCard } from '@/components/PodEventsCard';
 import { PodConditionsBadges } from '@/components/PodConditionsBadges';
+import { TopologyLinkCard } from '@/components/TopologyLinkCard';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -495,14 +496,30 @@ export function ContainerDetailPage() {
 
       </section>
 
-      {((data.anomalies?.length ?? 0) > 0 || (data.logTemplates?.length ?? 0) > 0 || (baselines?.metrics?.length ?? 0) > 0 || (rcaNeighbors?.neighbors?.length ?? 0) > 0) && (
-        <ExploreDrawer description="Baselines, RCA neighbors, historical anomalies, and mined log patterns for this container.">
-          <BaselinesViewer data={baselines} />
-          <RcaNeighborsList data={rcaNeighbors} />
-          <AnomaliesList anomalies={data.anomalies} scope="container" />
-          <LogTemplatesList templates={data.logTemplates} />
-        </ExploreDrawer>
-      )}
+      {(() => {
+        const ns = isKubernetes ? getContainerNamespace(data.container_name) : null;
+        const showTopology = !!(isKubernetes && ns && data.cluster_id);
+        const hasOther = (data.anomalies?.length ?? 0) > 0
+          || (data.logTemplates?.length ?? 0) > 0
+          || (baselines?.metrics?.length ?? 0) > 0
+          || (rcaNeighbors?.neighbors?.length ?? 0) > 0;
+        if (!hasOther && !showTopology) return null;
+        return (
+          <ExploreDrawer description="Baselines, RCA neighbors, historical anomalies, mined log patterns, and (k8s) cluster topology for this container.">
+            <BaselinesViewer data={baselines} />
+            <RcaNeighborsList data={rcaNeighbors} />
+            {showTopology && (
+              <TopologyLinkCard
+                clusterId={data.cluster_id!}
+                namespaces={[ns!]}
+                description="See how this pod fits into the namespace — workloads, ingresses, and which nodes host the replicas."
+              />
+            )}
+            <AnomaliesList anomalies={data.anomalies} scope="container" />
+            <LogTemplatesList templates={data.logTemplates} />
+          </ExploreDrawer>
+        );
+      })()}
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
