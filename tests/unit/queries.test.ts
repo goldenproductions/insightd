@@ -22,7 +22,7 @@ describe('queries', () => {
     it('returns status ok with schema version', () => {
       const health = getHealth(db);
       assert.equal(health.status, 'ok');
-      assert.equal(health.schemaVersion, 45);
+      assert.equal(health.schemaVersion, 46);
       assert.equal(typeof health.uptime, 'number');
     });
   });

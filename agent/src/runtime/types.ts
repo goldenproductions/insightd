@@ -84,6 +84,10 @@ export interface ContainerWithResources extends ContainerInfo {
   cpuLimitPercent?: number | null;
   /** Memory limit in MB (e.g. "512Mi" → 512, "1Gi" → 1024). k8s only; null if unlimited/not set. */
   memoryLimitMb?: number | null;
+  /** CPU request in cores (k8s pod spec). Drives the right-sizing detector. */
+  cpuRequestCores?: number | null;
+  /** Memory request in MB (k8s pod spec). */
+  memoryRequestMb?: number | null;
 }
 
 export interface LogOptions {

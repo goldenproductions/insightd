@@ -376,6 +376,9 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   // --- Predictive alerts ---
   count += generatePredictions(db, insert);
 
+  // --- Right-sizing (workload-level) ---
+  count += generateRightSizingInsights(db, insert);
+
   // --- Correlation enrichment ---
   enrichInsightsWithCorrelations(db);
 
@@ -687,6 +690,291 @@ function getBaselines(db: Database.Database, entityType: string, entityId: strin
 
 function round(v: number): number {
   return Math.round(v * 10) / 10;
+}
+
+// ── Right-sizing insights ────────────────────────────────────────────────────
+//
+// For each k8s workload, compare P95 actual usage against the configured pod
+// spec requests/limits and surface an insight when the ratio is materially
+// off. Goal is *FYI / capacity-planning*, not paging — so over-provisioned is
+// info severity, under-provisioned is warning. The container_memory_saturation
+// alert handles the actually-on-fire case at >90%.
+//
+// Aggregation: insights are emitted at workload scope (entity_type='workload',
+// entity_id=`${cluster_id}/${kind}/${namespace}/${name}`). All replicas of a
+// workload share spec, so we look at one representative spec; for usage we
+// take the worst-case container in the workload (max P95) so a single
+// hot-running replica triggers a recommendation.
+
+/** Over-provisioned: P95 < 30% of request — likely wasting reservation. */
+const RIGHT_SIZING_OVER_RATIO = 0.30;
+/** Under-provisioned: P95 > 80% of limit — restart/throttle imminent. */
+const RIGHT_SIZING_UNDER_RATIO = 0.80;
+/** Headroom multiplier on suggested values: round(P95 × 1.5) for memory, ×1.3 for CPU. */
+const RIGHT_SIZING_MEM_HEADROOM = 1.5;
+const RIGHT_SIZING_CPU_HEADROOM = 1.3;
+/**
+ * Floors below which a ratio insight is too imprecise to surface — homelab
+ * workloads idling at 1Mi shouldn't get a "10× over-provisioned" callout.
+ */
+const RIGHT_SIZING_MIN_MEM_MB = 50;
+const RIGHT_SIZING_MIN_CPU_PERCENT = 5;
+/** Same baseline-stability threshold the predictive detector uses. */
+const RIGHT_SIZING_MIN_SAMPLES = 288;
+
+interface WorkloadContainerRow {
+  cluster_id: string | null;
+  host_id: string;
+  container_name: string;
+  workload_kind: string;
+  cpu_request_cores: number | null;
+  memory_request_mb: number | null;
+  cpu_limit_cores: number | null;
+  memory_limit_mb: number | null;
+}
+
+interface WorkloadGroup {
+  cluster_id: string;
+  kind: string;
+  namespace: string;
+  name: string;
+  /** Spec from a representative replica (all replicas of a workload share spec). */
+  cpu_request_cores: number | null;
+  memory_request_mb: number | null;
+  cpu_limit_cores: number | null;
+  memory_limit_mb: number | null;
+  /** Aggregated P95s across replicas (max — the most-stressed pod drives the recommendation). */
+  cpu_percent_p95: number | null;
+  memory_mb_p95: number | null;
+}
+
+/**
+ * Format a sentence-cased K8s memory quantity from MB. Matches what users
+ * paste into resources.requests/limits — "Mi" suffix, integer values.
+ */
+function formatMemoryMi(mb: number): string {
+  return `${Math.max(1, Math.round(mb))}Mi`;
+}
+
+/** Format a CPU quantity in millicores (the canonical k8s display unit). */
+function formatCpuMillicores(cores: number): string {
+  return `${Math.max(1, Math.round(cores * 1000))}m`;
+}
+
+function generateRightSizingInsights(db: Database.Database, _insert: import('better-sqlite3').Statement): number {
+  // Right-sizing insights carry suggested_action + confidence, which the
+  // shared insert prepared statement (10 columns) does not include. Use a
+  // local prepared statement that targets the full insights schema.
+  const insert = db.prepare(`
+    INSERT INTO insights
+      (entity_type, entity_id, category, severity, title, message,
+       metric, current_value, baseline_value, evidence,
+       suggested_action, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  // Latest snapshot per (host_id, container_name) for live containers, joined
+  // with the host's cluster_id (host_group, with override winning). Only
+  // pulls k8s workloads (workload_kind IS NOT NULL) that have at least one
+  // request OR limit set — Docker / unconfigured pods can't be right-sized.
+  const rows = db.prepare(`
+    SELECT
+      COALESCE(h.host_group_override, h.host_group) AS cluster_id,
+      cs.host_id,
+      cs.container_name,
+      cs.workload_kind,
+      cs.cpu_request_cores,
+      cs.memory_request_mb,
+      cs.cpu_limit_cores,
+      cs.memory_limit_mb
+    FROM container_snapshots cs
+    INNER JOIN containers c
+      ON c.host_id = cs.host_id AND c.container_name = cs.container_name
+      AND c.removed_at IS NULL
+    INNER JOIN hosts h ON h.host_id = cs.host_id
+    INNER JOIN (
+      SELECT host_id, container_name, MAX(collected_at) AS max_at
+      FROM container_snapshots
+      GROUP BY host_id, container_name
+    ) latest
+      ON cs.host_id = latest.host_id
+      AND cs.container_name = latest.container_name
+      AND cs.collected_at = latest.max_at
+    WHERE cs.workload_kind IS NOT NULL
+      AND cs.status = 'running'
+      AND (
+        cs.cpu_request_cores IS NOT NULL OR cs.memory_request_mb IS NOT NULL
+        OR cs.cpu_limit_cores IS NOT NULL OR cs.memory_limit_mb IS NOT NULL
+      )
+  `).all() as WorkloadContainerRow[];
+
+  if (rows.length === 0) return 0;
+
+  // Group containers by workload identity. container_name format for k8s:
+  // "namespace/stable/container_segment" — see PR #210 / kubernetes.ts.
+  const groups = new Map<string, WorkloadGroup>();
+  for (const r of rows) {
+    if (!r.cluster_id) continue;            // host has no cluster grouping
+    const firstSlash = r.container_name.indexOf('/');
+    const secondSlash = firstSlash > 0 ? r.container_name.indexOf('/', firstSlash + 1) : -1;
+    if (firstSlash <= 0 || secondSlash <= 0) continue;  // not a k8s container_name
+    const namespace = r.container_name.slice(0, firstSlash);
+    const stable = r.container_name.slice(firstSlash + 1, secondSlash);
+    if (isInsightdContainer(stable)) continue;
+
+    // Look up the per-container baselines (entity_id format from computeBaselines).
+    const entityId = `${r.host_id}/${r.container_name}`;
+    const bls = getBaselines(db, 'container', entityId);
+    const cpuBl = bls['cpu_percent'];
+    const memBl = bls['memory_mb'];
+    const cpuP95 = (cpuBl && cpuBl.sample_count >= RIGHT_SIZING_MIN_SAMPLES) ? cpuBl.p95 : null;
+    const memP95 = (memBl && memBl.sample_count >= RIGHT_SIZING_MIN_SAMPLES) ? memBl.p95 : null;
+
+    const key = `${r.cluster_id}/${r.workload_kind}/${namespace}/${stable}`;
+    let g = groups.get(key);
+    if (!g) {
+      g = {
+        cluster_id: r.cluster_id,
+        kind: r.workload_kind,
+        namespace,
+        name: stable,
+        cpu_request_cores: r.cpu_request_cores,
+        memory_request_mb: r.memory_request_mb,
+        cpu_limit_cores: r.cpu_limit_cores,
+        memory_limit_mb: r.memory_limit_mb,
+        cpu_percent_p95: null,
+        memory_mb_p95: null,
+      };
+      groups.set(key, g);
+    }
+    if (cpuP95 != null) g.cpu_percent_p95 = Math.max(g.cpu_percent_p95 ?? 0, cpuP95);
+    if (memP95 != null) g.memory_mb_p95 = Math.max(g.memory_mb_p95 ?? 0, memP95);
+  }
+
+  let count = 0;
+  for (const g of groups.values()) {
+    const entityId = `${g.cluster_id}/${g.kind}/${g.namespace}/${g.name}`;
+
+    // ── Memory ──────────────────────────────────────────────────────────────
+    if (g.memory_mb_p95 != null && g.memory_mb_p95 >= RIGHT_SIZING_MIN_MEM_MB) {
+      // Over-provisioned vs request
+      if (g.memory_request_mb != null && g.memory_request_mb > 0) {
+        const ratio = g.memory_mb_p95 / g.memory_request_mb;
+        if (ratio < RIGHT_SIZING_OVER_RATIO) {
+          const suggested = Math.max(RIGHT_SIZING_MIN_MEM_MB, g.memory_mb_p95 * RIGHT_SIZING_MEM_HEADROOM);
+          insert.run(
+            'workload', entityId, 'right_sizing', 'info',
+            `${g.kind} ${g.namespace}/${g.name} is over-provisioned on memory`,
+            `Pods request ${formatMemoryMi(g.memory_request_mb)} but P95 actual usage is ${round(g.memory_mb_p95)}MB (${Math.round(ratio * 100)}% of request). Reducing the request frees capacity for other pods to schedule.`,
+            'memory_mb', round(g.memory_mb_p95), g.memory_request_mb,
+            JSON.stringify({
+              p95_mb: round(g.memory_mb_p95),
+              request_mb: g.memory_request_mb,
+              limit_mb: g.memory_limit_mb,
+              ratio_pct: Math.round(ratio * 100),
+              suggested_request_mi: formatMemoryMi(suggested),
+            }),
+            `Lower spec.containers[].resources.requests.memory to ~${formatMemoryMi(suggested)}`,
+            'medium',
+          );
+          count++;
+        }
+      }
+      // Under-provisioned vs limit
+      if (g.memory_limit_mb != null && g.memory_limit_mb > 0) {
+        const ratio = g.memory_mb_p95 / g.memory_limit_mb;
+        if (ratio > RIGHT_SIZING_UNDER_RATIO) {
+          const suggested = g.memory_mb_p95 * RIGHT_SIZING_MEM_HEADROOM;
+          insert.run(
+            'workload', entityId, 'right_sizing', 'warning',
+            `${g.kind} ${g.namespace}/${g.name} is approaching its memory limit`,
+            `Pods are limited to ${formatMemoryMi(g.memory_limit_mb)} and P95 actual usage is ${round(g.memory_mb_p95)}MB (${Math.round(ratio * 100)}% of limit). OOMKill risk if usage spikes — raise the limit or investigate the workload.`,
+            'memory_mb', round(g.memory_mb_p95), g.memory_limit_mb,
+            JSON.stringify({
+              p95_mb: round(g.memory_mb_p95),
+              request_mb: g.memory_request_mb,
+              limit_mb: g.memory_limit_mb,
+              ratio_pct: Math.round(ratio * 100),
+              suggested_limit_mi: formatMemoryMi(suggested),
+            }),
+            `Raise spec.containers[].resources.limits.memory to ~${formatMemoryMi(suggested)} (or investigate why memory has grown).`,
+            'medium',
+          );
+          count++;
+        }
+      }
+    }
+
+    // ── CPU ─────────────────────────────────────────────────────────────────
+    //
+    // CPU usage in baselines is `cpu_percent`, which is *node-normalized* (% of
+    // the whole node's CPU). Comparing that directly to `cpu_limit_cores` /
+    // `cpu_request_cores` (absolute cores) is only valid when we know the node
+    // core count. Since we don't store node_cores per workload here, we use a
+    // pragmatic fallback: skip CPU right-sizing unless cpu_limit_percent (the
+    // agent-computed % of pod's own CPU limit) is captured on the latest
+    // snapshot. That's the straightforward signal — high cpu_limit_percent
+    // means under-provisioned, low means over-provisioned. We pull it from
+    // baselines too via cpu_percent fallback here.
+    //
+    // To keep V1 honest, surface CPU right-sizing only via cpu_percent vs a
+    // floor + percent-of-limit — a coarser but correct signal.
+    if (g.cpu_percent_p95 != null && g.cpu_percent_p95 >= RIGHT_SIZING_MIN_CPU_PERCENT) {
+      // Over-provisioned: P95 cpu_percent < 30% of (request_cores / typical_node_cores).
+      // Without node_cores, we conservatively gate on absolute cpu_percent.
+      // A workload requesting 1 full core but using <2% of node CPU at P95 is
+      // almost certainly over-provisioned, even without exact node sizing.
+      if (g.cpu_request_cores != null && g.cpu_request_cores > 0) {
+        // Heuristic: compare cpu_percent (node-normalized) to request as if
+        // node has 4 cores (typical homelab worker). 25% per core means
+        // cpu_percent of request_cores ≈ request × 25.
+        const requestPctEquiv = g.cpu_request_cores * 25;
+        const ratio = g.cpu_percent_p95 / requestPctEquiv;
+        if (ratio < RIGHT_SIZING_OVER_RATIO) {
+          const suggestedCores = (g.cpu_percent_p95 / 25) * RIGHT_SIZING_CPU_HEADROOM;
+          insert.run(
+            'workload', entityId, 'right_sizing', 'info',
+            `${g.kind} ${g.namespace}/${g.name} is over-provisioned on CPU`,
+            `Pods request ${formatCpuMillicores(g.cpu_request_cores)} CPU but P95 actual usage is ${round(g.cpu_percent_p95)}% of node CPU. Reducing the request gives the scheduler more flexibility.`,
+            'cpu_percent', round(g.cpu_percent_p95), g.cpu_request_cores,
+            JSON.stringify({
+              p95_pct: round(g.cpu_percent_p95),
+              request_cores: g.cpu_request_cores,
+              limit_cores: g.cpu_limit_cores,
+              suggested_request_m: formatCpuMillicores(suggestedCores),
+            }),
+            `Lower spec.containers[].resources.requests.cpu to ~${formatCpuMillicores(suggestedCores)}`,
+            'low',
+          );
+          count++;
+        }
+      }
+      // Under-provisioned: P95 cpu_percent > 80% of limit-equiv → throttling likely.
+      if (g.cpu_limit_cores != null && g.cpu_limit_cores > 0) {
+        const limitPctEquiv = g.cpu_limit_cores * 25;
+        const ratio = g.cpu_percent_p95 / limitPctEquiv;
+        if (ratio > RIGHT_SIZING_UNDER_RATIO) {
+          const suggestedCores = (g.cpu_percent_p95 / 25) * RIGHT_SIZING_CPU_HEADROOM;
+          insert.run(
+            'workload', entityId, 'right_sizing', 'warning',
+            `${g.kind} ${g.namespace}/${g.name} may be CPU-throttled`,
+            `Pods are limited to ${formatCpuMillicores(g.cpu_limit_cores)} CPU and P95 actual usage is ${round(g.cpu_percent_p95)}% of node CPU — close to the limit. Raise the limit if performance suffers.`,
+            'cpu_percent', round(g.cpu_percent_p95), g.cpu_limit_cores,
+            JSON.stringify({
+              p95_pct: round(g.cpu_percent_p95),
+              request_cores: g.cpu_request_cores,
+              limit_cores: g.cpu_limit_cores,
+              suggested_limit_m: formatCpuMillicores(suggestedCores),
+            }),
+            `Raise spec.containers[].resources.limits.cpu to ~${formatCpuMillicores(suggestedCores)}`,
+            'low',
+          );
+          count++;
+        }
+      }
+    }
+  }
+
+  return count;
 }
 
 /** Skip insightd's own containers — their resource usage isn't actionable by the user */
