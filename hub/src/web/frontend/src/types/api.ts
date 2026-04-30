@@ -479,6 +479,41 @@ export interface NamespaceTopology {
   nodes: TopologyNode[];
 }
 
+// Cluster overview — list of namespaces + cluster-level totals
+export interface ClusterNode {
+  host_id: string;
+  online: boolean;
+  pod_count: number;
+}
+export interface ClusterNamespaceSummary {
+  namespace: string;
+  workload_count: number;
+  pod_count: number;
+  unhealthy_pod_count: number;
+  ingress_count: number;
+  pvc_count: number;
+  pvc_pending_count: number;
+  active_alert_count: number;
+}
+export interface ClusterOverview {
+  cluster_id: string;
+  nodes: ClusterNode[];
+  namespaces: ClusterNamespaceSummary[];
+  totals: {
+    nodes_online: number;
+    nodes_offline: number;
+    namespaces: number;
+    workloads: number;
+    pods: number;
+    healthy_pods: number;
+    unhealthy_pods: number;
+    ingresses: number;
+    pvcs: number;
+    pvcs_pending: number;
+    active_alerts: number;
+  };
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';

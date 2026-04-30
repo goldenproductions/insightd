@@ -2354,4 +2354,254 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology };
+// ── Cluster overview (landing page for a k8s cluster) ───────────────────────
+//
+// Aggregates the cluster's nodes, namespaces (with workload/pod/issue
+// counts), and totals into a single response. All from existing data —
+// no new schema or agent collection.
+
+export interface ClusterNode {
+  host_id: string;
+  online: boolean;
+  /** Total pods on this node (across all namespaces in this cluster). */
+  pod_count: number;
+}
+
+export interface ClusterNamespaceSummary {
+  namespace: string;
+  workload_count: number;
+  pod_count: number;
+  unhealthy_pod_count: number;
+  ingress_count: number;
+  pvc_count: number;
+  pvc_pending_count: number;
+  active_alert_count: number;
+}
+
+export interface ClusterOverview {
+  cluster_id: string;
+  nodes: ClusterNode[];
+  namespaces: ClusterNamespaceSummary[];
+  totals: {
+    nodes_online: number;
+    nodes_offline: number;
+    namespaces: number;
+    workloads: number;
+    pods: number;
+    healthy_pods: number;
+    unhealthy_pods: number;
+    ingresses: number;
+    pvcs: number;
+    pvcs_pending: number;
+    active_alerts: number;
+  };
+}
+
+interface ClusterContainerRow {
+  host_id: string;
+  container_name: string;
+  container_id: string;
+  workload_kind: string | null;
+  health_status: string | null;
+  host_online: number;
+}
+
+function getClusterOverview(db: Database.Database, clusterId: string, offlineThresholdMinutes: number): ClusterOverview {
+  // 1. All k8s containers in the cluster, latest per (host, name).
+  const containerRows = db.prepare(`
+    WITH latest AS (
+      SELECT cs.host_id, cs.container_name, cs.container_id,
+             cs.workload_kind, cs.health_status,
+             CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+               THEN 1 ELSE 0 END AS host_online,
+             ROW_NUMBER() OVER (
+               PARTITION BY cs.host_id, cs.container_name
+               ORDER BY cs.collected_at DESC
+             ) AS rn
+      FROM container_snapshots cs
+      INNER JOIN hosts h ON h.host_id = cs.host_id
+      INNER JOIN containers cr ON cr.host_id = cs.host_id AND cr.container_name = cs.container_name
+      WHERE cr.removed_at IS NULL
+        AND h.runtime_type = 'kubernetes'
+        AND COALESCE(h.host_group_override, h.host_group, 'cluster-' || h.host_id) = ?
+    )
+    SELECT host_id, container_name, container_id, workload_kind, health_status, host_online
+    FROM latest WHERE rn = 1
+  `).all(offlineThresholdMinutes, clusterId) as ClusterContainerRow[];
+
+  // 2. Active alerts on these containers.
+  const alertNames = new Set<string>();
+  if (containerRows.length > 0) {
+    const placeholders = containerRows.map(() => '?').join(',');
+    const alertRows = db.prepare(`
+      SELECT host_id, target FROM alert_state
+      WHERE resolved_at IS NULL AND target IN (${placeholders})
+    `).all(...containerRows.map(r => r.container_name)) as Array<{ host_id: string; target: string }>;
+    for (const a of alertRows) alertNames.add(`${a.host_id}${a.target}`);
+  }
+
+  // Group containers per (namespace, workload, podUid) so pod counts are
+  // accurate (sidecars share a podUid).
+  type NsAgg = {
+    workloadKeys: Set<string>;
+    podKeys: Set<string>;
+    unhealthyPodKeys: Set<string>;
+  };
+  const nsMap = new Map<string, NsAgg>();
+  const nodePods = new Map<string, number>();
+  const nodeOnline = new Map<string, boolean>();
+
+  for (const r of containerRows) {
+    const firstSlash = r.container_name.indexOf('/');
+    if (firstSlash <= 0) continue;
+    const namespace = r.container_name.slice(0, firstSlash);
+    const rest = r.container_name.slice(firstSlash + 1);
+    const secondSlash = rest.indexOf('/');
+    const stable = secondSlash > 0 ? rest.slice(0, secondSlash) : rest;
+    const podUid = r.container_id.split('/')[0] ?? r.host_id;
+
+    let agg = nsMap.get(namespace);
+    if (!agg) {
+      agg = { workloadKeys: new Set(), podKeys: new Set(), unhealthyPodKeys: new Set() };
+      nsMap.set(namespace, agg);
+    }
+    agg.workloadKeys.add(`${r.workload_kind ?? '_'}${stable}`);
+    const podKey = `${r.host_id}/${podUid}`;
+    if (!agg.podKeys.has(podKey)) {
+      agg.podKeys.add(podKey);
+      nodePods.set(r.host_id, (nodePods.get(r.host_id) ?? 0) + 1);
+    }
+    if (r.health_status === 'unhealthy' || alertNames.has(`${r.host_id}${r.container_name}`)) {
+      agg.unhealthyPodKeys.add(podKey);
+    }
+    nodeOnline.set(r.host_id, !!r.host_online);
+  }
+
+  // 3. Ingresses + PVCs grouped by namespace.
+  const ingressByNs = new Map<string, number>();
+  const ingressRows = db.prepare(`
+    SELECT namespace, COUNT(*) AS c
+    FROM k8s_ingresses
+    WHERE cluster_id = ? AND removed_at IS NULL
+    GROUP BY namespace
+  `).all(clusterId) as Array<{ namespace: string; c: number }>;
+  for (const r of ingressRows) ingressByNs.set(r.namespace, r.c);
+
+  const pvcByNs = new Map<string, { total: number; pending: number }>();
+  const pvcRows = db.prepare(`
+    SELECT pvc_snapshots.namespace AS namespace, pvc_snapshots.phase AS phase
+    FROM pvc_snapshots
+    INNER JOIN (
+      SELECT cluster_id, namespace, pvc_name, MAX(collected_at) AS maxed
+      FROM pvc_snapshots
+      WHERE cluster_id = ?
+      GROUP BY cluster_id, namespace, pvc_name
+    ) latest ON pvc_snapshots.cluster_id = latest.cluster_id
+            AND pvc_snapshots.namespace  = latest.namespace
+            AND pvc_snapshots.pvc_name   = latest.pvc_name
+            AND pvc_snapshots.collected_at = latest.maxed
+  `).all(clusterId) as Array<{ namespace: string; phase: string }>;
+  for (const r of pvcRows) {
+    const cur = pvcByNs.get(r.namespace) ?? { total: 0, pending: 0 };
+    cur.total += 1;
+    if (r.phase === 'Pending') cur.pending += 1;
+    pvcByNs.set(r.namespace, cur);
+  }
+
+  // 4. Per-namespace active alert counts. Active alerts are scoped by host
+  // (= node), so count alerts whose host is in this cluster AND whose
+  // target's namespace matches.
+  const alertsByNs = new Map<string, number>();
+  const alertRows2 = db.prepare(`
+    SELECT a.target
+    FROM alert_state a
+    INNER JOIN hosts h ON h.host_id = a.host_id
+    WHERE a.resolved_at IS NULL
+      AND h.runtime_type = 'kubernetes'
+      AND COALESCE(h.host_group_override, h.host_group, 'cluster-' || h.host_id) = ?
+  `).all(clusterId) as Array<{ target: string }>;
+  for (const r of alertRows2) {
+    const slash = r.target.indexOf('/');
+    if (slash <= 0) continue;
+    const ns = r.target.slice(0, slash);
+    alertsByNs.set(ns, (alertsByNs.get(ns) ?? 0) + 1);
+  }
+
+  // 5. Build namespace summaries — union of namespaces seen via containers,
+  // ingresses, or PVCs (a namespace with only PVCs but no pods should still
+  // show up so the operator can see the orphan PVC).
+  const allNamespaces = new Set<string>([
+    ...nsMap.keys(),
+    ...ingressByNs.keys(),
+    ...pvcByNs.keys(),
+  ]);
+  const namespaces: ClusterNamespaceSummary[] = Array.from(allNamespaces).sort().map(ns => {
+    const agg = nsMap.get(ns);
+    const pvc = pvcByNs.get(ns);
+    return {
+      namespace: ns,
+      workload_count: agg?.workloadKeys.size ?? 0,
+      pod_count: agg?.podKeys.size ?? 0,
+      unhealthy_pod_count: agg?.unhealthyPodKeys.size ?? 0,
+      ingress_count: ingressByNs.get(ns) ?? 0,
+      pvc_count: pvc?.total ?? 0,
+      pvc_pending_count: pvc?.pending ?? 0,
+      active_alert_count: alertsByNs.get(ns) ?? 0,
+    };
+  });
+
+  // 6. Nodes — every host in the cluster, online or not.
+  const nodeRows = db.prepare(`
+    SELECT host_id,
+           CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
+             THEN 1 ELSE 0 END AS host_online
+    FROM hosts
+    WHERE runtime_type = 'kubernetes'
+      AND COALESCE(host_group_override, host_group, 'cluster-' || host_id) = ?
+    ORDER BY host_id
+  `).all(offlineThresholdMinutes, clusterId) as Array<{ host_id: string; host_online: number }>;
+  const nodes: ClusterNode[] = nodeRows.map(r => ({
+    host_id: r.host_id,
+    online: !!r.host_online,
+    pod_count: nodePods.get(r.host_id) ?? 0,
+  }));
+
+  // 7. Totals.
+  let totalPods = 0;
+  let totalUnhealthy = 0;
+  let totalWorkloads = 0;
+  let totalIngresses = 0;
+  let totalPvcs = 0;
+  let totalPending = 0;
+  let totalAlerts = 0;
+  for (const ns of namespaces) {
+    totalPods += ns.pod_count;
+    totalUnhealthy += ns.unhealthy_pod_count;
+    totalWorkloads += ns.workload_count;
+    totalIngresses += ns.ingress_count;
+    totalPvcs += ns.pvc_count;
+    totalPending += ns.pvc_pending_count;
+    totalAlerts += ns.active_alert_count;
+  }
+
+  return {
+    cluster_id: clusterId,
+    nodes,
+    namespaces,
+    totals: {
+      nodes_online: nodes.filter(n => n.online).length,
+      nodes_offline: nodes.filter(n => !n.online).length,
+      namespaces: namespaces.length,
+      workloads: totalWorkloads,
+      pods: totalPods,
+      healthy_pods: totalPods - totalUnhealthy,
+      unhealthy_pods: totalUnhealthy,
+      ingresses: totalIngresses,
+      pvcs: totalPvcs,
+      pvcs_pending: totalPending,
+      active_alerts: totalAlerts,
+    },
+  };
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview };

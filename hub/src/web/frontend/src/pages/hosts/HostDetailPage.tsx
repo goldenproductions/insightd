@@ -1,4 +1,4 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
 import type { HostDetail, HostMetricsSnapshot, Host, TimelineResponse, Trends, EventItem, HostBaselinesResponse } from '@/types/api';
@@ -126,6 +126,15 @@ export function HostDetailPage() {
             <NodeConditionBadges conditions={data.nodeConditions} />
           )}
           <HostGroupEditor hostId={hostId!} group={data.host_group ?? null} override={data.host_group_override ?? null} />
+          {isK8s && (
+            <Link
+              to={`/clusters/${encodeURIComponent(data.host_group_override || data.host_group || `cluster-${hostId}`)}`}
+              className="rounded border border-info/40 bg-info/5 px-2 py-0.5 text-xs font-medium text-info hover:bg-info/10"
+              title="Open the cluster overview"
+            >
+              View cluster →
+            </Link>
+          )}
         </div>
         <RemoveHostButton hostId={hostId!} confirm={confirm} />
       </div>
