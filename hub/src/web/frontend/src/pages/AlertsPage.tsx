@@ -65,9 +65,27 @@ function formatDT(iso: string): string {
 }
 
 function alertDetailHref(a: Alert): string {
-  const hostScoped = new Set(['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load', 'host_offline']);
-  if (a.alert_type === 'endpoint_down') return '/endpoints';
+  // Host-scoped alerts: target is descriptive (a metric, a condition type),
+  // not a clickable resource. Land on the host page itself.
+  const hostScoped = new Set([
+    'disk_full', 'high_host_cpu', 'low_host_memory', 'high_load', 'host_offline',
+    'node_pressure', 'node_not_ready',
+  ]);
   if (hostScoped.has(a.alert_type)) return `/hosts/${encodeURIComponent(a.host_id)}`;
+  // Endpoint + cert alerts live on the Endpoints page (host_id="hub" — not
+  // a real host, target is the endpoint name).
+  if (a.alert_type === 'endpoint_down'
+      || a.alert_type === 'cert_expired'
+      || a.alert_type === 'cert_expiring_soon'
+      || a.alert_type === 'cert_invalid') {
+    return '/endpoints';
+  }
+  // Cluster-scoped alerts have host_id=cluster_id (no host page) and target
+  // can contain slashes (e.g. "namespace/pod_name"). No detail page exists,
+  // so filter the Alerts page itself by the target — keeps the click useful.
+  if (a.alert_type === 'pod_pending') {
+    return `/alerts?q=${encodeURIComponent(a.target)}`;
+  }
   return `/hosts/${encodeURIComponent(a.host_id)}/containers/${encodeURIComponent(a.target)}`;
 }
 
