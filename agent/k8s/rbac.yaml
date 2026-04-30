@@ -26,9 +26,11 @@ rules:
   - apiGroups: ["apps"]
     resources: ["replicasets"]
     verbs: ["get", "list"]
-  # Cluster-scoped PV/PVC inventory (the elected leader publishes to the hub)
+  # Cluster-scoped PV/PVC + Service inventory (the elected leader publishes
+  # to the hub). Services back the topology view's Ingress→Service→Workload
+  # edges, replacing the heuristic name-matching in earlier versions.
   - apiGroups: [""]
-    resources: ["persistentvolumes", "persistentvolumeclaims"]
+    resources: ["persistentvolumes", "persistentvolumeclaims", "services"]
     verbs: ["get", "list", "watch"]
   # Cluster-scoped Warning events — the elected leader polls and publishes.
   # Events live on apiserver with ~1h TTL; no need for watch (we poll).

@@ -52,9 +52,28 @@ export interface K8sPodCondition {
   message?: string;
 }
 
+export interface K8sPodVolume {
+  name: string;
+  // Volume sources we map to topology nodes. K8s allows ~25 volume types;
+  // we only need to identify the few that link to other graph nodes
+  // (PVCs, ConfigMaps, Secrets) and a small set of ambient types
+  // (emptyDir, hostPath, projected). Anything we don't model maps to
+  // 'other' downstream.
+  persistentVolumeClaim?: { claimName: string };
+  configMap?: { name?: string };
+  secret?: { secretName?: string };
+  emptyDir?: Record<string, unknown>;
+  hostPath?: { path?: string };
+  projected?: Record<string, unknown>;
+}
+
 export interface K8sPod {
   metadata?: K8sMeta;
-  spec?: { nodeName?: string; containers?: K8sPodContainer[] };
+  spec?: {
+    nodeName?: string;
+    containers?: K8sPodContainer[];
+    volumes?: K8sPodVolume[];
+  };
   status?: {
     phase?: string;
     containerStatuses?: K8sContainerStatus[];
@@ -181,6 +200,32 @@ export interface K8sIngressLoadBalancerEntry {
 export interface K8sIngress {
   metadata?: K8sMeta;
   spec?: K8sIngressSpec;
+  status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
+}
+
+// ---- Service ----------------------------------------------------------------
+
+export interface K8sServicePort {
+  name?: string;
+  port: number;
+  targetPort?: number | string;
+  protocol?: string;
+  nodePort?: number;
+}
+
+export interface K8sServiceSpec {
+  type?: string;             // ClusterIP | NodePort | LoadBalancer | ExternalName
+  clusterIP?: string;
+  clusterIPs?: string[];
+  externalIPs?: string[];
+  externalName?: string;
+  selector?: Record<string, string>;
+  ports?: K8sServicePort[];
+}
+
+export interface K8sService {
+  metadata?: K8sMeta;
+  spec?: K8sServiceSpec;
   status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
 }
 
@@ -371,6 +416,11 @@ export class K8sClient {
    */
   async listIngresses(): Promise<K8sList<K8sIngress>> {
     return this.get<K8sList<K8sIngress>>('/apis/networking.k8s.io/v1/ingresses');
+  }
+
+  /** List cluster-wide Services. Same leader-elected publisher cadence. */
+  async listServices(): Promise<K8sList<K8sService>> {
+    return this.get<K8sList<K8sService>>('/api/v1/services');
   }
 
   /** Returns null on 404 (lease doesn't exist yet). */

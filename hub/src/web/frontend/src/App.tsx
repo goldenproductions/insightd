@@ -32,6 +32,7 @@ const WebhookFormPage = lazy(() => import('@/pages/WebhookFormPage').then(m => (
 const ApiKeysPage = lazy(() => import('@/pages/ApiKeysPage').then(m => ({ default: m.ApiKeysPage })));
 const StatusPage = lazy(() => import('@/pages/StatusPage').then(m => ({ default: m.StatusPage })));
 const TopologyPage = lazy(() => import('@/pages/TopologyPage').then(m => ({ default: m.TopologyPage })));
+const ClusterOverviewPage = lazy(() => import('@/pages/ClusterOverviewPage').then(m => ({ default: m.ClusterOverviewPage })));
 
 function PageLoading() {
   return (
@@ -114,6 +115,7 @@ export function App() {
                 <Route path="/hosts/:hostId/logs" element={<LogSplitPage />} />
                 <Route path="/hosts/:hostId/containers/:containerName" element={<ContainerDetailPage />} />
                 <Route path="/clusters/:clusterId/namespaces/:namespace/topology" element={<TopologyPage />} />
+                <Route path="/clusters/:clusterId" element={<ClusterOverviewPage />} />
                 <Route path="/alerts" element={<AlertsPage />} />
                 <Route path="/insights" element={<InsightsPage />} />
                 <Route path="/endpoints" element={<EndpointsPage />} />

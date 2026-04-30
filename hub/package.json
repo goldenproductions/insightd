@@ -9,9 +9,9 @@
   "dependencies": {
     "better-sqlite3": "^12.9.0",
     "tsx": "^4.19.0",
-    "dockerode": "^4.0.10",
+    "dockerode": "^5.0.0",
     "mqtt": "^5.10.0",
     "node-cron": "^4.2.1",
-    "nodemailer": "^8.0.5"
+    "nodemailer": "^8.0.7"
   }
 }
