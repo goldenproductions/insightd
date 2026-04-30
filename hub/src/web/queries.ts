@@ -1949,4 +1949,109 @@ function getNodeConditionsForHost(db: Database.Database, hostId: string): NodeCo
   `).all(hostId) as NodeConditionRow[];
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getNodeConditionsForHost, getClusterIdForHost };
+// ── RCA neighbors (Explore drawer on container detail) ──────────────────────
+//
+// `rca_edges` is rebuilt every scheduler cycle by hub/src/insights/rca/graph.ts
+// and stores edges symmetrically with `from < to` (lex-sorted). Three edge
+// types: same_host (0.3), same_compose (0.6), metric_corr (≥0.4 dynamic).
+// A pair of containers can have multiple edge types — we collapse to one
+// row per neighbor with the strongest weight as the score.
+
+export interface RcaNeighbor {
+  entity: string;          // "host_id/container_name"
+  hostId: string;
+  containerName: string;
+  score: number;
+  edgeTypes: string[];     // sorted, unique
+  healthStatus: string | null;
+  hasActiveAlert: boolean;
+  isRemoved: boolean;      // container disappeared from registry
+}
+
+interface RcaPeerRow {
+  peer: string;
+  score: number;
+  edge_types_csv: string;
+}
+
+/**
+ * Top-N RCA neighbors of a container, ranked by edge weight. Returns null
+ * never — empty array when nothing is in the graph yet (newly-seen container).
+ */
+function getRcaNeighbors(
+  db: Database.Database,
+  hostId: string,
+  containerName: string,
+  limit: number = 10,
+): RcaNeighbor[] {
+  const entity = `${hostId}/${containerName}`;
+  // Edges live in rca_edges with from < to (see graph.ts addEdge), so to
+  // enumerate every neighbor we union both sides. Collapse multi-type pairs
+  // by GROUP BY on the peer.
+  const rows = db.prepare(`
+    WITH peers AS (
+      SELECT to_entity AS peer, edge_type, weight FROM rca_edges WHERE from_entity = ?
+      UNION ALL
+      SELECT from_entity AS peer, edge_type, weight FROM rca_edges WHERE to_entity = ?
+    )
+    SELECT
+      peer,
+      MAX(weight) AS score,
+      GROUP_CONCAT(DISTINCT edge_type) AS edge_types_csv
+    FROM peers
+    GROUP BY peer
+    ORDER BY score DESC
+    LIMIT ?
+  `).all(entity, entity, Math.max(1, Math.min(50, limit))) as RcaPeerRow[];
+
+  if (rows.length === 0) return [];
+
+  // Per-peer state lookups. Limit is small (≤50), so prepared-statement reuse
+  // keeps this cheap. Skip insightd's own containers — `same_host` would tie
+  // every container on every host to insightd-agent / insightd-hub, which is
+  // noise (matches the detector's filter).
+  const healthStmt = db.prepare(`
+    SELECT health_status FROM container_snapshots
+    WHERE host_id = ? AND container_name = ?
+    ORDER BY collected_at DESC LIMIT 1
+  `);
+  const alertStmt = db.prepare(`
+    SELECT 1 FROM alert_state
+    WHERE host_id = ? AND target = ? AND resolved_at IS NULL
+    LIMIT 1
+  `);
+  const removedStmt = db.prepare(`
+    SELECT removed_at FROM containers WHERE host_id = ? AND container_name = ?
+  `);
+
+  const out: RcaNeighbor[] = [];
+  for (const r of rows) {
+    // entity format is `${host_id}/${container_name}`. Host IDs don't contain
+    // slashes; container names can (k8s "ns/stable/container"), so split on
+    // the *first* slash only.
+    const slash = r.peer.indexOf('/');
+    if (slash < 1) continue;
+    const peerHostId = r.peer.slice(0, slash);
+    const peerName = r.peer.slice(slash + 1);
+    if (peerName.startsWith('insightd-')) continue;
+
+    const health = healthStmt.get(peerHostId, peerName) as { health_status: string | null } | undefined;
+    const alert = alertStmt.get(peerHostId, peerName) as { 1: number } | undefined;
+    const reg = removedStmt.get(peerHostId, peerName) as { removed_at: string | null } | undefined;
+
+    out.push({
+      entity: r.peer,
+      hostId: peerHostId,
+      containerName: peerName,
+      score: r.score,
+      edgeTypes: r.edge_types_csv.split(',').filter(Boolean).sort(),
+      healthStatus: health?.health_status ?? null,
+      hasActiveAlert: !!alert,
+      // No registry row OR removed_at set → treat as removed
+      isRemoved: !reg || reg.removed_at != null,
+    });
+  }
+  return out;
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors };

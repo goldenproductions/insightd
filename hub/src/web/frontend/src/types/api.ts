@@ -398,6 +398,27 @@ export interface ContainerBaselinesResponse {
   computed_at: string | null;
 }
 
+export interface RcaNeighbor {
+  /** "{host_id}/{container_name}" — entity key in rca_edges. */
+  entity: string;
+  hostId: string;
+  containerName: string;
+  /** Strongest edge weight in [0,1] across all edge types between this pair. */
+  score: number;
+  /** All edge types backing this neighbor: 'same_host' | 'same_compose' | 'metric_corr'. */
+  edgeTypes: string[];
+  healthStatus: string | null;
+  hasActiveAlert: boolean;
+  /** Container is removed from registry — link target may 404. */
+  isRemoved: boolean;
+}
+
+export interface RcaNeighborsResponse {
+  host_id: string;
+  container_name: string;
+  neighbors: RcaNeighbor[];
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
