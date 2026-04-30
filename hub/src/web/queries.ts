@@ -2254,8 +2254,13 @@ export interface NamespaceTopology {
   pvcs: TopologyPvc[];
   nodes: TopologyNode[];
   /** Cross-workload metric correlation edges within this namespace. UI
-   *  draws these dashed only when a workload with issues is selected. */
+   *  draws these dashed only when a workload with issues is selected.
+   *  Live-only — empty array when time-traveled (rca_edges has no history). */
   rca_edges: TopologyRcaEdge[];
+  /** ISO timestamp the response represents — null when live. Frontend
+   *  uses this to show a "viewing snapshot from X" banner and to disable
+   *  live-only surfaces (RCA neighbor overlay, diagnosis findings). */
+  at: string | null;
 }
 
 interface ContainerLatestRow {
@@ -2272,10 +2277,19 @@ interface ContainerLatestRow {
   labels: string | null;
 }
 
-function getNamespaceTopology(db: Database.Database, clusterId: string, namespace: string, offlineThresholdMinutes: number): NamespaceTopology {
+function getNamespaceTopology(db: Database.Database, clusterId: string, namespace: string, offlineThresholdMinutes: number, at: string | null = null): NamespaceTopology {
+  // When `at` is set we query historical snapshots — pick the latest row
+  // whose timestamp is at or before `at`. Several surfaces are live-only
+  // (rca_edges is rebuilt each cycle, insights is rebuilt each cycle, pod
+  // volumes are pruned not soft-deleted) and degrade gracefully.
+  const isTimeTraveled = at != null && at !== '';
   // Latest snapshot per container in this cluster + namespace.
   // Cluster id is matched via the same logic as getClusterIdForHost
   // (host_group_override > host_group > "cluster-{hostId}").
+  // Time-travel filter: when `at` is set, pick the latest snapshot whose
+  // collected_at is at-or-before `at`, AND restrict to containers that were
+  // still active at that moment (registry's removed_at NULL or > at). Live
+  // mode is unchanged — registry-active only.
   const containerRows = db.prepare(`
     WITH latest AS (
       SELECT cs.host_id, cs.container_name, cs.container_id,
@@ -2289,15 +2303,23 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
       FROM container_snapshots cs
       INNER JOIN hosts h ON h.host_id = cs.host_id
       INNER JOIN containers cr ON cr.host_id = cs.host_id AND cr.container_name = cs.container_name
-      WHERE cr.removed_at IS NULL
+      WHERE
+        ${isTimeTraveled
+          ? '(cr.removed_at IS NULL OR datetime(cr.removed_at) > datetime(?))'
+          : 'cr.removed_at IS NULL'}
         AND h.runtime_type = 'kubernetes'
         AND COALESCE(h.host_group_override, h.host_group, 'cluster-' || h.host_id) = ?
         AND cs.container_name LIKE ?
+        ${isTimeTraveled ? "AND datetime(cs.collected_at) <= datetime(?)" : ''}
     )
     SELECT host_id, container_name, container_id, workload_kind, status, health_status, host_online, labels
     FROM latest
     WHERE rn = 1
-  `).all(offlineThresholdMinutes, clusterId, `${namespace}/%`) as ContainerLatestRow[];
+  `).all(
+    ...(isTimeTraveled
+      ? [offlineThresholdMinutes, at, clusterId, `${namespace}/%`, at]
+      : [offlineThresholdMinutes, clusterId, `${namespace}/%`]),
+  ) as ContainerLatestRow[];
 
   // Active alerts on these containers (one query, in-memory map).
   const alertNames = new Set<string>();
@@ -2397,13 +2419,18 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     const placeholders = containerRows.map(() => '?').join(',');
     const targets = containerRows.map(r => r.container_name);
 
-    // Active alerts on workloads in this namespace.
+    // Active alerts on workloads in this namespace. In time-traveled mode,
+    // an alert is "active at T" when triggered_at <= T AND (resolved_at IS
+    // NULL OR resolved_at > T) — so we see the alerts that were firing then.
     const activeAlerts = db.prepare(`
       SELECT host_id, alert_type, target, message, triggered_at
       FROM alert_state
-      WHERE resolved_at IS NULL AND target IN (${placeholders})
+      WHERE target IN (${placeholders})
+        ${isTimeTraveled
+          ? 'AND datetime(triggered_at) <= datetime(?) AND (resolved_at IS NULL OR datetime(resolved_at) > datetime(?))'
+          : 'AND resolved_at IS NULL'}
       ORDER BY triggered_at DESC
-    `).all(...targets) as Array<{
+    `).all(...targets, ...(isTimeTraveled ? [at, at] : [])) as Array<{
       host_id: string; alert_type: string; target: string;
       message: string | null; triggered_at: string;
     }>;
@@ -2428,12 +2455,18 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     // host insights aren't workload-attributable. The insights table uses
     // entity_id = "host_id/container_name" (see detector.ts), so we match
     // against the full entity-id form rather than just container_name.
-    const insightEntities = containerRows.map(r => `${r.host_id}/${r.container_name}`);
+    //
+    // The insights table is fully rebuilt every detector cycle (no history),
+    // so it's live-only — skip when time-traveled. The UI surfaces this as a
+    // banner caveat alongside the same caveat for rca_edges.
+    const insightEntities = isTimeTraveled
+      ? []
+      : containerRows.map(r => `${r.host_id}/${r.container_name}`);
     const entityToContainer = new Map(
       containerRows.map(r => [`${r.host_id}/${r.container_name}`, r.container_name]),
     );
     const insightPlaceholders = insightEntities.map(() => '?').join(',');
-    const insightRows = db.prepare(`
+    const insightRows = insightEntities.length === 0 ? [] : db.prepare(`
       SELECT entity_id, category, severity, title, message, suggested_action, confidence
       FROM insights
       WHERE entity_type = 'container' AND entity_id IN (${insightPlaceholders})
@@ -2481,7 +2514,10 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     containerRows.map(r => `${r.host_id}/${r.container_name}`),
   );
   const rcaEdgesMap = new Map<string, TopologyRcaEdge>();
-  if (containerEntities.size > 0) {
+  // Live-only — rca_edges is replaced wholesale each scheduler cycle, so
+  // there's no historical view. The UI shows a banner about this when
+  // time-traveled.
+  if (!isTimeTraveled && containerEntities.size > 0) {
     const ents = Array.from(containerEntities);
     const placeholders = ents.map(() => '?').join(',');
     const rcaRows = db.prepare(`
@@ -2530,11 +2566,17 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
 
   const volumeMountsByWorkload = new Map<string, Map<string, TopologyVolumeMount>>();
   if (podUidToWorkload.size > 0) {
+    // pod_volumes is pruned (not soft-deleted) when a pod disappears, so the
+    // historical view captures only volumes that were observed at-or-before
+    // `at` AND were still present in a later prune cycle. Acceptable
+    // approximation — most pods we care about historically still exist now,
+    // or have a snapshot recent enough to survive the prune window.
     const volumeRows = db.prepare(`
       SELECT pod_uid, volume_name, volume_type, target_name
       FROM pod_volumes
       WHERE cluster_id = ? AND namespace = ?
-    `).all(clusterId, namespace) as Array<{
+        ${isTimeTraveled ? 'AND datetime(observed_at) <= datetime(?)' : ''}
+    `).all(...(isTimeTraveled ? [clusterId, namespace, at] : [clusterId, namespace])) as Array<{
       pod_uid: string; volume_name: string; volume_type: string; target_name: string | null;
     }>;
     for (const v of volumeRows) {
@@ -2575,13 +2617,18 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     });
   }
 
-  // Ingresses currently in this namespace.
+  // Ingresses currently in this namespace (or at `at` when time-traveled —
+  // the registry's UPSERT + removed_at lets us answer "was the ingress
+  // present at T?" as observed_at <= T AND (removed_at IS NULL OR removed_at > T)).
   const ingressRows = db.prepare(`
     SELECT id, name, hosts, paths
     FROM k8s_ingresses
-    WHERE cluster_id = ? AND namespace = ? AND removed_at IS NULL
+    WHERE cluster_id = ? AND namespace = ?
+      ${isTimeTraveled
+        ? 'AND datetime(observed_at) <= datetime(?) AND (removed_at IS NULL OR datetime(removed_at) > datetime(?))'
+        : 'AND removed_at IS NULL'}
     ORDER BY name
-  `).all(clusterId, namespace) as Array<{ id: number; name: string; hosts: string; paths: string }>;
+  `).all(...(isTimeTraveled ? [clusterId, namespace, at, at] : [clusterId, namespace])) as Array<{ id: number; name: string; hosts: string; paths: string }>;
   const ingresses: TopologyIngress[] = ingressRows.map(row => {
     let hosts: string[] = [];
     let serviceTargets: string[] = [];
@@ -2599,7 +2646,8 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     return { id: row.id, name: row.name, hosts, service_targets: serviceTargets };
   });
 
-  // PVCs latest per (cluster_id, namespace, pvc_name).
+  // PVCs latest per (cluster_id, namespace, pvc_name). When time-traveled,
+  // pick the latest snapshot whose collected_at is at-or-before `at`.
   const pvcRows = db.prepare(`
     SELECT pvc_name AS name, phase, capacity_bytes, storage_class
     FROM pvc_snapshots
@@ -2609,9 +2657,10 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
          WHERE p2.cluster_id = pvc_snapshots.cluster_id
            AND p2.namespace  = pvc_snapshots.namespace
            AND p2.pvc_name   = pvc_snapshots.pvc_name
+           ${isTimeTraveled ? 'AND datetime(p2.collected_at) <= datetime(?)' : ''}
       )
     ORDER BY name
-  `).all(clusterId, namespace) as Array<{ name: string; phase: string; capacity_bytes: number | null; storage_class: string | null }>;
+  `).all(...(isTimeTraveled ? [clusterId, namespace, at] : [clusterId, namespace])) as Array<{ name: string; phase: string; capacity_bytes: number | null; storage_class: string | null }>;
   const pvcs: TopologyPvc[] = pvcRows;
 
   // Nodes that host pods in this namespace.
@@ -2634,13 +2683,17 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     a.name.localeCompare(b.name),
   );
 
-  // Services in this namespace + selector→workload matching.
+  // Services in this namespace + selector→workload matching. UPSERT
+  // registry, so time-travel uses observed_at + removed_at like ingresses.
   const serviceRows = db.prepare(`
     SELECT name, type, cluster_ip, external_name, selector, ports
     FROM k8s_services
-    WHERE cluster_id = ? AND namespace = ? AND removed_at IS NULL
+    WHERE cluster_id = ? AND namespace = ?
+      ${isTimeTraveled
+        ? 'AND datetime(observed_at) <= datetime(?) AND (removed_at IS NULL OR datetime(removed_at) > datetime(?))'
+        : 'AND removed_at IS NULL'}
     ORDER BY name
-  `).all(clusterId, namespace) as Array<{
+  `).all(...(isTimeTraveled ? [clusterId, namespace, at, at] : [clusterId, namespace])) as Array<{
     name: string;
     type: string;
     cluster_ip: string | null;
@@ -2705,6 +2758,7 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     pvcs,
     nodes,
     rca_edges,
+    at: isTimeTraveled ? at : null,
   };
 }
 

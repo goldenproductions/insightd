@@ -440,4 +440,122 @@ describe('getNamespaceTopology', () => {
     const types = (getNamespaceTopology(db, 'prod', 'default', 15) as any).workloads[0].volume_mounts.map((v: any) => v.type);
     assert.deepEqual(types, ['pvc', 'configMap', 'secret', 'emptyDir']);
   });
+
+  // ── Time-travel ──────────────────────────────────────────────────────────
+
+  function seedK8sContainerAt(db: any, opts: {
+    hostId: string; containerName: string; containerId: string;
+    workloadKind?: string | null; health?: string | null; collectedAt: string;
+  }) {
+    db.prepare("UPDATE hosts SET runtime_type='kubernetes' WHERE host_id = ?").run(opts.hostId);
+    db.prepare(`
+      INSERT INTO container_snapshots (host_id, container_name, container_id, status,
+        cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes,
+        blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels,
+        exit_code, size_rootfs_bytes, size_rw_bytes, cpu_limit_cores, cpu_limit_percent,
+        memory_limit_mb, last_oom_killed_at, workload_kind, pod_ip, host_ip, pod_conditions, collected_at)
+      VALUES (?, ?, ?, 'running', null, null, 0, null, null, null, null, ?, null, '{}', null,
+              null, null, null, null, null, null, ?, null, null, null, ?)
+    `).run(opts.hostId, opts.containerName, opts.containerId, opts.health ?? null,
+           opts.workloadKind ?? null, opts.collectedAt);
+    db.prepare(`
+      INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
+      VALUES (?, ?, ?, ?, NULL)
+      ON CONFLICT(host_id, container_name) DO UPDATE SET last_seen = excluded.last_seen, removed_at = NULL
+    `).run(opts.hostId, opts.containerName, opts.collectedAt, opts.collectedAt);
+  }
+
+  it('time-travel — returns the workload state from a past snapshot', () => {
+    const past = new Date(Date.now() - 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+    const recent = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    seedK8sContainerAt(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+      health: 'healthy', collectedAt: past,
+    });
+    // Newer snapshot says it became unhealthy.
+    seedK8sContainerAt(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+      health: 'unhealthy', collectedAt: recent,
+    });
+
+    const live = getNamespaceTopology(db, 'prod', 'default', 15);
+    const past_iso = new Date(Date.now() - 1800_000).toISOString();
+    const traveled = getNamespaceTopology(db, 'prod', 'default', 15, past_iso);
+
+    assert.equal(live.workloads[0].pods[0].containers[0].health_status, 'unhealthy');
+    assert.equal(traveled.workloads[0].pods[0].containers[0].health_status, 'healthy', 'past snapshot wins when at=30m ago');
+    assert.equal(traveled.at, past_iso);
+    assert.equal(live.at, null);
+  });
+
+  it('time-travel — alerts active at T (triggered_at <= T AND not yet resolved)', () => {
+    // Seed a snapshot 2h ago so the workload exists in the historical view too.
+    const past = new Date(Date.now() - 2 * 3600_000).toISOString().slice(0, 19).replace('T', ' ');
+    seedK8sContainerAt(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+      collectedAt: past,
+    });
+    db.prepare(`
+      INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, resolved_at)
+      VALUES ('k3d-server', 'restart_loop', 'default/web/nginx',
+              datetime('now', '-2 hours'), datetime('now', '-2 hours'), 1, datetime('now', '-30 minutes'))
+    `).run();
+
+    const live = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(live.workloads[0].active_alerts.length, 0, 'live: alert is resolved');
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+    const traveled = getNamespaceTopology(db, 'prod', 'default', 15, oneHourAgo);
+    assert.equal(traveled.workloads[0].active_alerts.length, 1, '1h ago: alert was active');
+    assert.equal(traveled.workloads[0].severity, 'error');
+  });
+
+  it('time-travel — RCA edges and findings are empty (live-only)', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/db/postgres',
+      containerId: 'uid-2/db/postgres', workloadKind: 'StatefulSet',
+    });
+    db.prepare(`INSERT INTO rca_edges (from_entity, to_entity, edge_type, weight)
+                VALUES ('k3d-server/default/web/nginx', 'k3d-server/default/db/postgres', 'metric_corr', 0.85)`).run();
+    db.prepare(`INSERT INTO insights (entity_type, entity_id, category, severity, title, message)
+                VALUES ('container', 'k3d-server/default/web/nginx', 'performance', 'warning', 'CPU sustained high', 'msg')`).run();
+
+    const traveled = getNamespaceTopology(db, 'prod', 'default', 15, new Date().toISOString());
+    assert.deepEqual(traveled.rca_edges, [], 'rca_edges hidden in time-traveled mode');
+    assert.deepEqual(traveled.workloads.flatMap((w: any) => w.findings), [], 'findings hidden in time-traveled mode');
+  });
+
+  it('time-travel — registry tables (services/ingresses) honor observed_at + removed_at', () => {
+    db.prepare(`
+      INSERT INTO k8s_services (cluster_id, namespace, name, type, cluster_ip, external_ips,
+        external_name, selector, ports, created_at, labels, observed_at, removed_at)
+      VALUES ('prod', 'default', 'gone', 'ClusterIP', null, '[]', null, '{"app":"gone"}', '[]', null, '{}',
+              datetime('now', '-2 hours'), datetime('now', '-30 minutes'))
+    `).run();
+
+    const live = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(live.services.length, 0, 'live: removed service hidden');
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+    const traveled = getNamespaceTopology(db, 'prod', 'default', 15, oneHourAgo);
+    assert.equal(traveled.services.length, 1, '1h ago: service was present');
+    assert.equal(traveled.services[0].name, 'gone');
+  });
+
+  it('time-travel — empty string at falls through to live mode', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    const out = getNamespaceTopology(db, 'prod', 'default', 15, '');
+    assert.equal(out.at, null);
+    assert.equal(out.workloads.length, 1);
+  });
 });
