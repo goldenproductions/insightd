@@ -6,9 +6,41 @@ import type { IncomingMessage, ServerResponse, Server } from 'http';
 import type Database from 'better-sqlite3';
 import type Dockerode from 'dockerode';
 
-const { createRouter } = require('./router') as { createRouter: () => { add: (method: string, pattern: string, handler: Function) => void; match: (method: string, pathname: string) => { handler: Function; params: Record<string, string> } | null } };
+const { createRouter } = require('./router') as { createRouter: () => { add: (method: string, pattern: string, handler: Function) => void; match: (method: string, pathname: string) => { handler: Function; params: Record<string, string>; routeKey: string } | null } };
 const handlers = require('./handlers');
 const { isRateLimited } = require('./rate-limit') as { isRateLimited: (req: IncomingMessage) => boolean };
+const { requireAuth } = require('./auth') as { requireAuth: (req: IncomingMessage) => boolean };
+
+/**
+ * API routes that bypass `requireAuth`. Everything else requires a valid
+ * Bearer token (or no admin password configured, see auth.isAuthEnabled).
+ *
+ * Keep this list minimal — adding a route here is making it world-readable
+ * when auth is enabled. Each entry needs a justification:
+ *
+ *   GET  /api/health             — liveness probe; returns version + schema
+ *                                  version, no resource data.
+ *   GET  /api/status             — public status page; gated separately by
+ *                                  the INSIGHTD_STATUS_PAGE env var inside
+ *                                  the handler.
+ *   POST /api/auth               — login itself; the only way to acquire a
+ *                                  token in the first place.
+ *   GET  /api/setup/status       — used by SetupWizard before any password
+ *                                  exists; cannot be gated on auth that
+ *                                  hasn't been configured yet.
+ *   POST /api/setup/password     — first-time password set; gated internally
+ *                                  by isSetupComplete() so it 403s once the
+ *                                  setup is done.
+ *   POST /api/setup/complete     — same: only callable while !isSetupComplete().
+ */
+const PUBLIC_ROUTES = new Set<string>([
+  'GET /api/health',
+  'GET /api/status',
+  'POST /api/auth',
+  'GET /api/setup/status',
+  'POST /api/setup/password',
+  'POST /api/setup/complete',
+]);
 
 const MIME_TYPES: Record<string, string> = {
   '.html': 'text/html',
@@ -149,6 +181,16 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
       if (!match) {
         res.statusCode = 404;
         res.end(JSON.stringify({ error: 'Not found' }));
+        return;
+      }
+      // Centralized auth gate — every API route is protected unless it's
+      // on PUBLIC_ROUTES. New handlers don't need to remember to call
+      // requireAuth themselves; you have to opt OUT here, not opt IN per
+      // handler. (Fixes the "scattered requireAuth calls and one was
+      // forgotten" class of bug — see PR #223.)
+      if (!PUBLIC_ROUTES.has(match.routeKey) && !requireAuth(req)) {
+        res.statusCode = 401;
+        res.end(JSON.stringify({ error: 'Unauthorized' }));
         return;
       }
       try {

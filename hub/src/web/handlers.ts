@@ -4,10 +4,13 @@ import type Dockerode from 'dockerode';
 
 const queries = require('./queries');
 const { offlineThresholdMinutes } = require('../config') as { offlineThresholdMinutes: () => number };
-const { isAuthEnabled, authenticate, requireAuth, isSetupComplete, createApiKey, revokeApiKey, getApiKeys } = require('./auth') as {
+// Auth: gating happens centrally in server.ts now (every API route requires
+// auth unless it's on PUBLIC_ROUTES). Handlers no longer need to call
+// requireAuth themselves — this prevents the "forgot to add the check on a
+// new handler" class of bug.
+const { isAuthEnabled, authenticate, isSetupComplete, createApiKey, revokeApiKey, getApiKeys } = require('./auth') as {
   isAuthEnabled: () => boolean;
   authenticate: (password: string, ip?: string) => string | null;
-  requireAuth: (req: IncomingMessage) => boolean;
   isSetupComplete: () => boolean;
   createApiKey: (db: Database.Database, name: string) => { key: string; prefix: string };
   revokeApiKey: (db: Database.Database, id: number) => void;
@@ -80,7 +83,6 @@ function handleHosts(req: HandlerReq, res: ServerResponse, db: Database.Database
 }
 
 async function handleDeleteHost(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const hostId = decodeURIComponent(params.hostId);
   const host = db.prepare('SELECT host_id FROM hosts WHERE host_id = ?').get(hostId) as { host_id: string } | undefined;
   if (!host) { res.statusCode = 404; return { error: 'Host not found' }; }
@@ -98,7 +100,6 @@ async function handleDeleteHost(req: HandlerReq, res: ServerResponse, db: Databa
 }
 
 async function handleSetHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const hostId = decodeURIComponent(params.hostId);
   const exists = db.prepare('SELECT 1 FROM hosts WHERE host_id = ?').get(hostId);
   if (!exists) { res.statusCode = 404; return { error: 'Host not found' }; }
@@ -111,7 +112,6 @@ async function handleSetHostGroup(req: HandlerReq, res: ServerResponse, db: Data
 }
 
 function handleResetHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const hostId = decodeURIComponent(params.hostId);
   const exists = db.prepare('SELECT 1 FROM hosts WHERE host_id = ?').get(hostId);
   if (!exists) { res.statusCode = 404; return { error: 'Host not found' }; }
@@ -129,7 +129,6 @@ function handleResetHostGroup(req: HandlerReq, res: ServerResponse, db: Database
  * agent report.
  */
 async function handleRenameHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const oldName = decodeURIComponent(params.name);
   if (!oldName) { res.statusCode = 400; return { error: 'Invalid group name' }; }
   const body = await readBody(req);
@@ -154,7 +153,6 @@ async function handleRenameHostGroup(req: HandlerReq, res: ServerResponse, db: D
  * next agent report won't re-create the deleted group.
  */
 async function handleDeleteHostGroup(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const name = decodeURIComponent(params.name);
   if (!name) { res.statusCode = 400; return { error: 'Invalid group name' }; }
 
@@ -169,7 +167,6 @@ async function handleDeleteHostGroup(req: HandlerReq, res: ServerResponse, db: D
 }
 
 async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const hostId = decodeURIComponent(params.hostId);
   const containerName = decodeURIComponent(params.containerName);
 
@@ -460,10 +457,6 @@ async function handleLogin(req: HandlerReq, res: ServerResponse, db: Database.Da
 }
 
 function handleGetSettings(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const settings = getSettings(db);
   // Group by category
   const grouped: Record<string, any[]> = {};
@@ -475,10 +468,6 @@ function handleGetSettings(req: HandlerReq, res: ServerResponse, db: Database.Da
 }
 
 async function handlePutSettings(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const body = await readBody(req);
   return putSettings(db, body);
 }
@@ -517,7 +506,6 @@ function handleEvents(req: HandlerReq, res: ServerResponse, db: Database.Databas
 }
 
 function handleHostK8sEvents(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const url = new URL(req.url, `http://${req.headers.host}`);
   const limit = parseInt(url.searchParams.get('limit') || '100', 10) || 100;
   const reason = url.searchParams.get('reason') || undefined;
@@ -530,7 +518,6 @@ function handleHostK8sEvents(req: HandlerReq, res: ServerResponse, db: Database.
 }
 
 function handleHostNodeConditions(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const items = queries.getNodeConditionsForHost(db, params.hostId);
   return { items };
 }
@@ -573,10 +560,6 @@ function handleGetEndpoints(req: HandlerReq, res: ServerResponse, db: Database.D
 }
 
 async function handleCreateEndpoint(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const body = await readBody(req);
   const errors = validateEndpointBody(body);
   if (errors.length > 0) {
@@ -599,10 +582,6 @@ function handleGetEndpoint(req: HandlerReq, res: ServerResponse, db: Database.Da
 }
 
 async function handleUpdateEndpoint(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const id = parseInt(params.endpointId, 10);
   const existing = endpointQueries.getEndpoint(db, id);
   if (!existing) {
@@ -619,10 +598,6 @@ async function handleUpdateEndpoint(req: HandlerReq, res: ServerResponse, db: Da
 }
 
 async function handleDeleteEndpoint(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const id = parseInt(params.endpointId, 10);
   const result = endpointQueries.deleteEndpoint(db, id);
   if (!result.deleted) {
@@ -637,10 +612,6 @@ function handleGetDiscoveredIngresses(req: HandlerReq, res: ServerResponse, db: 
 }
 
 async function handleCreateEndpointFromIngress(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const ingressId = parseInt(params.ingressId, 10);
   if (!Number.isFinite(ingressId)) {
     res.statusCode = 400;
@@ -660,10 +631,6 @@ async function handleCreateEndpointFromIngress(req: HandlerReq, res: ServerRespo
 }
 
 async function handleDismissIngress(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const ingressId = parseInt(params.ingressId, 10);
   if (!Number.isFinite(ingressId)) {
     res.statusCode = 400;
@@ -678,10 +645,6 @@ async function handleDismissIngress(req: HandlerReq, res: ServerResponse, db: Da
 }
 
 async function handleUndismissIngress(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) {
-    res.statusCode = 401;
-    return { error: 'Unauthorized' };
-  }
   const ingressId = parseInt(params.ingressId, 10);
   if (!Number.isFinite(ingressId)) {
     res.statusCode = 400;
@@ -734,12 +697,10 @@ function validateWebhookBody(body: any): string[] {
 }
 
 function handleGetWebhooks(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   return webhookQueries.getWebhooks(db);
 }
 
 async function handleCreateWebhook(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const body = await readBody(req);
   const errors = validateWebhookBody(body);
   if (errors.length > 0) { res.statusCode = 400; return { error: errors.join('; ') }; }
@@ -748,14 +709,12 @@ async function handleCreateWebhook(req: HandlerReq, res: ServerResponse, db: Dat
 }
 
 function handleGetWebhook(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const wh = webhookQueries.getWebhook(db, parseInt(params.webhookId, 10));
   if (!wh) { res.statusCode = 404; return { error: 'Webhook not found' }; }
   return wh;
 }
 
 async function handleUpdateWebhook(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const id = parseInt(params.webhookId, 10);
   const existing = webhookQueries.getWebhook(db, id);
   if (!existing) { res.statusCode = 404; return { error: 'Webhook not found' }; }
@@ -764,7 +723,6 @@ async function handleUpdateWebhook(req: HandlerReq, res: ServerResponse, db: Dat
 }
 
 async function handleDeleteWebhook(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const id = parseInt(params.webhookId, 10);
   const result = webhookQueries.deleteWebhook(db, id);
   if (!result.deleted) { res.statusCode = 404; return { error: 'Webhook not found' }; }
@@ -772,7 +730,6 @@ async function handleDeleteWebhook(req: HandlerReq, res: ServerResponse, db: Dat
 }
 
 async function handleTestWebhook(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const id = parseInt(params.webhookId, 10);
   const wh = webhookQueries.getWebhook(db, id);
   if (!wh) { res.statusCode = 404; return { error: 'Webhook not found' }; }
@@ -780,7 +737,6 @@ async function handleTestWebhook(req: HandlerReq, res: ServerResponse, db: Datab
 }
 
 async function handleTestWebhookUnsaved(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const body = await readBody(req);
   const errors = validateWebhookBody(body);
   if (errors.length > 0) { res.statusCode = 400; return { error: errors.join('; ') }; }
@@ -1134,7 +1090,6 @@ function handleGetAIDiagnose(req: HandlerReq, res: ServerResponse, db: Database.
 }
 
 async function handleAIDiagnose(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const { getEffectiveConfig } = require('../db/settings') as { getEffectiveConfig: (db: Database.Database, c: any) => any };
   const live = getEffectiveConfig(db, config);
   if (!live.ai?.enabled) {
@@ -1225,7 +1180,6 @@ function handleImageUpdates(req: HandlerReq, res: ServerResponse, db: Database.D
 }
 
 function handleRequestUpdateCheck(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdateCheck) { res.statusCode = 501; return { error: 'Not available in standalone mode' }; }
   const threshold = offlineThresholdMinutes();
   const result = ctx.requestUpdateCheck(db, threshold);
@@ -1240,14 +1194,12 @@ function handleVersionCheck(req: HandlerReq, res: ServerResponse): any {
 }
 
 async function handleRefreshVersionCheck(req: HandlerReq, res: ServerResponse): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const { checkForUpdates, getVersionInfo } = require('../version-check');
   await checkForUpdates();
   return getVersionInfo();
 }
 
 async function handleUpdateAgent(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   // Snooze alerts during update
   const { snoozeAlerts } = require('../alert-snooze');
@@ -1266,7 +1218,6 @@ async function handleUpdateAgent(req: HandlerReq, res: ServerResponse, db: Datab
 }
 
 async function handleUpdateAllAgents(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   const { snoozeAlerts } = require('../alert-snooze');
   snoozeAlerts(15);
@@ -1288,7 +1239,6 @@ async function handleUpdateAllAgents(req: HandlerReq, res: ServerResponse, db: D
 }
 
 async function handleUpdateHub(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   if (!ctx.requestUpdate) { res.statusCode = 501; return { error: 'Update not available in standalone mode' }; }
   const { snoozeAlerts } = require('../alert-snooze');
   snoozeAlerts(10);
@@ -1423,7 +1373,6 @@ function authIdentifier(req: HandlerReq): string {
 }
 
 async function handleSilenceAlert(req: HandlerReq, res: ServerResponse, db: Database.Database, _config: any, params: Record<string, string>): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const id = parseInt(params.id, 10);
   if (!Number.isFinite(id)) { res.statusCode = 400; return { error: 'Invalid alert id' }; }
 
@@ -1457,7 +1406,6 @@ async function handleSilenceAlert(req: HandlerReq, res: ServerResponse, db: Data
 }
 
 function handleUnsilenceAlert(req: HandlerReq, res: ServerResponse, db: Database.Database, _config: any, params: Record<string, string>): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const id = parseInt(params.id, 10);
   if (!Number.isFinite(id)) { res.statusCode = 400; return { error: 'Invalid alert id' }; }
 
@@ -1480,7 +1428,6 @@ function handleUnsilenceAlert(req: HandlerReq, res: ServerResponse, db: Database
  * because the next evaluator run would just re-create them — silence is the
  * right tool for those. */
 function handleDeleteAlert(req: HandlerReq, res: ServerResponse, db: Database.Database, _config: any, params: Record<string, string>): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const id = parseInt(params.id, 10);
   if (!Number.isFinite(id)) { res.statusCode = 400; return { error: 'Invalid alert id' }; }
 
@@ -1496,7 +1443,6 @@ function handleDeleteAlert(req: HandlerReq, res: ServerResponse, db: Database.Da
 }
 
 async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>, ctx: HandlerCtx): Promise<any> {
-  if (!requireAuth(req)) return { error: 'Unauthorized' };
 
   const body = await readBody(req);
   const action = body.action;
@@ -1534,12 +1480,10 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
 module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerPodEvents, handleContainerLogs, handleGetNamespaceTopology, handleGetClusterOverview, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   return getApiKeys(db);
 }
 
 async function handleCreateApiKey(req: HandlerReq, res: ServerResponse, db: Database.Database): Promise<any> {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const body = await readBody(req);
   if (!body.name || !body.name.trim()) { res.statusCode = 400; return { error: 'Name is required' }; }
   const result = createApiKey(db, body.name.trim());
@@ -1547,30 +1491,25 @@ async function handleCreateApiKey(req: HandlerReq, res: ServerResponse, db: Data
 }
 
 function handleDeleteApiKey(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   revokeApiKey(db, parseInt(params.keyId, 10));
   return { deleted: true };
 }
 
 function handleDisksOverview(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   return queries.getDisksOverview(db, offlineThresholdMinutes());
 }
 
 function handleVolumesOverview(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   return queries.getVolumesOverview(db, offlineThresholdMinutes());
 }
 
 function handlePvsOverview(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   // Stale window of 15 min — agents publish every 5 min by default, so 3
   // missed cycles flips a cluster offline.
   return queries.getPvsOverview(db, 15);
 }
 
 function handleGetStorage(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
 
   const pageCount = (db.pragma('page_count') as any)[0].page_count;
   const pageSize = (db.pragma('page_size') as any)[0].page_size;
@@ -1608,7 +1547,6 @@ function handleGetStorage(req: HandlerReq, res: ServerResponse, db: Database.Dat
 }
 
 function handleVacuum(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
-  if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }
   const before = (db.pragma('page_count') as any)[0].page_count * (db.pragma('page_size') as any)[0].page_size;
   db.exec('VACUUM');
   db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('last_vacuum_at', datetime('now'))").run();
