@@ -786,13 +786,19 @@ function handleGetBaselines(req: HandlerReq, res: ServerResponse, db: Database.D
 // latest live value, the capacity floor an alert would need to clear, and
 // a server-computed robust z so the UI doesn't have to recreate the formula.
 //
-// TODO(thresholds): the capacity-floor numbers below duplicate the alert
-// thresholds in `hub/src/insights/detector.ts`. Extract both to
-// `hub/src/insights/thresholds.ts` next time anyone touches detector
-// thresholds. Ship-now / extract-later was an explicit user call.
+// Capacity-floor numbers come from `hub/src/insights/thresholds.ts`, which is
+// also imported by the detector — keeping the UI pill in lockstep with what
+// will actually fire an alert.
 
 const { getTimePeriod } = require('../insights/baselines');
 const { robustZ } = require('../insights/stats');
+import {
+  HOST_CPU_PREDICTION_SATURATION_PCT,
+  HOST_LOAD_PREDICTION_SATURATION,
+  HOST_MEMORY_PREDICTION_SATURATION_FRACTION,
+  CONTAINER_CPU_WARN_PCT,
+  CONTAINER_MEMORY_OVER_P95_MB,
+} from '../insights/thresholds';
 
 interface CapacityFloor {
   /** Threshold in the metric's native unit. Null when the metric drives no
@@ -807,18 +813,24 @@ interface CapacityFloor {
 }
 
 function hostCapacityFloor(metric: string, memoryTotalMb: number | null): CapacityFloor {
-  if (metric === 'cpu_percent') return { threshold: 80, kind: 'absolute' };
-  if (metric === 'load_5') return { threshold: 4, kind: 'absolute' };
+  if (metric === 'cpu_percent') return { threshold: HOST_CPU_PREDICTION_SATURATION_PCT, kind: 'absolute' };
+  if (metric === 'load_5') return { threshold: HOST_LOAD_PREDICTION_SATURATION, kind: 'absolute' };
   if (metric === 'memory_used_mb' && memoryTotalMb && memoryTotalMb > 0) {
-    return { threshold: Math.round(memoryTotalMb * 0.8 * 100) / 100, kind: 'capacity' };
+    return {
+      threshold: Math.round(memoryTotalMb * HOST_MEMORY_PREDICTION_SATURATION_FRACTION * 100) / 100,
+      kind: 'capacity',
+    };
   }
   return { threshold: null, kind: 'none' };
 }
 
 function containerCapacityFloor(metric: string, allBucketP95: number | null): CapacityFloor {
-  if (metric === 'cpu_percent') return { threshold: 50, kind: 'absolute' };
+  if (metric === 'cpu_percent') return { threshold: CONTAINER_CPU_WARN_PCT, kind: 'absolute' };
   if (metric === 'memory_mb' && allBucketP95 != null) {
-    return { threshold: Math.round((allBucketP95 + 500) * 100) / 100, kind: 'p95_plus' };
+    return {
+      threshold: Math.round((allBucketP95 + CONTAINER_MEMORY_OVER_P95_MB) * 100) / 100,
+      kind: 'p95_plus',
+    };
   }
   return { threshold: null, kind: 'none' };
 }
