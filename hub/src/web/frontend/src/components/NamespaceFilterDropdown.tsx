@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 
 interface Props {
   namespaces: string[];
   hidden: Set<string>;
   onToggle: (ns: string) => void;
   onShowAll: () => void;
+  /** When provided, each namespace row gets a "→ Topology" link to the
+   *  namespace topology page. Omit on hosts that aren't in a k8s cluster. */
+  clusterId?: string | null;
 }
 
 /**
@@ -12,7 +16,7 @@ interface Props {
  * Lives in the Uptime card actions row alongside the Advanced view toggle.
  * Closes on outside click + Escape.
  */
-export function NamespaceFilterDropdown({ namespaces, hidden, onToggle, onShowAll }: Props) {
+export function NamespaceFilterDropdown({ namespaces, hidden, onToggle, onShowAll, clusterId }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -77,18 +81,30 @@ export function NamespaceFilterDropdown({ namespaces, hidden, onToggle, onShowAl
           {namespaces.map(ns => {
             const isVisible = !hidden.has(ns);
             return (
-              <label
+              <div
                 key={ns}
-                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm text-fg hover:bg-bg-secondary"
+                className="flex items-center gap-2 rounded px-2 py-1.5 text-sm text-fg hover:bg-bg-secondary"
               >
-                <input
-                  type="checkbox"
-                  checked={isVisible}
-                  onChange={() => onToggle(ns)}
-                  className="h-3.5 w-3.5 cursor-pointer accent-info"
-                />
-                <span className="truncate">{ns}</span>
-              </label>
+                <label className="flex cursor-pointer items-center gap-2 flex-1 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={isVisible}
+                    onChange={() => onToggle(ns)}
+                    className="h-3.5 w-3.5 cursor-pointer accent-info"
+                  />
+                  <span className="truncate">{ns}</span>
+                </label>
+                {clusterId && (
+                  <Link
+                    to={`/clusters/${encodeURIComponent(clusterId)}/namespaces/${encodeURIComponent(ns)}/topology`}
+                    className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium text-info hover:bg-info/10"
+                    title={`Open topology for ${ns}`}
+                    onClick={() => setOpen(false)}
+                  >
+                    Topology →
+                  </Link>
+                )}
+              </div>
             );
           })}
         </div>

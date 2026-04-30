@@ -29,6 +29,9 @@ export const queryKeys = {
   // K8s events filtered to a specific pod (container detail)
   containerPodEvents: (hostId?: string, containerName?: string) => ['pod-events', hostId, containerName] as const,
 
+  // Namespace topology graph (cluster → namespace overview)
+  namespaceTopology: (clusterId?: string, namespace?: string) => ['namespace-topology', clusterId, namespace] as const,
+
   // Alerts & Insights
   alerts: () => ['alerts'] as const,
   insights: () => ['insights'] as const,

@@ -432,6 +432,53 @@ export interface RcaNeighborsResponse {
   neighbors: RcaNeighbor[];
 }
 
+// Namespace topology — graph of workloads / pods / nodes / ingresses / pvcs
+export interface TopologyContainer {
+  container_name: string;
+  container: string;
+  status: string;
+  health_status: string | null;
+  has_active_alert: boolean;
+}
+export interface TopologyPod {
+  pod_uid: string;
+  host_id: string;
+  containers: TopologyContainer[];
+}
+export interface TopologyWorkload {
+  kind: string | null;
+  name: string;
+  total_pods: number;
+  unhealthy_pods: number;
+  pods_by_node: Record<string, number>;
+  pods: TopologyPod[];
+}
+export interface TopologyIngress {
+  id: number;
+  name: string;
+  hosts: string[];
+  service_targets: string[];
+}
+export interface TopologyPvc {
+  name: string;
+  phase: string;
+  capacity_bytes: number | null;
+  storage_class: string | null;
+}
+export interface TopologyNode {
+  host_id: string;
+  online: boolean;
+  pod_count: number;
+}
+export interface NamespaceTopology {
+  cluster_id: string;
+  namespace: string;
+  workloads: TopologyWorkload[];
+  ingresses: TopologyIngress[];
+  pvcs: TopologyPvc[];
+  nodes: TopologyNode[];
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
@@ -454,6 +501,9 @@ export interface ContainerDetail extends ContainerSnapshot {
   /** Latest image string from update_checks; null when the agent hasn't
    *  reported one yet. */
   image: string | null;
+  /** Cluster id for k8s containers — host_group_override > host_group >
+   *  "cluster-{hostId}". Null for Docker. */
+  cluster_id: string | null;
   health_diagnosis: string | null;
   findings: Finding[];
   history: ContainerHistory[];
