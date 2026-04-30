@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 40;
+const SCHEMA_VERSION = 44;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -43,6 +43,14 @@ function bootstrap(db: Database.Database): void {
       cpu_limit_percent REAL,
       memory_limit_mb REAL,
       last_oom_killed_at TEXT,
+      -- v42: k8s pod-level identity + status. Duplicated across each
+      -- container in the pod (no separate pods table). All nullable —
+      -- Docker leaves them blank, k8s standalone pods (no ownerReferences)
+      -- leave workload_kind null.
+      workload_kind   TEXT,
+      pod_ip          TEXT,
+      host_ip         TEXT,
+      pod_conditions  TEXT,  -- JSON array: [{type,status,reason?,message?}]
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -233,6 +241,75 @@ function bootstrap(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_k8s_ingresses_cluster
       ON k8s_ingresses (cluster_id, observed_at DESC);
+
+    -- v43: Kubernetes Service inventory (cluster-scoped, leader-published).
+    -- Registry-style upsert by (cluster_id, namespace, name); selector + ports
+    -- are JSON to keep the row count bounded. The topology view joins
+    -- services to workloads by intersecting selector with pod labels.
+    CREATE TABLE IF NOT EXISTS k8s_services (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      cluster_id    TEXT NOT NULL,
+      namespace     TEXT NOT NULL,
+      name          TEXT NOT NULL,
+      type          TEXT NOT NULL,        -- ClusterIP / NodePort / LoadBalancer / ExternalName / Headless
+      cluster_ip    TEXT,                 -- "None" for Headless services
+      external_ips  TEXT,                 -- JSON string[]
+      external_name TEXT,                 -- only set for type=ExternalName
+      selector      TEXT,                 -- JSON Record<string,string>; null means no pod backends
+      ports         TEXT NOT NULL,        -- JSON [{port, targetPort, protocol, name?}]
+      created_at    TEXT,
+      labels        TEXT,
+      observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      removed_at    TEXT,
+      UNIQUE(cluster_id, namespace, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_k8s_services_cluster
+      ON k8s_services (cluster_id, observed_at DESC);
+
+    -- v44: Pod volume mounts (cluster-scoped, leader-published).
+    -- One row per (pod, volume name). volume_type classifies the source
+    -- (pvc / configMap / secret / emptyDir / hostPath / projected / other);
+    -- target_name holds the referenced object name for pvc/configMap/secret
+    -- (used by the topology view to draw Workload→PVC edges) or the path
+    -- for hostPath. Current-state UPSERT — rows are deleted when the pod
+    -- vanishes from a later batch, same prune-by-batchAt as pending_pods.
+    CREATE TABLE IF NOT EXISTS pod_volumes (
+      cluster_id   TEXT NOT NULL,
+      namespace    TEXT NOT NULL,
+      pod_uid      TEXT NOT NULL,
+      pod_name     TEXT NOT NULL,
+      volume_name  TEXT NOT NULL,
+      volume_type  TEXT NOT NULL,
+      target_name  TEXT,
+      observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pod_volumes_cluster_ns
+      ON pod_volumes (cluster_id, namespace);
+    CREATE INDEX IF NOT EXISTS idx_pod_volumes_target
+      ON pod_volumes (cluster_id, namespace, volume_type, target_name);
+
+    -- Pods stuck in Pending phase (cluster-scoped, leader-published).
+    -- Current-state UPSERT model — same row keyed by (cluster_id, namespace,
+    -- pod_name) is refreshed each leader cycle. first_seen_at is preserved
+    -- across cycles so the alert evaluator can age out by duration.
+    -- Rows are deleted when the pod leaves Pending or disappears.
+    CREATE TABLE IF NOT EXISTS pending_pods (
+      cluster_id      TEXT NOT NULL,
+      namespace       TEXT NOT NULL,
+      pod_name        TEXT NOT NULL,
+      reason          TEXT,
+      message         TEXT,
+      pod_phase       TEXT NOT NULL,
+      pod_created_at  TEXT,
+      workload_kind   TEXT,
+      workload_name   TEXT,
+      first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pending_pods_cluster_first
+      ON pending_pods (cluster_id, first_seen_at);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -930,6 +1007,83 @@ function migrate(db: Database.Database, fromVersion: number): void {
     // evaluator and diagnosis framework name the cause behind a restart
     // loop / unhealthy container instead of word-matching health output.
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN last_oom_killed_at TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 41) {
+    // Pods stuck Pending (unschedulable, PVC unbound, image pull, etc.).
+    // Cluster-scoped registry; the alert evaluator fires `pod_pending`
+    // when a row's first_seen_at is older than the threshold.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_pods (
+        cluster_id      TEXT NOT NULL,
+        namespace       TEXT NOT NULL,
+        pod_name        TEXT NOT NULL,
+        reason          TEXT,
+        message         TEXT,
+        pod_phase       TEXT NOT NULL,
+        pod_created_at  TEXT,
+        workload_kind   TEXT,
+        workload_name   TEXT,
+        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_pods_cluster_first
+        ON pending_pods (cluster_id, first_seen_at);
+    `);
+  }
+  if (fromVersion < 42) {
+    // K8s pod-level identity + status carried on every container snapshot.
+    // workload_kind: Deployment/StatefulSet/DaemonSet/Job/CronJob (or
+    // ReplicaSet for orphaned RSes; null for standalone pods + Docker).
+    // pod_conditions: JSON-serialized [{type,status,reason?,message?}].
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN workload_kind TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN host_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_conditions TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 43) {
+    // K8s Service inventory. The topology view replaces its heuristic
+    // ingress→workload matching with real Service-mediated edges.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS k8s_services (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_id    TEXT NOT NULL,
+        namespace     TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        type          TEXT NOT NULL,
+        cluster_ip    TEXT,
+        external_ips  TEXT,
+        external_name TEXT,
+        selector      TEXT,
+        ports         TEXT NOT NULL,
+        created_at    TEXT,
+        labels        TEXT,
+        observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        removed_at    TEXT,
+        UNIQUE(cluster_id, namespace, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_k8s_services_cluster
+        ON k8s_services (cluster_id, observed_at DESC);
+    `);
+  }
+  if (fromVersion < 44) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pod_volumes (
+        cluster_id   TEXT NOT NULL,
+        namespace    TEXT NOT NULL,
+        pod_uid      TEXT NOT NULL,
+        pod_name     TEXT NOT NULL,
+        volume_name  TEXT NOT NULL,
+        volume_type  TEXT NOT NULL,
+        target_name  TEXT,
+        observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pod_volumes_cluster_ns
+        ON pod_volumes (cluster_id, namespace);
+      CREATE INDEX IF NOT EXISTS idx_pod_volumes_target
+        ON pod_volumes (cluster_id, namespace, volume_type, target_name);
+    `);
   }
 }
 

@@ -48,6 +48,8 @@ interface ContainerRow {
   memory_limit_mb: number | null;
   memory_limit_percent: number | null;
   last_oom_killed_at: string | null;
+  size_rootfs_bytes: number | null;
+  size_rw_bytes: number | null;
   collected_at: string;
   is_stale: number;
 }
@@ -329,6 +331,7 @@ function getLatestContainers(db: Database.Database, hostId: string, onlineThresh
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
+           cs.size_rootfs_bytes, cs.size_rw_bytes,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
@@ -422,6 +425,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   node_pressure: 'error',
   container_memory_saturation: 'error',
   cert_invalid: 'error',
+  pod_pending: 'error',
   high_cpu: 'warning',
   high_memory: 'warning',
   high_host_cpu: 'warning',
@@ -445,6 +449,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'node_pressure' THEN 'error'
     WHEN 'container_memory_saturation' THEN 'error'
     WHEN 'cert_invalid' THEN 'error'
+    WHEN 'pod_pending' THEN 'error'
     WHEN 'high_cpu' THEN 'warning'
     WHEN 'high_memory' THEN 'warning'
     WHEN 'high_host_cpu' THEN 'warning'
@@ -982,7 +987,9 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
            cs.network_rx_bytes, cs.network_tx_bytes, cs.blkio_read_bytes, cs.blkio_write_bytes,
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
+           cs.size_rootfs_bytes, cs.size_rw_bytes,
            cs.last_oom_killed_at,
+           cs.workload_kind, cs.pod_ip, cs.host_ip, cs.pod_conditions,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
@@ -1003,13 +1010,34 @@ function getContainerId(db: Database.Database, hostId: string, containerName: st
   return row?.container_id || null;
 }
 
+/**
+ * Latest image string for a container, sourced from the most recent
+ * update_checks row. Returns null if the agent hasn't reported one yet
+ * (some k8s containers — e.g. distroless or images without registry tags
+ * — never produce an update_checks row).
+ */
+function getContainerImage(db: Database.Database, hostId: string, containerName: string): string | null {
+  const row = db.prepare(`
+    SELECT image FROM update_checks
+    WHERE host_id = ? AND container_name = ?
+    ORDER BY checked_at DESC LIMIT 1
+  `).get(hostId, containerName) as { image?: string } | undefined;
+  return row?.image ?? null;
+}
+
 function getHostRuntimeType(db: Database.Database, hostId: string): string {
   const row = db.prepare('SELECT runtime_type FROM hosts WHERE host_id = ?')
     .get(hostId) as { runtime_type?: string } | undefined;
   return row?.runtime_type ?? 'docker';
 }
 
-function getUptimeTimeline(db: Database.Database, hostId: string, days: number): Array<{ name: string; slots: string[]; uptimePercent: number | null }> {
+interface UptimeTimelineRow { name: string; slots: string[]; uptimePercent: number | null }
+
+function getUptimeTimeline(db: Database.Database, hostId: string, days: number): { host: UptimeTimelineRow | null; containers: UptimeTimelineRow[] } {
+  const totalHours = days * 24;
+  const now = Date.now();
+  const startMs = now - days * 86400000;
+
   const rows = db.prepare(`
     SELECT cs.container_name, cs.status, cs.collected_at
     FROM container_snapshots cs
@@ -1018,17 +1046,13 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
     ORDER BY cs.container_name, cs.collected_at
   `).all(hostId, days) as UptimeSnapshotRow[];
 
-  const containers: Record<string, UptimeSnapshotRow[]> = {};
+  const containerMap: Record<string, UptimeSnapshotRow[]> = {};
   for (const r of rows) {
-    if (!containers[r.container_name]) containers[r.container_name] = [];
-    containers[r.container_name].push(r);
+    if (!containerMap[r.container_name]) containerMap[r.container_name] = [];
+    containerMap[r.container_name].push(r);
   }
 
-  const totalHours = days * 24;
-  const now = Date.now();
-  const startMs = now - days * 86400000;
-
-  return Object.entries(containers).map(([name, snapshots]) => {
+  const containers = Object.entries(containerMap).map(([name, snapshots]) => {
     const slots: string[] = [];
     let runningCount = 0;
     for (let h = 0; h < totalHours; h++) {
@@ -1051,6 +1075,40 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
     const uptimePercent = slotsWithData > 0 ? Math.round((runningCount / slotsWithData) * 100 * 10) / 10 : null;
     return { name, slots, uptimePercent };
   });
+
+  // Host uptime: any host_snapshot in a slot ⇒ host was reporting (up).
+  // No snapshot ⇒ either host was offline or the agent/hub couldn't reach it.
+  const hostSnapshots = db.prepare(`
+    SELECT collected_at FROM host_snapshots
+    WHERE host_id = ? AND collected_at >= datetime('now', '-' || ? || ' days')
+    ORDER BY collected_at
+  `).all(hostId, days) as { collected_at: string }[];
+  const hostExists = db.prepare('SELECT 1 FROM hosts WHERE host_id = ?').get(hostId);
+
+  let host: UptimeTimelineRow | null = null;
+  if (hostExists) {
+    const hostTs = hostSnapshots.map(s => new Date(s.collected_at + 'Z').getTime());
+    const slots: string[] = [];
+    let upCount = 0;
+    let firstSlotWithDataIdx = -1;
+    for (let h = 0; h < totalHours; h++) {
+      const slotStart = startMs + h * 3600000;
+      const slotEnd = slotStart + 3600000;
+      const hasSnapshot = hostTs.some(t => t >= slotStart && t < slotEnd);
+      if (hasSnapshot) {
+        slots.push('up');
+        upCount++;
+        if (firstSlotWithDataIdx === -1) firstSlotWithDataIdx = h;
+      } else {
+        slots.push(firstSlotWithDataIdx === -1 ? 'none' : 'down');
+      }
+    }
+    const slotsWithData = slots.filter(s => s !== 'none').length;
+    const uptimePercent = slotsWithData > 0 ? Math.round((upCount / slotsWithData) * 100 * 10) / 10 : null;
+    host = { name: hostId, slots, uptimePercent };
+  }
+
+  return { host, containers };
 }
 
 function getResourceRankings(db: Database.Database, limit: number, showInternal: boolean = false): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
@@ -1838,6 +1896,57 @@ function getClusterIdForHost(db: Database.Database, hostId: string): string | nu
     : `cluster-${hostId}`;
 }
 
+/**
+ * K8s events scoped to a single pod / its parent workload. Pulled from the
+ * already-ingested cluster-wide `k8s_events` table.
+ *
+ * The container_name format for k8s entities is "namespace/stable/container",
+ * where `stable` is the workload identity resolved by the agent (Deployment
+ * name for RS-owned pods, pod name for StatefulSet, controller name for
+ * DaemonSet/Job). We match three event scopes:
+ *
+ *   1. Pod-level: involved_kind='Pod' AND involved_name LIKE 'stable%' —
+ *      the trailing % catches both the deterministic StatefulSet names
+ *      (exact match) and the random-suffix names of Deployment-owned pods.
+ *   2. Direct workload: involved_kind IN (Deployment/StatefulSet/DaemonSet/
+ *      Job/CronJob) AND involved_name = 'stable'.
+ *   3. ReplicaSet: involved_kind='ReplicaSet' AND involved_name LIKE 'stable-%'
+ *      — Deployment-owned RSes are named `<deployment>-<hash>`, so this
+ *      catches them without bleeding across deployments.
+ *
+ * Returns [] for non-k8s containers and for cases where parsing fails.
+ */
+function getPodEvents(db: Database.Database, hostId: string, containerName: string, limit: number = 20): K8sEventRow[] {
+  const clusterId = getClusterIdForHost(db, hostId);
+  if (!clusterId) return [];
+
+  const firstSlash = containerName.indexOf('/');
+  if (firstSlash <= 0) return [];
+  const namespace = containerName.slice(0, firstSlash);
+  const rest = containerName.slice(firstSlash + 1);
+  const secondSlash = rest.indexOf('/');
+  // No second slash → container_name is just "namespace/pod" with no
+  // container component. Still usable: stable = pod name.
+  const stable = secondSlash > 0 ? rest.slice(0, secondSlash) : rest;
+  if (!namespace || !stable) return [];
+
+  const lim = Math.max(1, Math.min(100, limit));
+  return db.prepare(`
+    SELECT event_uid, cluster_id, namespace, involved_kind, involved_name,
+           reason, message, type, count, first_seen_at, last_seen_at
+    FROM k8s_events
+    WHERE cluster_id = ? AND namespace = ?
+      AND (
+        (involved_kind = 'Pod'        AND involved_name LIKE ?)
+        OR (involved_kind IN ('Deployment','StatefulSet','DaemonSet','Job','CronJob')
+            AND involved_name = ?)
+        OR (involved_kind = 'ReplicaSet' AND involved_name LIKE ?)
+      )
+    ORDER BY last_seen_at DESC
+    LIMIT ${lim}
+  `).all(clusterId, namespace, `${stable}%`, stable, `${stable}-%`) as K8sEventRow[];
+}
+
 interface K8sEventFilters {
   limit?: number;
   reason?: string;
@@ -1907,4 +2016,1036 @@ function getNodeConditionsForHost(db: Database.Database, hostId: string): NodeCo
   `).all(hostId) as NodeConditionRow[];
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getNodeConditionsForHost, getClusterIdForHost };
+// ── RCA neighbors (Explore drawer on container detail) ──────────────────────
+//
+// `rca_edges` is rebuilt every scheduler cycle by hub/src/insights/rca/graph.ts
+// and stores edges symmetrically with `from < to` (lex-sorted). Three edge
+// types: same_host (0.3), same_compose (0.6), metric_corr (≥0.4 dynamic).
+// A pair of containers can have multiple edge types — we collapse to one
+// row per neighbor with the strongest weight as the score.
+
+export interface RcaNeighbor {
+  entity: string;          // "host_id/container_name"
+  hostId: string;
+  containerName: string;
+  score: number;
+  edgeTypes: string[];     // sorted, unique
+  healthStatus: string | null;
+  hasActiveAlert: boolean;
+  isRemoved: boolean;      // container disappeared from registry
+}
+
+interface RcaPeerRow {
+  peer: string;
+  score: number;
+  edge_types_csv: string;
+}
+
+/**
+ * Top-N RCA neighbors of a container, ranked by edge weight. Returns null
+ * never — empty array when nothing is in the graph yet (newly-seen container).
+ */
+function getRcaNeighbors(
+  db: Database.Database,
+  hostId: string,
+  containerName: string,
+  limit: number = 10,
+): RcaNeighbor[] {
+  const entity = `${hostId}/${containerName}`;
+  // Edges live in rca_edges with from < to (see graph.ts addEdge), so to
+  // enumerate every neighbor we union both sides. Collapse multi-type pairs
+  // by GROUP BY on the peer.
+  const rows = db.prepare(`
+    WITH peers AS (
+      SELECT to_entity AS peer, edge_type, weight FROM rca_edges WHERE from_entity = ?
+      UNION ALL
+      SELECT from_entity AS peer, edge_type, weight FROM rca_edges WHERE to_entity = ?
+    )
+    SELECT
+      peer,
+      MAX(weight) AS score,
+      GROUP_CONCAT(DISTINCT edge_type) AS edge_types_csv
+    FROM peers
+    GROUP BY peer
+    ORDER BY score DESC
+    LIMIT ?
+  `).all(entity, entity, Math.max(1, Math.min(50, limit))) as RcaPeerRow[];
+
+  if (rows.length === 0) return [];
+
+  // Per-peer state lookups. Limit is small (≤50), so prepared-statement reuse
+  // keeps this cheap. Skip insightd's own containers — `same_host` would tie
+  // every container on every host to insightd-agent / insightd-hub, which is
+  // noise (matches the detector's filter).
+  const healthStmt = db.prepare(`
+    SELECT health_status FROM container_snapshots
+    WHERE host_id = ? AND container_name = ?
+    ORDER BY collected_at DESC LIMIT 1
+  `);
+  const alertStmt = db.prepare(`
+    SELECT 1 FROM alert_state
+    WHERE host_id = ? AND target = ? AND resolved_at IS NULL
+    LIMIT 1
+  `);
+  const removedStmt = db.prepare(`
+    SELECT removed_at FROM containers WHERE host_id = ? AND container_name = ?
+  `);
+
+  const out: RcaNeighbor[] = [];
+  for (const r of rows) {
+    // entity format is `${host_id}/${container_name}`. Host IDs don't contain
+    // slashes; container names can (k8s "ns/stable/container"), so split on
+    // the *first* slash only.
+    const slash = r.peer.indexOf('/');
+    if (slash < 1) continue;
+    const peerHostId = r.peer.slice(0, slash);
+    const peerName = r.peer.slice(slash + 1);
+    if (peerName.startsWith('insightd-')) continue;
+
+    const health = healthStmt.get(peerHostId, peerName) as { health_status: string | null } | undefined;
+    const alert = alertStmt.get(peerHostId, peerName) as { 1: number } | undefined;
+    const reg = removedStmt.get(peerHostId, peerName) as { removed_at: string | null } | undefined;
+
+    out.push({
+      entity: r.peer,
+      hostId: peerHostId,
+      containerName: peerName,
+      score: r.score,
+      edgeTypes: r.edge_types_csv.split(',').filter(Boolean).sort(),
+      healthStatus: health?.health_status ?? null,
+      hasActiveAlert: !!alert,
+      // No registry row OR removed_at set → treat as removed
+      isRemoved: !reg || reg.removed_at != null,
+    });
+  }
+  return out;
+}
+
+// ── Namespace topology (cluster overview page) ──────────────────────────────
+//
+// Composes latest container_snapshots + ingresses + pvcs + hosts into a
+// single shape suitable for a graph view. Nothing here is new data — it's a
+// reshape of what the agent already publishes.
+
+export interface TopologyContainer {
+  container_name: string;
+  container: string;            // last segment, for display
+  status: string;
+  health_status: string | null;
+  has_active_alert: boolean;
+}
+
+export interface TopologyPod {
+  pod_uid: string;
+  host_id: string;
+  containers: TopologyContainer[];
+}
+
+export interface TopologyVolumeMount {
+  type: 'pvc' | 'configMap' | 'secret' | 'emptyDir' | 'hostPath' | 'projected' | 'other';
+  /** Referenced object name (PVC name, ConfigMap name, Secret name, hostPath
+   *  path) — null for ambient types like emptyDir/projected. */
+  target_name: string | null;
+  /** All volume_names from the pod spec that resolve to the same target.
+   *  Useful in the side-panel detail view; the graph only renders one edge
+   *  per (workload, target) pair. */
+  volume_names: string[];
+}
+
+export interface TopologyWorkload {
+  kind: string | null;
+  name: string;
+  total_pods: number;
+  unhealthy_pods: number;
+  pods_by_node: Record<string, number>;
+  pods: TopologyPod[];
+  /** Highest severity across alerts + findings on this workload's containers.
+   *  null when nothing is wrong — drives the workload card tone. */
+  severity: TopologySeverity;
+  active_alerts: TopologyAlert[];
+  findings: TopologyFinding[];
+  /** Volume references aggregated from pod.spec.volumes. Includes ambient
+   *  types (emptyDir / projected) for completeness; the UI only draws
+   *  edges to PVC nodes. */
+  volume_mounts: TopologyVolumeMount[];
+}
+
+export interface TopologyIngress {
+  id: number;
+  name: string;
+  hosts: string[];
+  /** Service names extracted from paths[].serviceName — UI joins these to
+   *  topology services by exact name to draw real Ingress→Service edges. */
+  service_targets: string[];
+}
+
+export interface TopologyServicePort {
+  name: string | null;
+  port: number;
+  target_port: number | string | null;
+  protocol: string | null;
+  node_port: number | null;
+}
+
+export interface TopologyService {
+  name: string;
+  type: string;            // ClusterIP / NodePort / LoadBalancer / ExternalName
+  cluster_ip: string | null;
+  external_name: string | null;
+  ports: TopologyServicePort[];
+  /** Workload keys this service routes to (selector ⊆ pod labels). May be
+   *  empty for ExternalName services, headless services without backends,
+   *  or misconfigured selectors that match no pod. */
+  workload_keys: string[];
+  /** True when the service has no selector OR an empty selector — these
+   *  are leaf nodes in the graph (no pod backends). */
+  is_external: boolean;
+}
+
+export interface TopologyPvc {
+  name: string;
+  phase: string;
+  capacity_bytes: number | null;
+  storage_class: string | null;
+}
+
+export interface TopologyNode {
+  host_id: string;
+  online: boolean;
+  pod_count: number;
+}
+
+export type TopologySeverity = 'critical' | 'error' | 'warning' | null;
+
+export interface TopologyAlert {
+  /** alert_type — e.g. container_unhealthy, restart_loop, pod_pending. */
+  type: string;
+  /** target — container_name within this workload (or pod target for k8s). */
+  container_name: string;
+  level: 'critical' | 'error' | 'warning' | 'info';
+  message: string | null;
+  triggered_at: string;
+}
+
+export interface TopologyFinding {
+  /** insights.entity_id — same as container_name. */
+  container_name: string;
+  category: string;
+  severity: string;
+  title: string;
+  message: string;
+  suggested_action: string | null;
+  confidence: string | null;
+}
+
+export interface TopologyRcaEdge {
+  /** Workload key (`wl:${kind ?? '_'}:${name}`); always lex-ordered from < to so the UI can dedupe. */
+  from: string;
+  to: string;
+  weight: number;
+}
+
+export interface NamespaceTopology {
+  cluster_id: string;
+  namespace: string;
+  workloads: TopologyWorkload[];
+  services: TopologyService[];
+  ingresses: TopologyIngress[];
+  pvcs: TopologyPvc[];
+  nodes: TopologyNode[];
+  /** Cross-workload metric correlation edges within this namespace. UI
+   *  draws these dashed only when a workload with issues is selected.
+   *  Live-only — empty array when time-traveled (rca_edges has no history). */
+  rca_edges: TopologyRcaEdge[];
+  /** ISO timestamp the response represents — null when live. Frontend
+   *  uses this to show a "viewing snapshot from X" banner and to disable
+   *  live-only surfaces (RCA neighbor overlay, diagnosis findings). */
+  at: string | null;
+}
+
+interface ContainerLatestRow {
+  host_id: string;
+  container_name: string;
+  container_id: string;
+  workload_kind: string | null;
+  status: string;
+  health_status: string | null;
+  host_online: number;
+  /** JSON-stringified Record<string,string> from container_snapshots.labels.
+   *  We need it for selector→workload matching now that v43 ingests
+   *  Services. */
+  labels: string | null;
+}
+
+function getNamespaceTopology(db: Database.Database, clusterId: string, namespace: string, offlineThresholdMinutes: number, at: string | null = null): NamespaceTopology {
+  // When `at` is set we query historical snapshots — pick the latest row
+  // whose timestamp is at or before `at`. Several surfaces are live-only
+  // (rca_edges is rebuilt each cycle, insights is rebuilt each cycle, pod
+  // volumes are pruned not soft-deleted) and degrade gracefully.
+  const isTimeTraveled = at != null && at !== '';
+  // Latest snapshot per container in this cluster + namespace.
+  // Cluster id is matched via the same logic as getClusterIdForHost
+  // (host_group_override > host_group > "cluster-{hostId}").
+  // Time-travel filter: when `at` is set, pick the latest snapshot whose
+  // collected_at is at-or-before `at`, AND restrict to containers that were
+  // still active at that moment (registry's removed_at NULL or > at). Live
+  // mode is unchanged — registry-active only.
+  const containerRows = db.prepare(`
+    WITH latest AS (
+      SELECT cs.host_id, cs.container_name, cs.container_id,
+             cs.workload_kind, cs.status, cs.health_status, cs.labels,
+             CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+               THEN 1 ELSE 0 END AS host_online,
+             ROW_NUMBER() OVER (
+               PARTITION BY cs.host_id, cs.container_name
+               ORDER BY cs.collected_at DESC
+             ) AS rn
+      FROM container_snapshots cs
+      INNER JOIN hosts h ON h.host_id = cs.host_id
+      INNER JOIN containers cr ON cr.host_id = cs.host_id AND cr.container_name = cs.container_name
+      WHERE
+        ${isTimeTraveled
+          ? '(cr.removed_at IS NULL OR datetime(cr.removed_at) > datetime(?))'
+          : 'cr.removed_at IS NULL'}
+        AND h.runtime_type = 'kubernetes'
+        AND COALESCE(h.host_group_override, h.host_group, 'cluster-' || h.host_id) = ?
+        AND cs.container_name LIKE ?
+        ${isTimeTraveled ? "AND datetime(cs.collected_at) <= datetime(?)" : ''}
+    )
+    SELECT host_id, container_name, container_id, workload_kind, status, health_status, host_online, labels
+    FROM latest
+    WHERE rn = 1
+  `).all(
+    ...(isTimeTraveled
+      ? [offlineThresholdMinutes, at, clusterId, `${namespace}/%`, at]
+      : [offlineThresholdMinutes, clusterId, `${namespace}/%`]),
+  ) as ContainerLatestRow[];
+
+  // Active alerts on these containers (one query, in-memory map).
+  const alertNames = new Set<string>();
+  if (containerRows.length > 0) {
+    const placeholders = containerRows.map(() => '?').join(',');
+    const alertRows = db.prepare(`
+      SELECT host_id, target FROM alert_state
+      WHERE resolved_at IS NULL AND target IN (${placeholders})
+    `).all(...containerRows.map(r => r.container_name)) as Array<{ host_id: string; target: string }>;
+    for (const a of alertRows) alertNames.add(`${a.host_id}${a.target}`);
+  }
+
+  // Group: workload (kind+stableName) → pod (podUid) → containers.
+  // container_name = "namespace/stable/container[/...]"
+  // container_id   = "podUid/stable/container"
+  const workloadMap = new Map<string, TopologyWorkload>();
+  // Parallel map of per-workload pod label sets, used downstream to match
+  // Service selectors against pods (selector ⊆ pod_labels). Keyed by podUid
+  // so sidecars don't double-count.
+  const workloadLabels = new Map<string, Map<string, Record<string, string>>>();
+  const nodeIdSet = new Set<string>();
+  for (const r of containerRows) {
+    const firstSlash = r.container_name.indexOf('/');
+    if (firstSlash <= 0) continue;
+    const rest = r.container_name.slice(firstSlash + 1);
+    const secondSlash = rest.indexOf('/');
+    const stable = secondSlash > 0 ? rest.slice(0, secondSlash) : rest;
+    const containerSegment = secondSlash > 0 ? rest.slice(secondSlash + 1) : '';
+    const podUid = r.container_id.split('/')[0] ?? r.host_id;
+    // Format matches the frontend workloadKeyOf so service.workload_keys line up with React Flow node ids.
+    const workloadKey = `wl:${r.workload_kind ?? "_"}:${stable}`;
+
+    let wl = workloadMap.get(workloadKey);
+    if (!wl) {
+      wl = {
+        kind: r.workload_kind ?? null,
+        name: stable,
+        total_pods: 0,
+        unhealthy_pods: 0,
+        pods_by_node: {},
+        pods: [],
+        severity: null,
+        active_alerts: [],
+        findings: [],
+        volume_mounts: [],
+      };
+      workloadMap.set(workloadKey, wl);
+      workloadLabels.set(workloadKey, new Map());
+    }
+
+    let pod = wl.pods.find(p => p.pod_uid === podUid);
+    if (!pod) {
+      pod = { pod_uid: podUid, host_id: r.host_id, containers: [] };
+      wl.pods.push(pod);
+      wl.total_pods += 1;
+      wl.pods_by_node[r.host_id] = (wl.pods_by_node[r.host_id] ?? 0) + 1;
+      // First container we've seen for this pod — capture its labels for
+      // selector matching. All containers in a pod share pod-level labels.
+      const labels = parseLabelsJson(r.labels);
+      if (labels) workloadLabels.get(workloadKey)!.set(podUid, labels);
+    }
+    pod.containers.push({
+      container_name: r.container_name,
+      container: containerSegment,
+      status: r.status,
+      health_status: r.health_status,
+      has_active_alert: alertNames.has(`${r.host_id}${r.container_name}`),
+    });
+    nodeIdSet.add(r.host_id);
+  }
+
+  // A pod is unhealthy if any of its containers is unhealthy.
+  for (const wl of workloadMap.values()) {
+    for (const pod of wl.pods) {
+      if (pod.containers.some(c => c.health_status === 'unhealthy' || c.has_active_alert)) {
+        wl.unhealthy_pods += 1;
+      }
+    }
+  }
+
+  // ── Diagnosis overlay: attribute alerts + findings to workloads ──────────
+  //
+  // Build a container_name → workloadKey map so alert/finding rows can be
+  // attributed to the workload they belong to. The container_name is the
+  // alert_state.target and the insights.entity_id, so a single map serves
+  // both joins.
+  const containerToWorkload = new Map<string, string>();
+  for (const [wlKey, wl] of workloadMap) {
+    for (const pod of wl.pods) {
+      for (const c of pod.containers) {
+        containerToWorkload.set(c.container_name, wlKey);
+      }
+    }
+  }
+
+  if (containerRows.length > 0) {
+    const placeholders = containerRows.map(() => '?').join(',');
+    const targets = containerRows.map(r => r.container_name);
+
+    // Active alerts on workloads in this namespace. In time-traveled mode,
+    // an alert is "active at T" when triggered_at <= T AND (resolved_at IS
+    // NULL OR resolved_at > T) — so we see the alerts that were firing then.
+    const activeAlerts = db.prepare(`
+      SELECT host_id, alert_type, target, message, triggered_at
+      FROM alert_state
+      WHERE target IN (${placeholders})
+        ${isTimeTraveled
+          ? 'AND datetime(triggered_at) <= datetime(?) AND (resolved_at IS NULL OR datetime(resolved_at) > datetime(?))'
+          : 'AND resolved_at IS NULL'}
+      ORDER BY triggered_at DESC
+    `).all(...targets, ...(isTimeTraveled ? [at, at] : [])) as Array<{
+      host_id: string; alert_type: string; target: string;
+      message: string | null; triggered_at: string;
+    }>;
+
+    for (const a of activeAlerts) {
+      const wlKey = containerToWorkload.get(a.target);
+      if (!wlKey) continue;
+      const wl = workloadMap.get(wlKey);
+      if (!wl) continue;
+      const level = LEVEL_BY_ALERT_TYPE[a.alert_type] ?? 'info';
+      wl.active_alerts.push({
+        type: a.alert_type,
+        container_name: a.target,
+        level,
+        message: a.message,
+        triggered_at: a.triggered_at,
+      });
+      wl.severity = mergeSeverity(wl.severity, level);
+    }
+
+    // Diagnosis findings from the insights table. Container insights only —
+    // host insights aren't workload-attributable. The insights table uses
+    // entity_id = "host_id/container_name" (see detector.ts), so we match
+    // against the full entity-id form rather than just container_name.
+    //
+    // The insights table is fully rebuilt every detector cycle (no history),
+    // so it's live-only — skip when time-traveled. The UI surfaces this as a
+    // banner caveat alongside the same caveat for rca_edges.
+    const insightEntities = isTimeTraveled
+      ? []
+      : containerRows.map(r => `${r.host_id}/${r.container_name}`);
+    const entityToContainer = new Map(
+      containerRows.map(r => [`${r.host_id}/${r.container_name}`, r.container_name]),
+    );
+    const insightPlaceholders = insightEntities.map(() => '?').join(',');
+    const insightRows = insightEntities.length === 0 ? [] : db.prepare(`
+      SELECT entity_id, category, severity, title, message, suggested_action, confidence
+      FROM insights
+      WHERE entity_type = 'container' AND entity_id IN (${insightPlaceholders})
+    `).all(...insightEntities) as Array<{
+      entity_id: string; category: string; severity: string;
+      title: string; message: string;
+      suggested_action: string | null; confidence: string | null;
+    }>;
+
+    for (const f of insightRows) {
+      const containerName = entityToContainer.get(f.entity_id);
+      if (!containerName) continue;
+      const wlKey = containerToWorkload.get(containerName);
+      if (!wlKey) continue;
+      const wl = workloadMap.get(wlKey);
+      if (!wl) continue;
+      wl.findings.push({
+        container_name: containerName,
+        category: f.category,
+        severity: f.severity,
+        title: f.title,
+        message: f.message,
+        suggested_action: f.suggested_action,
+        confidence: f.confidence,
+      });
+      // insights.severity is 'critical' | 'warning' | 'info' (no 'error' tier).
+      // Use the level mapping that matches the alert ladder so rendering
+      // colors stay consistent.
+      const insightLevel: 'critical' | 'warning' | 'info' =
+        f.severity === 'critical' ? 'critical' :
+        f.severity === 'warning'  ? 'warning' : 'info';
+      wl.severity = mergeSeverity(wl.severity, insightLevel);
+    }
+  }
+
+  // ── RCA neighbor edges within this namespace ────────────────────────────
+  //
+  // metric_corr edges only — same_host / same_compose are too noisy for the
+  // overlay (every container in the namespace would touch every other).
+  // Aggregate per-container edges (entity_id = "host_id/container_name") to
+  // per-workload (workload key) edges, taking the max weight on collision.
+  // Both endpoints must be containers we already have in this namespace, so
+  // we don't bleed into other namespaces.
+  const containerEntities = new Set<string>(
+    containerRows.map(r => `${r.host_id}/${r.container_name}`),
+  );
+  const rcaEdgesMap = new Map<string, TopologyRcaEdge>();
+  // Live-only — rca_edges is replaced wholesale each scheduler cycle, so
+  // there's no historical view. The UI shows a banner about this when
+  // time-traveled.
+  if (!isTimeTraveled && containerEntities.size > 0) {
+    const ents = Array.from(containerEntities);
+    const placeholders = ents.map(() => '?').join(',');
+    const rcaRows = db.prepare(`
+      SELECT from_entity, to_entity, weight FROM rca_edges
+      WHERE edge_type = 'metric_corr'
+        AND from_entity IN (${placeholders}) AND to_entity IN (${placeholders})
+    `).all(...ents, ...ents) as Array<{ from_entity: string; to_entity: string; weight: number }>;
+
+    const entityToWorkload = (entity: string): string | null => {
+      const slash = entity.indexOf('/');
+      if (slash < 0) return null;
+      const containerName = entity.slice(slash + 1);
+      return containerToWorkload.get(containerName) ?? null;
+    };
+
+    for (const r of rcaRows) {
+      const fromKey = entityToWorkload(r.from_entity);
+      const toKey = entityToWorkload(r.to_entity);
+      if (!fromKey || !toKey || fromKey === toKey) continue;
+      const a = fromKey < toKey ? fromKey : toKey;
+      const b = fromKey < toKey ? toKey : fromKey;
+      const k = `${a}\n${b}`;
+      const existing = rcaEdgesMap.get(k);
+      if (!existing || r.weight > existing.weight) {
+        rcaEdgesMap.set(k, { from: a, to: b, weight: r.weight });
+      }
+    }
+  }
+  const rca_edges = Array.from(rcaEdgesMap.values())
+    .sort((x, y) => y.weight - x.weight);
+
+  // ── Volume mounts: per-workload pvc/configMap/secret/etc references ─────
+  //
+  // The pod_volumes table is keyed by pod_uid; we already know which podUid
+  // → workload via the per-container scan above. Aggregate so each workload
+  // exposes one entry per (volume_type, target_name) pair, with the set of
+  // volume_names that map to it (a pod can mount the same PVC under multiple
+  // names, but for the graph we only care about the destination).
+  const podUidToWorkload = new Map<string, string>();
+  for (const r of containerRows) {
+    const podUid = r.container_id.split('/')[0];
+    if (!podUid) continue;
+    const wlKey = containerToWorkload.get(r.container_name);
+    if (wlKey) podUidToWorkload.set(podUid, wlKey);
+  }
+
+  const volumeMountsByWorkload = new Map<string, Map<string, TopologyVolumeMount>>();
+  if (podUidToWorkload.size > 0) {
+    // pod_volumes is pruned (not soft-deleted) when a pod disappears, so the
+    // historical view captures only volumes that were observed at-or-before
+    // `at` AND were still present in a later prune cycle. Acceptable
+    // approximation — most pods we care about historically still exist now,
+    // or have a snapshot recent enough to survive the prune window.
+    const volumeRows = db.prepare(`
+      SELECT pod_uid, volume_name, volume_type, target_name
+      FROM pod_volumes
+      WHERE cluster_id = ? AND namespace = ?
+        ${isTimeTraveled ? 'AND datetime(observed_at) <= datetime(?)' : ''}
+    `).all(...(isTimeTraveled ? [clusterId, namespace, at] : [clusterId, namespace])) as Array<{
+      pod_uid: string; volume_name: string; volume_type: string; target_name: string | null;
+    }>;
+    for (const v of volumeRows) {
+      const wlKey = podUidToWorkload.get(v.pod_uid);
+      if (!wlKey) continue;
+      let perWorkload = volumeMountsByWorkload.get(wlKey);
+      if (!perWorkload) {
+        perWorkload = new Map();
+        volumeMountsByWorkload.set(wlKey, perWorkload);
+      }
+      // Dedupe by (volume_type, target_name) so a workload that mounts the
+      // same PVC across replicas only renders one edge / chip. Ambient types
+      // (emptyDir, projected) without a target_name dedupe by volume_name.
+      const dedupeKey = `${v.volume_type}|${v.target_name ?? `~${v.volume_name}`}`;
+      let entry = perWorkload.get(dedupeKey);
+      if (!entry) {
+        entry = {
+          type: v.volume_type as TopologyVolumeMount['type'],
+          target_name: v.target_name,
+          volume_names: [],
+        };
+        perWorkload.set(dedupeKey, entry);
+      }
+      if (!entry.volume_names.includes(v.volume_name)) {
+        entry.volume_names.push(v.volume_name);
+      }
+    }
+  }
+  for (const [wlKey, perWorkload] of volumeMountsByWorkload) {
+    const wl = workloadMap.get(wlKey);
+    if (!wl) continue;
+    wl.volume_mounts = Array.from(perWorkload.values()).sort((a, b) => {
+      // Sort PVCs first (graph-relevant), then ConfigMap/Secret (chips), then ambient.
+      const order = (t: string) => t === 'pvc' ? 0 : t === 'configMap' ? 1 : t === 'secret' ? 2 : 3;
+      const da = order(a.type) - order(b.type);
+      if (da !== 0) return da;
+      return (a.target_name ?? '').localeCompare(b.target_name ?? '');
+    });
+  }
+
+  // Ingresses currently in this namespace (or at `at` when time-traveled —
+  // the registry's UPSERT + removed_at lets us answer "was the ingress
+  // present at T?" as observed_at <= T AND (removed_at IS NULL OR removed_at > T)).
+  const ingressRows = db.prepare(`
+    SELECT id, name, hosts, paths
+    FROM k8s_ingresses
+    WHERE cluster_id = ? AND namespace = ?
+      ${isTimeTraveled
+        ? 'AND datetime(observed_at) <= datetime(?) AND (removed_at IS NULL OR datetime(removed_at) > datetime(?))'
+        : 'AND removed_at IS NULL'}
+    ORDER BY name
+  `).all(...(isTimeTraveled ? [clusterId, namespace, at, at] : [clusterId, namespace])) as Array<{ id: number; name: string; hosts: string; paths: string }>;
+  const ingresses: TopologyIngress[] = ingressRows.map(row => {
+    let hosts: string[] = [];
+    let serviceTargets: string[] = [];
+    try { hosts = JSON.parse(row.hosts) as string[]; } catch { /* ignore */ }
+    try {
+      const paths = JSON.parse(row.paths) as Array<{ serviceName?: string | null }>;
+      const seen = new Set<string>();
+      for (const p of paths) {
+        if (p.serviceName && !seen.has(p.serviceName)) {
+          seen.add(p.serviceName);
+          serviceTargets.push(p.serviceName);
+        }
+      }
+    } catch { /* ignore */ }
+    return { id: row.id, name: row.name, hosts, service_targets: serviceTargets };
+  });
+
+  // PVCs latest per (cluster_id, namespace, pvc_name). When time-traveled,
+  // pick the latest snapshot whose collected_at is at-or-before `at`.
+  const pvcRows = db.prepare(`
+    SELECT pvc_name AS name, phase, capacity_bytes, storage_class
+    FROM pvc_snapshots
+    WHERE cluster_id = ? AND namespace = ?
+      AND collected_at = (
+        SELECT MAX(collected_at) FROM pvc_snapshots p2
+         WHERE p2.cluster_id = pvc_snapshots.cluster_id
+           AND p2.namespace  = pvc_snapshots.namespace
+           AND p2.pvc_name   = pvc_snapshots.pvc_name
+           ${isTimeTraveled ? 'AND datetime(p2.collected_at) <= datetime(?)' : ''}
+      )
+    ORDER BY name
+  `).all(...(isTimeTraveled ? [clusterId, namespace, at] : [clusterId, namespace])) as Array<{ name: string; phase: string; capacity_bytes: number | null; storage_class: string | null }>;
+  const pvcs: TopologyPvc[] = pvcRows;
+
+  // Nodes that host pods in this namespace.
+  const nodes: TopologyNode[] = [];
+  for (const hostId of Array.from(nodeIdSet).sort()) {
+    let podCount = 0;
+    let online = false;
+    for (const r of containerRows) {
+      if (r.host_id !== hostId) continue;
+      online = !!r.host_online;  // any row will give us the host's online state
+    }
+    for (const wl of workloadMap.values()) {
+      podCount += wl.pods_by_node[hostId] ?? 0;
+    }
+    nodes.push({ host_id: hostId, online, pod_count: podCount });
+  }
+
+  // Stable order: workloads alphabetically by name.
+  const workloads = Array.from(workloadMap.values()).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+
+  // Services in this namespace + selector→workload matching. UPSERT
+  // registry, so time-travel uses observed_at + removed_at like ingresses.
+  const serviceRows = db.prepare(`
+    SELECT name, type, cluster_ip, external_name, selector, ports
+    FROM k8s_services
+    WHERE cluster_id = ? AND namespace = ?
+      ${isTimeTraveled
+        ? 'AND datetime(observed_at) <= datetime(?) AND (removed_at IS NULL OR datetime(removed_at) > datetime(?))'
+        : 'AND removed_at IS NULL'}
+    ORDER BY name
+  `).all(...(isTimeTraveled ? [clusterId, namespace, at, at] : [clusterId, namespace])) as Array<{
+    name: string;
+    type: string;
+    cluster_ip: string | null;
+    external_name: string | null;
+    selector: string | null;
+    ports: string;
+  }>;
+
+  const services: TopologyService[] = serviceRows.map(row => {
+    let ports: TopologyServicePort[] = [];
+    try {
+      const raw = JSON.parse(row.ports) as Array<{
+        name?: string | null; port: number; targetPort?: number | string | null;
+        protocol?: string | null; nodePort?: number | null;
+      }>;
+      ports = raw.map(p => ({
+        name: p.name ?? null,
+        port: p.port,
+        target_port: p.targetPort ?? null,
+        protocol: p.protocol ?? null,
+        node_port: p.nodePort ?? null,
+      }));
+    } catch { /* ignore malformed */ }
+
+    let selector: Record<string, string> | null = null;
+    try { selector = row.selector ? JSON.parse(row.selector) : null; } catch { /* ignore */ }
+
+    // Match selector against pod labels of every workload. A workload matches
+    // if any of its pods has a label set whose entries are a superset of the
+    // selector. Empty/null selector means "no pod backends" — common for
+    // ExternalName services, headless services with manual Endpoints, or
+    // misconfigured services.
+    const workloadKeys: string[] = [];
+    if (selector && Object.keys(selector).length > 0) {
+      for (const [wlKey, podLabels] of workloadLabels) {
+        for (const labels of podLabels.values()) {
+          if (selectorMatches(selector, labels)) {
+            workloadKeys.push(wlKey);
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      name: row.name,
+      type: row.type,
+      cluster_ip: row.cluster_ip,
+      external_name: row.external_name,
+      ports,
+      workload_keys: workloadKeys.sort(),
+      is_external: !selector || Object.keys(selector).length === 0,
+    };
+  });
+
+  return {
+    cluster_id: clusterId,
+    namespace,
+    workloads,
+    services,
+    ingresses,
+    pvcs,
+    nodes,
+    rca_edges,
+    at: isTimeTraveled ? at : null,
+  };
+}
+
+/** Pick the higher of two severities for the diagnosis overlay. critical > error > warning > info > null. */
+function mergeSeverity(current: TopologySeverity, incoming: 'critical' | 'error' | 'warning' | 'info'): TopologySeverity {
+  const order: Record<string, number> = { info: 0, warning: 1, error: 2, critical: 3 };
+  const cur = current ? order[current] : -1;
+  const inc = order[incoming];
+  if (inc > cur) {
+    // info doesn't bubble up to a workload-level severity badge.
+    if (incoming === 'info') return current;
+    return incoming;
+  }
+  return current;
+}
+
+/** Parse a labels JSON column. Returns null on bad input — caller treats as no labels. */
+function parseLabelsJson(raw: string | null): Record<string, string> | null {
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'string') out[k] = v;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** True when every key/value in `selector` is present in `labels`. */
+function selectorMatches(selector: Record<string, string>, labels: Record<string, string>): boolean {
+  for (const [k, v] of Object.entries(selector)) {
+    if (labels[k] !== v) return false;
+  }
+  return true;
+}
+
+// ── Cluster overview (landing page for a k8s cluster) ───────────────────────
+//
+// Aggregates the cluster's nodes, namespaces (with workload/pod/issue
+// counts), and totals into a single response. All from existing data —
+// no new schema or agent collection.
+
+export interface ClusterNode {
+  host_id: string;
+  online: boolean;
+  /** Total pods on this node (across all namespaces in this cluster). */
+  pod_count: number;
+}
+
+export interface ClusterNamespaceSummary {
+  namespace: string;
+  workload_count: number;
+  pod_count: number;
+  unhealthy_pod_count: number;
+  ingress_count: number;
+  pvc_count: number;
+  pvc_pending_count: number;
+  active_alert_count: number;
+}
+
+export interface ClusterOverview {
+  cluster_id: string;
+  nodes: ClusterNode[];
+  namespaces: ClusterNamespaceSummary[];
+  totals: {
+    nodes_online: number;
+    nodes_offline: number;
+    namespaces: number;
+    workloads: number;
+    pods: number;
+    healthy_pods: number;
+    unhealthy_pods: number;
+    ingresses: number;
+    pvcs: number;
+    pvcs_pending: number;
+    active_alerts: number;
+  };
+}
+
+interface ClusterContainerRow {
+  host_id: string;
+  container_name: string;
+  container_id: string;
+  workload_kind: string | null;
+  health_status: string | null;
+  host_online: number;
+}
+
+function getClusterOverview(db: Database.Database, clusterId: string, offlineThresholdMinutes: number): ClusterOverview {
+  // 1. All k8s containers in the cluster, latest per (host, name).
+  const containerRows = db.prepare(`
+    WITH latest AS (
+      SELECT cs.host_id, cs.container_name, cs.container_id,
+             cs.workload_kind, cs.health_status,
+             CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
+               THEN 1 ELSE 0 END AS host_online,
+             ROW_NUMBER() OVER (
+               PARTITION BY cs.host_id, cs.container_name
+               ORDER BY cs.collected_at DESC
+             ) AS rn
+      FROM container_snapshots cs
+      INNER JOIN hosts h ON h.host_id = cs.host_id
+      INNER JOIN containers cr ON cr.host_id = cs.host_id AND cr.container_name = cs.container_name
+      WHERE cr.removed_at IS NULL
+        AND h.runtime_type = 'kubernetes'
+        AND COALESCE(h.host_group_override, h.host_group, 'cluster-' || h.host_id) = ?
+    )
+    SELECT host_id, container_name, container_id, workload_kind, health_status, host_online
+    FROM latest WHERE rn = 1
+  `).all(offlineThresholdMinutes, clusterId) as ClusterContainerRow[];
+
+  // 2. Active alerts on these containers.
+  const alertNames = new Set<string>();
+  if (containerRows.length > 0) {
+    const placeholders = containerRows.map(() => '?').join(',');
+    const alertRows = db.prepare(`
+      SELECT host_id, target FROM alert_state
+      WHERE resolved_at IS NULL AND target IN (${placeholders})
+    `).all(...containerRows.map(r => r.container_name)) as Array<{ host_id: string; target: string }>;
+    for (const a of alertRows) alertNames.add(`${a.host_id}${a.target}`);
+  }
+
+  // Group containers per (namespace, workload, podUid) so pod counts are
+  // accurate (sidecars share a podUid).
+  type NsAgg = {
+    workloadKeys: Set<string>;
+    podKeys: Set<string>;
+    unhealthyPodKeys: Set<string>;
+  };
+  const nsMap = new Map<string, NsAgg>();
+  const nodePods = new Map<string, number>();
+  const nodeOnline = new Map<string, boolean>();
+
+  for (const r of containerRows) {
+    const firstSlash = r.container_name.indexOf('/');
+    if (firstSlash <= 0) continue;
+    const namespace = r.container_name.slice(0, firstSlash);
+    const rest = r.container_name.slice(firstSlash + 1);
+    const secondSlash = rest.indexOf('/');
+    const stable = secondSlash > 0 ? rest.slice(0, secondSlash) : rest;
+    const podUid = r.container_id.split('/')[0] ?? r.host_id;
+
+    let agg = nsMap.get(namespace);
+    if (!agg) {
+      agg = { workloadKeys: new Set(), podKeys: new Set(), unhealthyPodKeys: new Set() };
+      nsMap.set(namespace, agg);
+    }
+    agg.workloadKeys.add(`${r.workload_kind ?? '_'}${stable}`);
+    const podKey = `${r.host_id}/${podUid}`;
+    if (!agg.podKeys.has(podKey)) {
+      agg.podKeys.add(podKey);
+      nodePods.set(r.host_id, (nodePods.get(r.host_id) ?? 0) + 1);
+    }
+    if (r.health_status === 'unhealthy' || alertNames.has(`${r.host_id}${r.container_name}`)) {
+      agg.unhealthyPodKeys.add(podKey);
+    }
+    nodeOnline.set(r.host_id, !!r.host_online);
+  }
+
+  // 3. Ingresses + PVCs grouped by namespace.
+  const ingressByNs = new Map<string, number>();
+  const ingressRows = db.prepare(`
+    SELECT namespace, COUNT(*) AS c
+    FROM k8s_ingresses
+    WHERE cluster_id = ? AND removed_at IS NULL
+    GROUP BY namespace
+  `).all(clusterId) as Array<{ namespace: string; c: number }>;
+  for (const r of ingressRows) ingressByNs.set(r.namespace, r.c);
+
+  const pvcByNs = new Map<string, { total: number; pending: number }>();
+  const pvcRows = db.prepare(`
+    SELECT pvc_snapshots.namespace AS namespace, pvc_snapshots.phase AS phase
+    FROM pvc_snapshots
+    INNER JOIN (
+      SELECT cluster_id, namespace, pvc_name, MAX(collected_at) AS maxed
+      FROM pvc_snapshots
+      WHERE cluster_id = ?
+      GROUP BY cluster_id, namespace, pvc_name
+    ) latest ON pvc_snapshots.cluster_id = latest.cluster_id
+            AND pvc_snapshots.namespace  = latest.namespace
+            AND pvc_snapshots.pvc_name   = latest.pvc_name
+            AND pvc_snapshots.collected_at = latest.maxed
+  `).all(clusterId) as Array<{ namespace: string; phase: string }>;
+  for (const r of pvcRows) {
+    const cur = pvcByNs.get(r.namespace) ?? { total: 0, pending: 0 };
+    cur.total += 1;
+    if (r.phase === 'Pending') cur.pending += 1;
+    pvcByNs.set(r.namespace, cur);
+  }
+
+  // 4. Per-namespace active alert counts. Active alerts are scoped by host
+  // (= node), so count alerts whose host is in this cluster AND whose
+  // target's namespace matches.
+  const alertsByNs = new Map<string, number>();
+  const alertRows2 = db.prepare(`
+    SELECT a.target
+    FROM alert_state a
+    INNER JOIN hosts h ON h.host_id = a.host_id
+    WHERE a.resolved_at IS NULL
+      AND h.runtime_type = 'kubernetes'
+      AND COALESCE(h.host_group_override, h.host_group, 'cluster-' || h.host_id) = ?
+  `).all(clusterId) as Array<{ target: string }>;
+  for (const r of alertRows2) {
+    const slash = r.target.indexOf('/');
+    if (slash <= 0) continue;
+    const ns = r.target.slice(0, slash);
+    alertsByNs.set(ns, (alertsByNs.get(ns) ?? 0) + 1);
+  }
+
+  // 5. Build namespace summaries — union of namespaces seen via containers,
+  // ingresses, or PVCs (a namespace with only PVCs but no pods should still
+  // show up so the operator can see the orphan PVC).
+  const allNamespaces = new Set<string>([
+    ...nsMap.keys(),
+    ...ingressByNs.keys(),
+    ...pvcByNs.keys(),
+  ]);
+  const namespaces: ClusterNamespaceSummary[] = Array.from(allNamespaces).sort().map(ns => {
+    const agg = nsMap.get(ns);
+    const pvc = pvcByNs.get(ns);
+    return {
+      namespace: ns,
+      workload_count: agg?.workloadKeys.size ?? 0,
+      pod_count: agg?.podKeys.size ?? 0,
+      unhealthy_pod_count: agg?.unhealthyPodKeys.size ?? 0,
+      ingress_count: ingressByNs.get(ns) ?? 0,
+      pvc_count: pvc?.total ?? 0,
+      pvc_pending_count: pvc?.pending ?? 0,
+      active_alert_count: alertsByNs.get(ns) ?? 0,
+    };
+  });
+
+  // 6. Nodes — every host in the cluster, online or not.
+  const nodeRows = db.prepare(`
+    SELECT host_id,
+           CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
+             THEN 1 ELSE 0 END AS host_online
+    FROM hosts
+    WHERE runtime_type = 'kubernetes'
+      AND COALESCE(host_group_override, host_group, 'cluster-' || host_id) = ?
+    ORDER BY host_id
+  `).all(offlineThresholdMinutes, clusterId) as Array<{ host_id: string; host_online: number }>;
+  const nodes: ClusterNode[] = nodeRows.map(r => ({
+    host_id: r.host_id,
+    online: !!r.host_online,
+    pod_count: nodePods.get(r.host_id) ?? 0,
+  }));
+
+  // 7. Totals.
+  let totalPods = 0;
+  let totalUnhealthy = 0;
+  let totalWorkloads = 0;
+  let totalIngresses = 0;
+  let totalPvcs = 0;
+  let totalPending = 0;
+  let totalAlerts = 0;
+  for (const ns of namespaces) {
+    totalPods += ns.pod_count;
+    totalUnhealthy += ns.unhealthy_pod_count;
+    totalWorkloads += ns.workload_count;
+    totalIngresses += ns.ingress_count;
+    totalPvcs += ns.pvc_count;
+    totalPending += ns.pvc_pending_count;
+    totalAlerts += ns.active_alert_count;
+  }
+
+  return {
+    cluster_id: clusterId,
+    nodes,
+    namespaces,
+    totals: {
+      nodes_online: nodes.filter(n => n.online).length,
+      nodes_offline: nodes.filter(n => !n.online).length,
+      namespaces: namespaces.length,
+      workloads: totalWorkloads,
+      pods: totalPods,
+      healthy_pods: totalPods - totalUnhealthy,
+      unhealthy_pods: totalUnhealthy,
+      ingresses: totalIngresses,
+      pvcs: totalPvcs,
+      pvcs_pending: totalPending,
+      active_alerts: totalAlerts,
+    },
+  };
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview };

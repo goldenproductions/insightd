@@ -59,6 +59,7 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/hosts/:hostId/metrics', handlers.handleHostMetrics);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/logs', handlers.handleContainerLogs);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/availability', handlers.handleContainerAvailability);
+  router.add('GET', '/api/hosts/:hostId/containers/:containerName/pod-events', handlers.handleContainerPodEvents);
   router.add('POST', '/api/hosts/:hostId/containers/:containerName/action', handlers.handleContainerAction);
   router.add('DELETE', '/api/hosts/:hostId/containers/:containerName', handlers.handleDeleteContainer);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName', handlers.handleContainerDetail);
@@ -99,6 +100,11 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('PUT', '/api/webhooks/:webhookId', handlers.handleUpdateWebhook);
   router.add('DELETE', '/api/webhooks/:webhookId', handlers.handleDeleteWebhook);
   router.add('GET', '/api/baselines/:entityType/:entityId', handlers.handleGetBaselines);
+  router.add('GET', '/api/hosts/:hostId/baselines', handlers.handleGetHostBaselinesView);
+  router.add('GET', '/api/hosts/:hostId/containers/:containerName/baselines', handlers.handleGetContainerBaselinesView);
+  router.add('GET', '/api/hosts/:hostId/containers/:containerName/rca-neighbors', handlers.handleGetContainerRcaNeighbors);
+  router.add('GET', '/api/clusters/:clusterId/namespaces/:namespace/topology', handlers.handleGetNamespaceTopology);
+  router.add('GET', '/api/clusters/:clusterId/overview', handlers.handleGetClusterOverview);
   router.add('GET', '/api/health-scores', handlers.handleGetAllHealthScores);
   router.add('GET', '/api/health-scores/:entityType/:entityId', handlers.handleGetHealthScore);
   router.add('GET', '/api/insights', handlers.handleGetInsights);

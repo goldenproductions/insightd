@@ -2,6 +2,21 @@ import logger = require('../../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 
 const { getTimePeriod, MIN_PERIOD_SAMPLES } = require('./baselines') as { getTimePeriod: (hour: number) => string; MIN_PERIOD_SAMPLES: number };
+import {
+  HOST_CPU_WARN_PCT,
+  HOST_CPU_CRIT_PCT,
+  HOST_MEMORY_WARN_PCT,
+  HOST_MEMORY_CRIT_PCT,
+  HOST_LOAD_WARN,
+  HOST_LOAD_CRIT,
+  HOST_CPU_PREDICTION_SATURATION_PCT,
+  HOST_LOAD_PREDICTION_SATURATION,
+  HOST_MEMORY_PREDICTION_SATURATION_FRACTION,
+  HOST_CPU_WOW_MIN_PCT,
+  HOST_MEMORY_WOW_MIN_PCT,
+  CONTAINER_CPU_WARN_PCT,
+  CONTAINER_MEMORY_OVER_P95_MB,
+} from './thresholds';
 
 interface HostIdRow {
   host_id: string;
@@ -121,37 +136,37 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
     ).all(host_id) as HostSnapshotRow[];
 
     if (recent.length >= 6) {
-      // CPU: only flag sustained >80%
+      // CPU: only flag sustained above warn threshold
       const cpuValues = recent.map(r => r.cpu_percent).filter((v): v is number => v != null);
-      if (cpuValues.length >= 6 && cpuValues.every(v => v > 80)) {
-        insert.run('host', host_id, 'performance', cpuValues[0] > 95 ? 'critical' : 'warning',
+      if (cpuValues.length >= 6 && cpuValues.every(v => v > HOST_CPU_WARN_PCT)) {
+        insert.run('host', host_id, 'performance', cpuValues[0] > HOST_CPU_CRIT_PCT ? 'critical' : 'warning',
           `CPU saturated on ${host_id}`,
-          `CPU has been above 80% for 30+ minutes. Current: ${round(cpuValues[0])}%`,
-          'cpu_percent', cpuValues[0], 80, null);
+          `CPU has been above ${HOST_CPU_WARN_PCT}% for 30+ minutes. Current: ${round(cpuValues[0])}%`,
+          'cpu_percent', cpuValues[0], HOST_CPU_WARN_PCT, null);
         count++;
       }
 
-      // Memory: only flag sustained >85% of total
+      // Memory: only flag sustained above warn percent of total
       const memPcts = recent.map(r => {
         const used = r.memory_used_mb;
         const total = r.memory_total_mb;
         return used != null && total ? (used / total) * 100 : null;
       }).filter((v): v is number => v != null);
-      if (memPcts.length >= 6 && memPcts.every(v => v > 85)) {
-        insert.run('host', host_id, 'performance', memPcts[0] > 95 ? 'critical' : 'warning',
+      if (memPcts.length >= 6 && memPcts.every(v => v > HOST_MEMORY_WARN_PCT)) {
+        insert.run('host', host_id, 'performance', memPcts[0] > HOST_MEMORY_CRIT_PCT ? 'critical' : 'warning',
           `Memory pressure on ${host_id}`,
-          `Memory has been above 85% for 30+ minutes. Current: ${round(memPcts[0])}%`,
-          'memory_used_mb', memPcts[0], 85, null);
+          `Memory has been above ${HOST_MEMORY_WARN_PCT}% for 30+ minutes. Current: ${round(memPcts[0])}%`,
+          'memory_used_mb', memPcts[0], HOST_MEMORY_WARN_PCT, null);
         count++;
       }
 
-      // Load: only flag sustained >8
+      // Load: only flag sustained above warn threshold
       const loadValues = recent.map(r => r.load_5).filter((v): v is number => v != null);
-      if (loadValues.length >= 6 && loadValues.every(v => v > 8)) {
-        insert.run('host', host_id, 'performance', loadValues[0] > 16 ? 'critical' : 'warning',
+      if (loadValues.length >= 6 && loadValues.every(v => v > HOST_LOAD_WARN)) {
+        insert.run('host', host_id, 'performance', loadValues[0] > HOST_LOAD_CRIT ? 'critical' : 'warning',
           `High load on ${host_id}`,
-          `Load average has been above 8 for 30+ minutes. Current: ${round(loadValues[0])}`,
-          'load_5', loadValues[0], 8, null);
+          `Load average has been above ${HOST_LOAD_WARN} for 30+ minutes. Current: ${round(loadValues[0])}`,
+          'load_5', loadValues[0], HOST_LOAD_WARN, null);
         count++;
       }
     }
@@ -168,10 +183,10 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
     `).get(host_id) as WeekAvgRow | undefined;
 
     if (thisWeekAvg && lastWeekAvg) {
-      // CPU trend: only flag if current week avg is already above 40% AND doubled
+      // CPU trend: only flag if current week avg is already concerning AND doubled
       if (lastWeekAvg.cpu != null && lastWeekAvg.cpu > 0 && thisWeekAvg.cpu != null
           && thisWeekAvg.cpu > lastWeekAvg.cpu * 2
-          && thisWeekAvg.cpu >= 40) {
+          && thisWeekAvg.cpu >= HOST_CPU_WOW_MIN_PCT) {
         const ratio = round(thisWeekAvg.cpu / lastWeekAvg.cpu);
         insert.run('host', host_id, 'trend', 'warning',
           `CPU usage growing on ${host_id}`,
@@ -179,12 +194,12 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
           'cpu_percent', thisWeekAvg.cpu, lastWeekAvg.cpu, null);
         count++;
       }
-      // Memory trend: only flag if we know total and usage is above 50% of capacity AND grew 1.5x
+      // Memory trend: only flag if we know total and usage is above min-pct of capacity AND grew 1.5x
       const memTotal = recent.length > 0 ? recent[0].memory_total_mb : null;
       const memPct = memTotal ? ((thisWeekAvg.mem ?? 0) / memTotal) * 100 : null;
       if (lastWeekAvg.mem != null && lastWeekAvg.mem > 0 && thisWeekAvg.mem != null
           && thisWeekAvg.mem > lastWeekAvg.mem * 1.5
-          && memPct != null && memPct >= 50) {
+          && memPct != null && memPct >= HOST_MEMORY_WOW_MIN_PCT) {
         const ratio = round(thisWeekAvg.mem / lastWeekAvg.mem);
         insert.run('host', host_id, 'trend', 'warning',
           `Memory usage growing on ${host_id}`,
@@ -213,7 +228,7 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
     const baselines = baselineCache?.get(`container:${entityId}`) as Record<string, BaselineRow> ?? getBaselines(db, 'container', entityId);
 
     // Sustained high usage — only flag when above capacity thresholds AND above baseline P95.
-    // Container CPU >50% sustained OR memory >500 MB above P95 for 30+ minutes.
+    // Container CPU above warn threshold sustained OR memory N MB above P95 for 30+ minutes.
     const recent = db.prepare(`
       SELECT cpu_percent, memory_mb FROM container_snapshots
       WHERE host_id = ? AND container_name = ? AND status = 'running'
@@ -221,25 +236,25 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
     `).all(host_id, container_name) as ContainerSnapshotRow[];
 
     if (recent.length >= 6) {
-      // CPU: only flag sustained >50% AND above P95
+      // CPU: only flag sustained above warn threshold AND above P95
       const cpuBl = baselines.cpu_percent;
       if (cpuBl && cpuBl.sample_count >= 288 && cpuBl.p95 != null) {
         const cpuValues = recent.map(r => r.cpu_percent).filter((v): v is number => v != null);
-        if (cpuValues.length >= 6 && cpuValues.every(v => v > 50 && v > (cpuBl.p95 ?? 0))) {
+        if (cpuValues.length >= 6 && cpuValues.every(v => v > CONTAINER_CPU_WARN_PCT && v > (cpuBl.p95 ?? 0))) {
           insert.run('container', entityId, 'performance', 'warning',
             `${container_name} CPU sustained high`,
-            `${container_name} CPU has been above 50% for 30+ minutes. Current: ${round(cpuValues[0])}%`,
+            `${container_name} CPU has been above ${CONTAINER_CPU_WARN_PCT}% for 30+ minutes. Current: ${round(cpuValues[0])}%`,
             'cpu_percent', cpuValues[0], cpuBl.p95, null);
           count++;
         }
       }
 
-      // Memory: only flag sustained above P95 AND >500 MB above P95
+      // Memory: only flag sustained above P95 AND well above P95
       const memBl = baselines.memory_mb;
       if (memBl && memBl.sample_count >= 288 && memBl.p95 != null) {
         const memValues = recent.map(r => r.memory_mb).filter((v): v is number => v != null);
         const p95 = memBl.p95 ?? 0;
-        if (memValues.length >= 6 && memValues.every(v => v > p95) && (memValues[0] - p95) >= 500) {
+        if (memValues.length >= 6 && memValues.every(v => v > p95) && (memValues[0] - p95) >= CONTAINER_MEMORY_OVER_P95_MB) {
           insert.run('container', entityId, 'performance', 'warning',
             `${container_name} memory unusually high`,
             `${container_name} memory at ${round(memValues[0])} MB, sustained above P95 (${round(p95)} MB) for 30+ minutes`,
@@ -401,14 +416,15 @@ function generatePredictions(db: Database.Database, insert: Database.Statement):
       if (!pred) continue;
       if (pred.dailyGrowth <= 0) continue;
 
-      // Determine the saturation ceiling for this metric:
-      //   cpu_percent: 80% (same as the host CPU detector threshold)
-      //   memory_used_mb: 80% of memory_total_mb (skip if we don't know total)
-      //   load_5: 4 (same as the host load detector threshold)
+      // Determine the saturation ceiling for this metric. Constants live in
+      // ./thresholds.ts; values may differ from the detector's alert thresholds
+      // because predictions warn earlier (lower ceiling).
       let saturation: number | null = null;
-      if (metric === 'cpu_percent') saturation = 80;
-      else if (metric === 'load_5') saturation = 4;
-      else if (metric === 'memory_used_mb' && memoryTotalMb) saturation = memoryTotalMb * 0.8;
+      if (metric === 'cpu_percent') saturation = HOST_CPU_PREDICTION_SATURATION_PCT;
+      else if (metric === 'load_5') saturation = HOST_LOAD_PREDICTION_SATURATION;
+      else if (metric === 'memory_used_mb' && memoryTotalMb) {
+        saturation = memoryTotalMb * HOST_MEMORY_PREDICTION_SATURATION_FRACTION;
+      }
       if (saturation == null) continue;
       if (pred.current >= saturation) continue; // already saturated — detector handles it
 

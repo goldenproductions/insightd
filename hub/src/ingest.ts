@@ -22,6 +22,11 @@ interface ContainerSnapshot {
   cpuLimitPercent?: number | null;
   memoryLimitMb?: number | null;
   lastOomKilledAt?: string | null;
+  workloadKind?: string | null;
+  podIp?: string | null;
+  hostIp?: string | null;
+  /** JSON-stringified PodCondition[] from the agent. */
+  podConditions?: string | null;
 }
 
 interface DiskResult {
@@ -88,8 +93,8 @@ interface HostData {
  */
 function ingestContainers(db: Database.Database, hostId: string, containers: ContainerSnapshot[]): void {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, size_rootfs_bytes, size_rw_bytes, cpu_limit_cores, cpu_limit_percent, memory_limit_mb, last_oom_killed_at, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, size_rootfs_bytes, size_rw_bytes, cpu_limit_cores, cpu_limit_percent, memory_limit_mb, last_oom_killed_at, workload_kind, pod_ip, host_ip, pod_conditions, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const upsertRegistry = db.prepare(`
     INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
@@ -112,7 +117,9 @@ function ingestContainers(db: Database.Database, hostId: string, containers: Con
         c.networkRxBytes ?? null, c.networkTxBytes ?? null, c.blkioReadBytes ?? null, c.blkioWriteBytes ?? null, c.healthStatus ?? null, c.healthCheckOutput ?? null, labels, c.exitCode ?? null,
         c.sizeRootfsBytes ?? null, c.sizeRwBytes ?? null,
         c.cpuLimitCores ?? null, c.cpuLimitPercent ?? null, c.memoryLimitMb ?? null,
-        c.lastOomKilledAt ?? null, batchAt);
+        c.lastOomKilledAt ?? null,
+        c.workloadKind ?? null, c.podIp ?? null, c.hostIp ?? null, c.podConditions ?? null,
+        batchAt);
       upsertRegistry.run(hostId, c.name, batchAt, batchAt);
     }
     markRemoved.run(batchAt, hostId, batchAt);
@@ -456,6 +463,180 @@ function ingestIngresses(db: Database.Database, clusterId: string, ingresses: In
   logger.info('ingest', `Upserted ${ingresses.length} ingresses for cluster ${clusterId}`);
 }
 
+interface ServiceRecord {
+  namespace: string;
+  name: string;
+  type: string;
+  clusterIp: string | null;
+  externalIps: string;            // JSON-stringified by the agent
+  externalName: string | null;
+  selector: string | null;        // JSON-stringified or null
+  ports: string;                  // JSON-stringified
+  createdAt: string | null;
+  labels: string | null;          // JSON-stringified
+}
+
+/**
+ * Registry-style ingest for k8s Services. Same upsert + stamp_removed pattern
+ * as k8s_ingresses — services that vanish between publish cycles get
+ * `removed_at` stamped, so the topology view drops them within one cycle.
+ */
+function ingestServices(db: Database.Database, clusterId: string, services: ServiceRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO k8s_services
+      (cluster_id, namespace, name, type, cluster_ip, external_ips, external_name,
+       selector, ports, created_at, labels, observed_at, removed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(cluster_id, namespace, name) DO UPDATE SET
+      type          = excluded.type,
+      cluster_ip    = excluded.cluster_ip,
+      external_ips  = excluded.external_ips,
+      external_name = excluded.external_name,
+      selector      = excluded.selector,
+      ports         = excluded.ports,
+      created_at    = excluded.created_at,
+      labels        = excluded.labels,
+      observed_at   = excluded.observed_at,
+      removed_at    = NULL
+  `);
+  const stampRemoved = db.prepare(`
+    UPDATE k8s_services
+       SET removed_at = ?
+     WHERE cluster_id = ? AND removed_at IS NULL AND observed_at < ?
+  `);
+
+  const tx = db.transaction((items: ServiceRecord[]) => {
+    for (const s of items) {
+      upsert.run(
+        clusterId,
+        s.namespace,
+        s.name,
+        s.type,
+        s.clusterIp,
+        s.externalIps,
+        s.externalName,
+        s.selector,
+        s.ports,
+        s.createdAt,
+        s.labels,
+        batchAt,
+      );
+    }
+    stampRemoved.run(batchAt, clusterId, batchAt);
+  });
+  tx(services);
+  logger.info('ingest', `Upserted ${services.length} services for cluster ${clusterId}`);
+}
+
+interface PendingPodRecord {
+  namespace: string;
+  podName: string;
+  reason: string | null;
+  message: string | null;
+  podPhase: string;
+  podCreatedAt: string | null;
+  workloadKind: string | null;
+  workloadName: string | null;
+}
+
+/**
+ * Current-state UPSERT for pending pods. After upserting the batch, delete
+ * any rows for this cluster_id whose last_seen_at is older than the batch
+ * start time — those pods have either left Pending or no longer exist.
+ *
+ * first_seen_at is preserved across cycles (UPSERT doesn't touch it), so
+ * the alert evaluator can age pods by their original observation time
+ * regardless of how many publish cycles have elapsed.
+ */
+function ingestPendingPods(db: Database.Database, clusterId: string, pods: PendingPodRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO pending_pods
+      (cluster_id, namespace, pod_name, reason, message, pod_phase,
+       pod_created_at, workload_kind, workload_name, first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cluster_id, namespace, pod_name) DO UPDATE SET
+      reason         = excluded.reason,
+      message        = excluded.message,
+      pod_phase      = excluded.pod_phase,
+      pod_created_at = excluded.pod_created_at,
+      workload_kind  = excluded.workload_kind,
+      workload_name  = excluded.workload_name,
+      last_seen_at   = excluded.last_seen_at
+  `);
+  const prune = db.prepare(`
+    DELETE FROM pending_pods
+     WHERE cluster_id = ? AND last_seen_at < ?
+  `);
+
+  const tx = db.transaction((items: PendingPodRecord[]) => {
+    for (const p of items) {
+      upsert.run(
+        clusterId,
+        p.namespace,
+        p.podName,
+        p.reason,
+        p.message,
+        p.podPhase,
+        p.podCreatedAt,
+        p.workloadKind,
+        p.workloadName,
+        batchAt,
+        batchAt,
+      );
+    }
+    prune.run(clusterId, batchAt);
+  });
+  tx(pods);
+  logger.info('ingest', `Upserted ${pods.length} pending pods for cluster ${clusterId}`);
+}
+
+interface PodVolumeRecord {
+  namespace: string;
+  podUid: string;
+  podName: string;
+  volumeName: string;
+  volumeType: string;
+  targetName: string | null;
+}
+
+/**
+ * Current-state UPSERT for pod volumes. Same prune-by-batchAt pattern as
+ * pending_pods — when a pod or volume disappears from a later batch its
+ * row is dropped within one cycle. The topology view joins this against
+ * the existing `containers` registry to draw Workload→PVC edges.
+ */
+function ingestPodVolumes(db: Database.Database, clusterId: string, volumes: PodVolumeRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO pod_volumes
+      (cluster_id, namespace, pod_uid, pod_name, volume_name, volume_type, target_name, observed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cluster_id, namespace, pod_uid, volume_name) DO UPDATE SET
+      pod_name    = excluded.pod_name,
+      volume_type = excluded.volume_type,
+      target_name = excluded.target_name,
+      observed_at = excluded.observed_at
+  `);
+  const prune = db.prepare(`
+    DELETE FROM pod_volumes
+     WHERE cluster_id = ? AND observed_at < ?
+  `);
+
+  const tx = db.transaction((items: PodVolumeRecord[]) => {
+    for (const v of items) {
+      upsert.run(
+        clusterId, v.namespace, v.podUid, v.podName,
+        v.volumeName, v.volumeType, v.targetName, batchAt,
+      );
+    }
+    prune.run(clusterId, batchAt);
+  });
+  tx(volumes);
+  logger.info('ingest', `Upserted ${volumes.length} pod volumes for cluster ${clusterId}`);
+}
+
 interface NodeConditionRecord {
   type: string;
   status: 'True' | 'False' | 'Unknown';
@@ -492,4 +673,4 @@ function ingestNodeConditions(db: Database.Database, hostId: string, conditions:
   upsertMany(conditions);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };

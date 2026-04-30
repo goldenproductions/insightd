@@ -45,12 +45,41 @@ interface K8sPodContainer {
   };
 }
 
-interface K8sPod {
+export interface K8sPodCondition {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+}
+
+export interface K8sPodVolume {
+  name: string;
+  // Volume sources we map to topology nodes. K8s allows ~25 volume types;
+  // we only need to identify the few that link to other graph nodes
+  // (PVCs, ConfigMaps, Secrets) and a small set of ambient types
+  // (emptyDir, hostPath, projected). Anything we don't model maps to
+  // 'other' downstream.
+  persistentVolumeClaim?: { claimName: string };
+  configMap?: { name?: string };
+  secret?: { secretName?: string };
+  emptyDir?: Record<string, unknown>;
+  hostPath?: { path?: string };
+  projected?: Record<string, unknown>;
+}
+
+export interface K8sPod {
   metadata?: K8sMeta;
-  spec?: { nodeName?: string; containers?: K8sPodContainer[] };
+  spec?: {
+    nodeName?: string;
+    containers?: K8sPodContainer[];
+    volumes?: K8sPodVolume[];
+  };
   status?: {
     phase?: string;
     containerStatuses?: K8sContainerStatus[];
+    conditions?: K8sPodCondition[];
+    podIP?: string;
+    hostIP?: string;
   };
 }
 
@@ -72,6 +101,15 @@ interface K8sNode {
 
 interface K8sReplicaSet {
   metadata?: K8sMeta;
+}
+
+interface ResolvedWorkload {
+  /** Stable identity used in the insightd container_name (the second
+   *  segment of "namespace/stable/container"). */
+  stable: string;
+  /** Workload kind: Deployment / StatefulSet / DaemonSet / Job / CronJob /
+   *  ReplicaSet (orphaned). Null for standalone pods. */
+  kind: string | null;
 }
 
 interface K8sList<T> { items: T[] }
@@ -162,6 +200,32 @@ export interface K8sIngressLoadBalancerEntry {
 export interface K8sIngress {
   metadata?: K8sMeta;
   spec?: K8sIngressSpec;
+  status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
+}
+
+// ---- Service ----------------------------------------------------------------
+
+export interface K8sServicePort {
+  name?: string;
+  port: number;
+  targetPort?: number | string;
+  protocol?: string;
+  nodePort?: number;
+}
+
+export interface K8sServiceSpec {
+  type?: string;             // ClusterIP | NodePort | LoadBalancer | ExternalName
+  clusterIP?: string;
+  clusterIPs?: string[];
+  externalIPs?: string[];
+  externalName?: string;
+  selector?: Record<string, string>;
+  ports?: K8sServicePort[];
+}
+
+export interface K8sService {
+  metadata?: K8sMeta;
+  spec?: K8sServiceSpec;
   status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
 }
 
@@ -354,6 +418,11 @@ export class K8sClient {
     return this.get<K8sList<K8sIngress>>('/apis/networking.k8s.io/v1/ingresses');
   }
 
+  /** List cluster-wide Services. Same leader-elected publisher cadence. */
+  async listServices(): Promise<K8sList<K8sService>> {
+    return this.get<K8sList<K8sService>>('/api/v1/services');
+  }
+
   /** Returns null on 404 (lease doesn't exist yet). */
   async getLease(namespace: string, name: string): Promise<K8sLease | null> {
     const path = `/apis/coordination.k8s.io/v1/namespaces/${encodeURIComponent(namespace)}/leases/${encodeURIComponent(name)}`;
@@ -506,7 +575,7 @@ export class KubernetesRuntime implements ContainerRuntime {
 
     const containers: ContainerInfo[] = [];
     // Cache ReplicaSet → Deployment lookups for this collection cycle
-    const rsCache = new Map<string, string>();
+    const rsCache = new Map<string, ResolvedWorkload>();
 
     for (const pod of res.items) {
       // Skip completed pods (Succeeded phase) — typically Helm install Jobs and similar
@@ -519,7 +588,20 @@ export class KubernetesRuntime implements ContainerRuntime {
 
       // Resolve a stable name from owner references so pod recreations don't
       // create new entries. Falls back to pod name for standalone pods.
-      const stableName = await this.resolveStableName(pod, rsCache);
+      const workload = await this.resolveStableName(pod, rsCache);
+      const stableName = workload.stable;
+
+      // v42: pod-level identity + status replicated onto each container in
+      // the pod. Hub stores them on every container_snapshot (no separate
+      // pods table). Filter out pod-template-hash style noise from conditions.
+      const podConditions = (pod.status?.conditions ?? []).map(c => ({
+        type: c.type,
+        status: c.status,
+        reason: c.reason ?? null,
+        message: c.message ?? null,
+      }));
+      const podIp = pod.status?.podIP ?? null;
+      const hostIp = pod.status?.hostIP ?? null;
 
       // Each container in the pod becomes an insightd container
       const containerStatuses = pod.status?.containerStatuses || [];
@@ -597,6 +679,10 @@ export class KubernetesRuntime implements ContainerRuntime {
           image: cs.image,
           exitCode: typeof termCode === 'number' ? termCode : null,
           lastOomKilledAt,
+          workloadKind: workload.kind,
+          podIp,
+          hostIp,
+          podConditions: podConditions.length > 0 ? podConditions : null,
         });
 
         // Capture resource limits from the pod spec. These are current-state
@@ -628,19 +714,20 @@ export class KubernetesRuntime implements ContainerRuntime {
    *
    * This makes consecutive pods of the same logical app share the same insightd entry.
    */
-  private async resolveStableName(pod: K8sPod, rsCache: Map<string, string>): Promise<string> {
+  private async resolveStableName(pod: K8sPod, rsCache: Map<string, ResolvedWorkload>): Promise<ResolvedWorkload> {
     const ns = pod.metadata?.namespace ?? 'default';
     const podName = pod.metadata?.name ?? 'unknown';
     const owner = pod.metadata?.ownerReferences?.[0];
-    if (!owner) return podName;
+    if (!owner) return { stable: podName, kind: null };
 
     switch (owner.kind) {
       case 'StatefulSet':
         // StatefulSet pods have deterministic names — keep the pod name
-        return podName;
+        return { stable: podName, kind: 'StatefulSet' };
       case 'DaemonSet':
       case 'Job':
-        return owner.name;
+      case 'CronJob':
+        return { stable: owner.name, kind: owner.kind };
       case 'ReplicaSet': {
         // Walk up to the Deployment if there is one
         const cacheKey = `${ns}/${owner.name}`;
@@ -649,16 +736,19 @@ export class KubernetesRuntime implements ContainerRuntime {
         try {
           const rs = await this.appsApi!.readReplicaSet(ns, owner.name);
           const rsOwner = rs.metadata?.ownerReferences?.[0];
-          const stable = rsOwner?.kind === 'Deployment' ? rsOwner.name : owner.name;
-          rsCache.set(cacheKey, stable);
-          return stable;
+          const resolved: ResolvedWorkload = rsOwner?.kind === 'Deployment'
+            ? { stable: rsOwner.name, kind: 'Deployment' }
+            : { stable: owner.name, kind: 'ReplicaSet' };
+          rsCache.set(cacheKey, resolved);
+          return resolved;
         } catch {
-          rsCache.set(cacheKey, owner.name);
-          return owner.name;
+          const fallback: ResolvedWorkload = { stable: owner.name, kind: 'ReplicaSet' };
+          rsCache.set(cacheKey, fallback);
+          return fallback;
         }
       }
       default:
-        return owner.name;
+        return { stable: owner.name, kind: owner.kind };
     }
   }
 
@@ -763,10 +853,10 @@ export class KubernetesRuntime implements ContainerRuntime {
     // Fallback: pod was recreated since the snapshot. Find a current pod whose
     // stable owner identity matches what we recorded.
     if (!pod && stableName) {
-      const rsCache = new Map<string, string>();
+      const rsCache = new Map<string, ResolvedWorkload>();
       for (const candidate of pods.items) {
         if (candidate.status?.phase === 'Succeeded') continue;
-        const stable = await this.resolveStableName(candidate, rsCache);
+        const { stable } = await this.resolveStableName(candidate, rsCache);
         if (stable === stableName) {
           // Prefer running pods over others
           if (candidate.status?.phase === 'Running') {
