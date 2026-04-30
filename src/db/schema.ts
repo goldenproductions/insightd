@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 43;
+const SCHEMA_VERSION = 44;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -244,6 +244,19 @@ function bootstrap(db: Database.Database): void {
       observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
       removed_at    TEXT,
       UNIQUE(cluster_id, namespace, name)
+    );
+
+    -- Pod volumes (no-op on Docker standalone — see k8s_ingresses note).
+    CREATE TABLE IF NOT EXISTS pod_volumes (
+      cluster_id   TEXT NOT NULL,
+      namespace    TEXT NOT NULL,
+      pod_uid      TEXT NOT NULL,
+      pod_name     TEXT NOT NULL,
+      volume_name  TEXT NOT NULL,
+      volume_type  TEXT NOT NULL,
+      target_name  TEXT,
+      observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
     );
 
     -- Pending pods (no-op on Docker standalone — see k8s_ingresses note).
@@ -972,6 +985,21 @@ function migrate(db: Database.Database, fromVersion: number): void {
         observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
         removed_at    TEXT,
         UNIQUE(cluster_id, namespace, name)
+      );
+    `);
+  }
+  if (fromVersion < 44) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pod_volumes (
+        cluster_id   TEXT NOT NULL,
+        namespace    TEXT NOT NULL,
+        pod_uid      TEXT NOT NULL,
+        pod_name     TEXT NOT NULL,
+        volume_name  TEXT NOT NULL,
+        volume_type  TEXT NOT NULL,
+        target_name  TEXT,
+        observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
       );
     `);
   }

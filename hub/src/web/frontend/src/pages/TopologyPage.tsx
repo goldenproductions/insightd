@@ -23,6 +23,7 @@ import type {
   TopologySeverity,
   TopologyAlert,
   TopologyFinding,
+  TopologyVolumeMount,
 } from '@/types/api';
 import { Card } from '@/components/Card';
 import { BackLink } from '@/components/BackLink';
@@ -47,6 +48,30 @@ import { EmptyState } from '@/components/EmptyState';
 const COL_X = { ingress: 0, service: 320, workload: 660, node: 1040 };
 const Y_STEP = 90;
 const Y_TOP = 40;
+/** Vertical gap between accumulated workload cards. Match Y_STEP - base
+ *  workload height so single-row workloads keep the same density they had
+ *  before variable heights were introduced. */
+const WORKLOAD_GAP = 16;
+
+/** Approximate rendered height for a workload card. Used to lay out the
+ *  Workload column with accumulating Y so cards with extra rows
+ *  (ConfigMap/Secret chips, severity badge) don't overlap the next card.
+ *
+ *  Numbers are conservative — slightly taller than the real DOM measurement —
+ *  since we have no way to measure DOM rects synchronously while building
+ *  the React Flow graph state. */
+function workloadCardHeight(wl: TopologyWorkload): number {
+  let h = 90; // border + padding + kind label + name + status row
+  const chipMounts = wl.volume_mounts.filter(v =>
+    (v.type === 'configMap' || v.type === 'secret') && v.target_name,
+  );
+  if (chipMounts.length > 0) {
+    // Chip rows wrap at ~3 chips per row given the min-w-[280px] card width.
+    const rows = Math.ceil(chipMounts.length / 3);
+    h += 8 + rows * 22; // mt-2 gap + chip row height
+  }
+  return h;
+}
 
 function workloadKeyOf(wl: { kind: string | null; name: string }): string {
   return `wl:${wl.kind ?? '_'}:${wl.name}`;
@@ -62,6 +87,10 @@ function ingressKeyOf(ing: { id: number }): string {
 
 function nodeKeyOf(n: { host_id: string }): string {
   return `node:${n.host_id}`;
+}
+
+function pvcKeyOf(p: { name: string }): string {
+  return `pvc:${p.name}`;
 }
 
 const SEVERITY_RANK: Record<string, number> = { warning: 1, error: 2, critical: 3 };
@@ -167,7 +196,40 @@ function WorkloadCard({ data }: { data: WorkloadCardData }) {
           </span>
         )}
       </div>
+      <ConfigMapSecretChips mounts={wl.volume_mounts} />
     </button>
+  );
+}
+
+/** Inline chips for ConfigMap / Secret references on the workload card.
+ *  PVCs are first-class graph nodes (rendered separately) so they're
+ *  filtered out here. Ambient types (emptyDir / projected / hostPath) are
+ *  too noisy to surface as chips. */
+function ConfigMapSecretChips({ mounts }: { mounts: TopologyVolumeMount[] }) {
+  const cms = mounts.filter(m => m.type === 'configMap' && m.target_name);
+  const secrets = mounts.filter(m => m.type === 'secret' && m.target_name);
+  if (cms.length === 0 && secrets.length === 0) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      {cms.map(c => (
+        <span
+          key={`cm-${c.target_name}`}
+          title={`ConfigMap: ${c.target_name}`}
+          className="rounded border border-border bg-bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-secondary"
+        >
+          cm/{c.target_name}
+        </span>
+      ))}
+      {secrets.map(s => (
+        <span
+          key={`sec-${s.target_name}`}
+          title={`Secret: ${s.target_name}`}
+          className="rounded border border-warning/40 bg-warning/5 px-1.5 py-0.5 font-mono text-[10px] text-warning"
+        >
+          sec/{s.target_name}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -263,11 +325,48 @@ function ServiceCard({ data }: { data: ServiceCardData }) {
   );
 }
 
+function PvcCard({ data }: { data: { pvc: TopologyPvc } }) {
+  const { pvc } = data;
+  const phaseTone = pvc.phase === 'Bound'
+    ? 'border-success/40 bg-success/5'
+    : pvc.phase === 'Pending'
+      ? 'border-warning/40 bg-warning/5'
+      : 'border-border bg-bg-secondary/40';
+  const sizeText = pvc.capacity_bytes != null
+    ? formatGb(pvc.capacity_bytes)
+    : null;
+  return (
+    <div className={`flex min-w-[220px] flex-col rounded-lg border p-3 shadow-sm ${phaseTone}`}>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+        PVC · {pvc.phase}
+      </div>
+      <div className="mt-0.5 truncate font-mono text-sm font-bold text-fg" title={pvc.name}>
+        {pvc.name}
+      </div>
+      {(sizeText || pvc.storage_class) && (
+        <div className="mt-1 text-[11px] text-muted">
+          {sizeText && <span>{sizeText}</span>}
+          {sizeText && pvc.storage_class && <span> · </span>}
+          {pvc.storage_class && <span>{pvc.storage_class}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function formatGb(bytes: number): string {
+  const gb = bytes / (1024 ** 3);
+  if (gb < 1) return `${(bytes / (1024 ** 2)).toFixed(0)} Mi`;
+  if (gb < 10) return `${gb.toFixed(1)} Gi`;
+  return `${Math.round(gb)} Gi`;
+}
+
 const NODE_TYPES = {
   workload: WorkloadCard,
   ingress: IngressCard,
   k8sNode: NodeCard,
   service: ServiceCard,
+  pvc: PvcCard,
 };
 
 // ── Build nodes + edges ─────────────────────────────────────────────────────
@@ -316,12 +415,18 @@ function buildGraph(
     });
   });
 
-  topo.workloads.forEach((wl, i) => {
+  // Workload cards have variable height — header + name + status row are
+  // fixed, but ConfigMap/Secret chips wrap and add a row when present.
+  // Accumulate y-positions so taller cards don't overlap the next one.
+  let workloadY = Y_TOP;
+  const workloadEndY: Map<string, number> = new Map();
+  topo.workloads.forEach((wl) => {
     const key = workloadKeyOf(wl);
+    const height = workloadCardHeight(wl);
     nodes.push({
       id: key,
       type: 'workload',
-      position: { x: COL_X.workload, y: Y_TOP + i * Y_STEP },
+      position: { x: COL_X.workload, y: workloadY },
       data: {
         workload: wl,
         onClick: () => setSelected(selected === key ? null : key),
@@ -330,6 +435,8 @@ function buildGraph(
       sourcePosition: Position.Right,
       targetPosition: Position.Left,
     });
+    workloadEndY.set(key, workloadY + height);
+    workloadY += height + WORKLOAD_GAP;
   });
 
   topo.nodes.forEach((n, i) => {
@@ -339,6 +446,25 @@ function buildGraph(
       position: { x: COL_X.node, y: Y_TOP + i * Y_STEP },
       data: { node: n },
       targetPosition: Position.Left,
+    });
+  });
+
+  // PVCs — stacked below the Workload column with a small gap so the
+  // vertical "mounted by" relationship reads naturally below the
+  // Ingress→Service→Workload→Node horizontal flow. Anchor to the actual
+  // end of the workload column (which has variable-height cards) rather
+  // than to a fixed step count so PVCs don't overlap the last workload.
+  const PVC_GAP = 60;
+  const pvcsBaseY = workloadY === Y_TOP
+    ? Y_TOP + PVC_GAP
+    : workloadY - WORKLOAD_GAP + PVC_GAP;
+  topo.pvcs.forEach((pvc, i) => {
+    nodes.push({
+      id: pvcKeyOf(pvc),
+      type: 'pvc',
+      position: { x: COL_X.workload, y: pvcsBaseY + i * Y_STEP },
+      data: { pvc },
+      targetPosition: Position.Top,
     });
   });
 
@@ -384,6 +510,26 @@ function buildGraph(
           stroke: 'var(--color-border)',
           strokeWidth: Math.min(3, 1 + count * 0.4),
         },
+      });
+    }
+  }
+
+  // Workload → PVC edges. Only PVC volume mounts that resolve to a PVC node
+  // we already render get an edge — orphan references (PVC not collected
+  // yet) are silently dropped to avoid floating arrows. ConfigMap/Secret
+  // mounts render as chips on the workload card, not as edges, since we
+  // don't currently ingest them as inventory.
+  const pvcNamesInGraph = new Set(topo.pvcs.map(p => p.name));
+  for (const wl of topo.workloads) {
+    const wlKey = workloadKeyOf(wl);
+    for (const vm of wl.volume_mounts) {
+      if (vm.type !== 'pvc' || !vm.target_name) continue;
+      if (!pvcNamesInGraph.has(vm.target_name)) continue;
+      edges.push({
+        id: `e:${wlKey}->pvc-${vm.target_name}`,
+        source: wlKey,
+        target: pvcKeyOf({ name: vm.target_name }),
+        style: { stroke: 'var(--color-info)', strokeWidth: 1.25 },
       });
     }
   }

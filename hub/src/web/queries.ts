@@ -2141,6 +2141,17 @@ export interface TopologyPod {
   containers: TopologyContainer[];
 }
 
+export interface TopologyVolumeMount {
+  type: 'pvc' | 'configMap' | 'secret' | 'emptyDir' | 'hostPath' | 'projected' | 'other';
+  /** Referenced object name (PVC name, ConfigMap name, Secret name, hostPath
+   *  path) — null for ambient types like emptyDir/projected. */
+  target_name: string | null;
+  /** All volume_names from the pod spec that resolve to the same target.
+   *  Useful in the side-panel detail view; the graph only renders one edge
+   *  per (workload, target) pair. */
+  volume_names: string[];
+}
+
 export interface TopologyWorkload {
   kind: string | null;
   name: string;
@@ -2153,6 +2164,10 @@ export interface TopologyWorkload {
   severity: TopologySeverity;
   active_alerts: TopologyAlert[];
   findings: TopologyFinding[];
+  /** Volume references aggregated from pod.spec.volumes. Includes ambient
+   *  types (emptyDir / projected) for completeness; the UI only draws
+   *  edges to PVC nodes. */
+  volume_mounts: TopologyVolumeMount[];
 }
 
 export interface TopologyIngress {
@@ -2327,6 +2342,7 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
         severity: null,
         active_alerts: [],
         findings: [],
+        volume_mounts: [],
       };
       workloadMap.set(workloadKey, wl);
       workloadLabels.set(workloadKey, new Map());
@@ -2496,6 +2512,68 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
   }
   const rca_edges = Array.from(rcaEdgesMap.values())
     .sort((x, y) => y.weight - x.weight);
+
+  // ── Volume mounts: per-workload pvc/configMap/secret/etc references ─────
+  //
+  // The pod_volumes table is keyed by pod_uid; we already know which podUid
+  // → workload via the per-container scan above. Aggregate so each workload
+  // exposes one entry per (volume_type, target_name) pair, with the set of
+  // volume_names that map to it (a pod can mount the same PVC under multiple
+  // names, but for the graph we only care about the destination).
+  const podUidToWorkload = new Map<string, string>();
+  for (const r of containerRows) {
+    const podUid = r.container_id.split('/')[0];
+    if (!podUid) continue;
+    const wlKey = containerToWorkload.get(r.container_name);
+    if (wlKey) podUidToWorkload.set(podUid, wlKey);
+  }
+
+  const volumeMountsByWorkload = new Map<string, Map<string, TopologyVolumeMount>>();
+  if (podUidToWorkload.size > 0) {
+    const volumeRows = db.prepare(`
+      SELECT pod_uid, volume_name, volume_type, target_name
+      FROM pod_volumes
+      WHERE cluster_id = ? AND namespace = ?
+    `).all(clusterId, namespace) as Array<{
+      pod_uid: string; volume_name: string; volume_type: string; target_name: string | null;
+    }>;
+    for (const v of volumeRows) {
+      const wlKey = podUidToWorkload.get(v.pod_uid);
+      if (!wlKey) continue;
+      let perWorkload = volumeMountsByWorkload.get(wlKey);
+      if (!perWorkload) {
+        perWorkload = new Map();
+        volumeMountsByWorkload.set(wlKey, perWorkload);
+      }
+      // Dedupe by (volume_type, target_name) so a workload that mounts the
+      // same PVC across replicas only renders one edge / chip. Ambient types
+      // (emptyDir, projected) without a target_name dedupe by volume_name.
+      const dedupeKey = `${v.volume_type}|${v.target_name ?? `~${v.volume_name}`}`;
+      let entry = perWorkload.get(dedupeKey);
+      if (!entry) {
+        entry = {
+          type: v.volume_type as TopologyVolumeMount['type'],
+          target_name: v.target_name,
+          volume_names: [],
+        };
+        perWorkload.set(dedupeKey, entry);
+      }
+      if (!entry.volume_names.includes(v.volume_name)) {
+        entry.volume_names.push(v.volume_name);
+      }
+    }
+  }
+  for (const [wlKey, perWorkload] of volumeMountsByWorkload) {
+    const wl = workloadMap.get(wlKey);
+    if (!wl) continue;
+    wl.volume_mounts = Array.from(perWorkload.values()).sort((a, b) => {
+      // Sort PVCs first (graph-relevant), then ConfigMap/Secret (chips), then ambient.
+      const order = (t: string) => t === 'pvc' ? 0 : t === 'configMap' ? 1 : t === 'secret' ? 2 : 3;
+      const da = order(a.type) - order(b.type);
+      if (da !== 0) return da;
+      return (a.target_name ?? '').localeCompare(b.target_name ?? '');
+    });
+  }
 
   // Ingresses currently in this namespace.
   const ingressRows = db.prepare(`

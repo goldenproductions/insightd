@@ -467,6 +467,14 @@ export interface TopologyRcaEdge {
   to: string;
   weight: number;
 }
+export interface TopologyVolumeMount {
+  type: 'pvc' | 'configMap' | 'secret' | 'emptyDir' | 'hostPath' | 'projected' | 'other';
+  /** PVC name / ConfigMap name / Secret name / hostPath path. Null for
+   *  ambient types (emptyDir, projected). */
+  target_name: string | null;
+  volume_names: string[];
+}
+
 export interface TopologyWorkload {
   kind: string | null;
   name: string;
@@ -478,6 +486,7 @@ export interface TopologyWorkload {
   severity: TopologySeverity;
   active_alerts: TopologyAlert[];
   findings: TopologyFinding[];
+  volume_mounts: TopologyVolumeMount[];
 }
 export interface TopologyIngress {
   id: number;

@@ -4,7 +4,7 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
@@ -13,6 +13,7 @@ const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, inge
   ingestEvents: (db: Database.Database, clusterId: string, events: any[]) => void;
   ingestIngresses: (db: Database.Database, clusterId: string, ingresses: any[]) => void;
   ingestServices: (db: Database.Database, clusterId: string, services: any[]) => void;
+  ingestPodVolumes: (db: Database.Database, clusterId: string, volumes: any[]) => void;
   ingestPendingPods: (db: Database.Database, clusterId: string, pods: any[]) => void;
   ingestNodeConditions: (db: Database.Database, hostId: string, conditions: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
@@ -207,6 +208,11 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         else logger.info('mqtt', 'Subscribed to insightd/+/services');
       });
 
+      client!.subscribe('insightd/+/pod-volumes', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pod-volumes topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pod-volumes');
+      });
+
       client!.subscribe('insightd/+/logs/response', { qos: 1 }, (err) => {
         if (err) logger.error('mqtt', 'Failed to subscribe to logs response topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
@@ -247,6 +253,7 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
           if (type === 'ingresses')     { handleIngresses(db, clusterId, payload); return; }
           if (type === 'pending-pods')  { handlePendingPods(db, clusterId, payload); return; }
           if (type === 'services')      { handleServices(db, clusterId, payload); return; }
+          if (type === 'pod-volumes')   { handlePodVolumes(db, clusterId, payload); return; }
         }
 
         if (type === 'collection') {
@@ -599,6 +606,30 @@ function handleServices(db: Database.Database, clusterId: string, payload: Servi
   }));
   ingestServices(db, clusterId, services);
   logger.info('mqtt', `Ingested ${services.length} services for cluster ${clusterId}`);
+}
+
+interface PodVolumesPayload {
+  items?: Array<{
+    namespace: string;
+    pod_uid: string;
+    pod_name: string;
+    volume_name: string;
+    volume_type: string;
+    target_name?: string | null;
+  }>;
+}
+
+function handlePodVolumes(db: Database.Database, clusterId: string, payload: PodVolumesPayload): void {
+  const volumes = (payload.items || []).map(v => ({
+    namespace: v.namespace,
+    podUid: v.pod_uid,
+    podName: v.pod_name,
+    volumeName: v.volume_name,
+    volumeType: v.volume_type,
+    targetName: v.target_name ?? null,
+  }));
+  ingestPodVolumes(db, clusterId, volumes);
+  logger.info('mqtt', `Ingested ${volumes.length} pod volumes for cluster ${clusterId}`);
 }
 
 function handleEvents(db: Database.Database, clusterId: string, payload: EventsPayload): void {

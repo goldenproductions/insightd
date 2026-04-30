@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 43;
+const SCHEMA_VERSION = 44;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -265,6 +265,29 @@ function bootstrap(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_k8s_services_cluster
       ON k8s_services (cluster_id, observed_at DESC);
+
+    -- v44: Pod volume mounts (cluster-scoped, leader-published).
+    -- One row per (pod, volume name). volume_type classifies the source
+    -- (pvc / configMap / secret / emptyDir / hostPath / projected / other);
+    -- target_name holds the referenced object name for pvc/configMap/secret
+    -- (used by the topology view to draw Workload→PVC edges) or the path
+    -- for hostPath. Current-state UPSERT — rows are deleted when the pod
+    -- vanishes from a later batch, same prune-by-batchAt as pending_pods.
+    CREATE TABLE IF NOT EXISTS pod_volumes (
+      cluster_id   TEXT NOT NULL,
+      namespace    TEXT NOT NULL,
+      pod_uid      TEXT NOT NULL,
+      pod_name     TEXT NOT NULL,
+      volume_name  TEXT NOT NULL,
+      volume_type  TEXT NOT NULL,
+      target_name  TEXT,
+      observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_pod_volumes_cluster_ns
+      ON pod_volumes (cluster_id, namespace);
+    CREATE INDEX IF NOT EXISTS idx_pod_volumes_target
+      ON pod_volumes (cluster_id, namespace, volume_type, target_name);
 
     -- Pods stuck in Pending phase (cluster-scoped, leader-published).
     -- Current-state UPSERT model — same row keyed by (cluster_id, namespace,
@@ -1041,6 +1064,25 @@ function migrate(db: Database.Database, fromVersion: number): void {
       );
       CREATE INDEX IF NOT EXISTS idx_k8s_services_cluster
         ON k8s_services (cluster_id, observed_at DESC);
+    `);
+  }
+  if (fromVersion < 44) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pod_volumes (
+        cluster_id   TEXT NOT NULL,
+        namespace    TEXT NOT NULL,
+        pod_uid      TEXT NOT NULL,
+        pod_name     TEXT NOT NULL,
+        volume_name  TEXT NOT NULL,
+        volume_type  TEXT NOT NULL,
+        target_name  TEXT,
+        observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pod_volumes_cluster_ns
+        ON pod_volumes (cluster_id, namespace);
+      CREATE INDEX IF NOT EXISTS idx_pod_volumes_target
+        ON pod_volumes (cluster_id, namespace, volume_type, target_name);
     `);
   }
 }
