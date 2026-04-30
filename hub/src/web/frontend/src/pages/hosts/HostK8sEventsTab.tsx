@@ -23,16 +23,31 @@ interface Props {
 }
 
 export function HostK8sEventsTab({ hostId }: Props) {
-  const { data, isLoading } = useQuery({
+  // Don't catch — let the error bubble so we can distinguish "request failed"
+  // from "this host has no cluster". The previous `.catch(() => ({ clusterId:
+  // null }))` collapsed both cases into the misleading "not a k8s host"
+  // empty state, which was wrong whenever the request itself failed (auth,
+  // network, server error).
+  const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.k8sEvents(hostId),
     queryFn: () =>
-      api<HostK8sEventsResponse>(`/hosts/${encodeURIComponent(hostId)}/k8s-events?limit=200`)
-        .catch(() => ({ clusterId: null, items: [] as K8sEvent[] })),
+      api<HostK8sEventsResponse>(`/hosts/${encodeURIComponent(hostId)}/k8s-events?limit=200`),
     refetchInterval: 30_000,
   });
 
   if (isLoading) return <CardSkeleton lines={6} />;
 
+  if (error) {
+    return (
+      <EmptyState
+        message={`Couldn't load Kubernetes events: ${(error as Error).message}`}
+      />
+    );
+  }
+
+  // clusterId is null only when the host genuinely isn't k8s — getClusterIdForHost
+  // returns null for runtime_type !== 'kubernetes'. The events tab is normally
+  // hidden for non-k8s hosts, so this branch is mostly defensive.
   if (!data?.clusterId) {
     return (
       <EmptyState message="Kubernetes events are only available for k8s hosts." />
