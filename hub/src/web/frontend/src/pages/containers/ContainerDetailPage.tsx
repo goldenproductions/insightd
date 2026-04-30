@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse, PodEventsResponse } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -13,7 +13,7 @@ import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
 import { fmtDurationMs, timeAgo } from '@/lib/formatters';
-import { sumPositiveRestartDeltas, deriveContainerDisplayStatus } from '@/lib/containers';
+import { sumPositiveRestartDeltas, deriveContainerDisplayStatus, getContainerDisplayName } from '@/lib/containers';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
 import { CardSkeleton } from '@/components/Skeleton';
@@ -28,6 +28,8 @@ import { BaselinesViewer } from '@/components/BaselinesViewer';
 import { RcaNeighborsList } from '@/components/RcaNeighborsList';
 import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { LogTemplatesList } from '@/components/LogTemplatesList';
+import { K8sIdentityStrip } from '@/components/K8sIdentityStrip';
+import { PodEventsCard } from '@/components/PodEventsCard';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -163,6 +165,14 @@ export function ContainerDetailPage() {
     queryKey: queryKeys.containerRcaNeighbors(hostId, containerName),
     queryFn: () => api<RcaNeighborsResponse>(`/hosts/${hid}/containers/${cname}/rca-neighbors`).catch(() => ({ host_id: hostId!, container_name: containerName!, neighbors: [] }) as RcaNeighborsResponse),
     refetchInterval: 5 * 60_000,
+  });
+
+  // Pod-scoped k8s events. Fetched unconditionally — the endpoint returns
+  // an empty list for non-k8s containers, so the gating happens at render.
+  const { data: podEvents } = useQuery({
+    queryKey: queryKeys.containerPodEvents(hostId, containerName),
+    queryFn: () => api<PodEventsResponse>(`/hosts/${hid}/containers/${cname}/pod-events`).catch(() => ({ host_id: hostId!, container_name: containerName!, events: [] }) as PodEventsResponse),
+    refetchInterval: 60_000,
   });
 
   // Prev/next sibling navigation. Server-orders alphabetically by container_name,
@@ -352,7 +362,9 @@ export function ContainerDetailPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <StatusDot status={data.is_stale ? 'stale' : deriveContainerDisplayStatus(data.status, data.exit_code).dot} size="lg" />
-            <h1 className="truncate text-xl font-bold text-fg">{data.container_name}</h1>
+            <h1 className="truncate text-xl font-bold text-fg" title={data.container_name}>
+              {isKubernetes ? getContainerDisplayName(data.container_name).split('/').pop() : data.container_name}
+            </h1>
           </div>
           {isAuthenticated && !data.is_stale && (
             <div className="flex shrink-0 items-center gap-2" title={isKubernetes ? k8sReadOnlyTitle : undefined}>
@@ -379,6 +391,16 @@ export function ContainerDetailPage() {
             </div>
           )}
         </div>
+
+        {/* K8s identity row — renders nothing for Docker containers */}
+        {isKubernetes && (
+          <K8sIdentityStrip
+            containerName={data.container_name}
+            hostId={data.host_id}
+            image={data.image ?? null}
+            labelsJson={data.labels ?? null}
+          />
+        )}
 
         {/* Status pills + compact stats — flat row, no card wrapper */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
@@ -611,6 +633,10 @@ export function ContainerDetailPage() {
                   </div>
                 </Card>
               )}
+
+              {/* K8s events scoped to this pod — only rendered when the
+                  endpoint returned events for the namespace+workload match. */}
+              {isKubernetes && <PodEventsCard events={podEvents?.events} />}
 
               {/* AI diagnosis on healthy containers — available as a quiet
                   power-user option. On unhealthy containers it lives in the
