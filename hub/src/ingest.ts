@@ -637,6 +637,68 @@ function ingestPodVolumes(db: Database.Database, clusterId: string, volumes: Pod
   logger.info('ingest', `Upserted ${volumes.length} pod volumes for cluster ${clusterId}`);
 }
 
+interface WorkloadRolloutRecord {
+  kind: string;
+  namespace: string;
+  name: string;
+  desired: number;
+  ready: number;
+  updated: number;
+  generation: number;
+  observedGeneration: number;
+  progressDeadlineExceeded: boolean;
+}
+
+/**
+ * Current-state UPSERT for workload rollouts. Same prune-by-batchAt pattern
+ * as pending_pods: when a workload disappears from a later batch (deleted)
+ * its row is dropped within one cycle. first_seen_at is preserved across
+ * cycles so the alert evaluator can age unavailable/degraded/stuck conditions
+ * by their original observation time.
+ *
+ * Note: first_seen_at represents "when this row first appeared", not "when
+ * this rollout entered an unhealthy state". The evaluator sees the current
+ * counts and applies its own threshold; the unhealthy duration is implicit
+ * in "row exists with these numbers and first_seen_at is old enough".
+ */
+function ingestWorkloadRollouts(db: Database.Database, clusterId: string, rollouts: WorkloadRolloutRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO workload_rollouts
+      (cluster_id, kind, namespace, name, desired, ready, updated,
+       generation, observed_generation, progress_deadline_exceeded,
+       first_seen_at, last_seen_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cluster_id, kind, namespace, name) DO UPDATE SET
+      desired                    = excluded.desired,
+      ready                      = excluded.ready,
+      updated                    = excluded.updated,
+      generation                 = excluded.generation,
+      observed_generation        = excluded.observed_generation,
+      progress_deadline_exceeded = excluded.progress_deadline_exceeded,
+      last_seen_at               = excluded.last_seen_at
+  `);
+  const prune = db.prepare(`
+    DELETE FROM workload_rollouts
+     WHERE cluster_id = ? AND last_seen_at < ?
+  `);
+
+  const tx = db.transaction((items: WorkloadRolloutRecord[]) => {
+    for (const r of items) {
+      upsert.run(
+        clusterId, r.kind, r.namespace, r.name,
+        r.desired, r.ready, r.updated,
+        r.generation, r.observedGeneration,
+        r.progressDeadlineExceeded ? 1 : 0,
+        batchAt, batchAt,
+      );
+    }
+    prune.run(clusterId, batchAt);
+  });
+  tx(rollouts);
+  logger.info('ingest', `Upserted ${rollouts.length} workload rollouts for cluster ${clusterId}`);
+}
+
 interface NodeConditionRecord {
   type: string;
   status: 'True' | 'False' | 'Unknown';
@@ -673,4 +735,4 @@ function ingestNodeConditions(db: Database.Database, hostId: string, conditions:
   upsertMany(conditions);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };

@@ -1,5 +1,5 @@
 import { parseQuantity } from '../runtime/kubernetes';
-import type { K8sClient, K8sPv, K8sPvc, K8sEvent, K8sIngress, K8sPod, K8sService } from '../runtime/kubernetes';
+import type { K8sClient, K8sPv, K8sPvc, K8sEvent, K8sIngress, K8sPod, K8sService, K8sDeployment, K8sStatefulSet, K8sDaemonSet } from '../runtime/kubernetes';
 
 export interface PvInfo {
   name: string;
@@ -454,6 +454,125 @@ export async function collectPodVolumes(client: K8sClient): Promise<PodVolumeInf
   for (const pod of list.items || []) {
     if (pod.status?.phase === 'Succeeded') continue;
     out.push(...mapPodVolumes(pod));
+  }
+  return out;
+}
+
+// ---- Workload rollouts -----------------------------------------------------
+//
+// Cluster-scoped, leader-published. Feeds three alerts:
+//   - workload_unavailable    (ready=0  AND desired>0,        critical)
+//   - workload_degraded       (0<ready<desired,                error)
+//   - workload_rollout_stuck  (Progressing=False / updates not landing, warning)
+//
+// We capture Deployments, StatefulSets, and DaemonSets — each with slightly
+// different status fields but the same operational story. Workloads with
+// desired=0 (scaled to zero, taint-only DaemonSets, paused) are skipped:
+// the alert evaluator can't distinguish "intentionally idle" from "broken"
+// for those, and surfacing them creates noise.
+
+export interface WorkloadRolloutInfo {
+  kind: 'Deployment' | 'StatefulSet' | 'DaemonSet';
+  namespace: string;
+  name: string;
+  /** Replicas the user asked for (spec.replicas / desiredNumberScheduled). */
+  desired: number;
+  /** Replicas actually Ready right now. */
+  ready: number;
+  /** Replicas at the latest spec generation. Used to detect stuck rollouts. */
+  updated: number;
+  /** Spec generation; if observedGeneration < generation the controller hasn't
+   *  caught up yet. */
+  generation: number;
+  observedGeneration: number;
+  /** Deployments only: did the controller stamp Progressing=False with reason
+   *  ProgressDeadlineExceeded? When true, the rollout has been stuck long
+   *  enough that K8s itself gave up. STS/DS don't have this signal — they
+   *  fall back to time-based "updated < replicas for ≥X min". */
+  progressDeadlineExceeded: boolean;
+}
+
+export function mapDeployment(d: K8sDeployment): WorkloadRolloutInfo | null {
+  const namespace = d.metadata?.namespace;
+  const name = d.metadata?.name;
+  if (!namespace || !name) return null;
+  const desired = d.spec?.replicas ?? 0;
+  if (desired <= 0) return null;
+  const conds = d.status?.conditions ?? [];
+  const progressing = conds.find(c => c.type === 'Progressing');
+  const stalled = !!(progressing && progressing.status === 'False'
+    && progressing.reason === 'ProgressDeadlineExceeded');
+  return {
+    kind: 'Deployment',
+    namespace,
+    name,
+    desired,
+    ready: d.status?.readyReplicas ?? 0,
+    updated: d.status?.updatedReplicas ?? 0,
+    generation: d.metadata?.generation ?? 0,
+    observedGeneration: d.status?.observedGeneration ?? 0,
+    progressDeadlineExceeded: stalled,
+  };
+}
+
+export function mapStatefulSet(s: K8sStatefulSet): WorkloadRolloutInfo | null {
+  const namespace = s.metadata?.namespace;
+  const name = s.metadata?.name;
+  if (!namespace || !name) return null;
+  const desired = s.spec?.replicas ?? 0;
+  if (desired <= 0) return null;
+  return {
+    kind: 'StatefulSet',
+    namespace,
+    name,
+    desired,
+    ready: s.status?.readyReplicas ?? 0,
+    updated: s.status?.updatedReplicas ?? 0,
+    generation: s.metadata?.generation ?? 0,
+    observedGeneration: s.status?.observedGeneration ?? 0,
+    progressDeadlineExceeded: false,
+  };
+}
+
+export function mapDaemonSet(d: K8sDaemonSet): WorkloadRolloutInfo | null {
+  const namespace = d.metadata?.namespace;
+  const name = d.metadata?.name;
+  if (!namespace || !name) return null;
+  const desired = d.status?.desiredNumberScheduled ?? 0;
+  // Taint-only DaemonSets land here (no node matches the selector). Skipping
+  // is safe: the user didn't ask for any pods on this cluster.
+  if (desired <= 0) return null;
+  return {
+    kind: 'DaemonSet',
+    namespace,
+    name,
+    desired,
+    ready: d.status?.numberReady ?? 0,
+    updated: d.status?.updatedNumberScheduled ?? 0,
+    generation: d.metadata?.generation ?? 0,
+    observedGeneration: d.status?.observedGeneration ?? 0,
+    progressDeadlineExceeded: false,
+  };
+}
+
+export async function collectWorkloadRollouts(client: K8sClient): Promise<WorkloadRolloutInfo[]> {
+  const [deployments, statefulSets, daemonSets] = await Promise.all([
+    client.listDeployments(),
+    client.listStatefulSets(),
+    client.listDaemonSets(),
+  ]);
+  const out: WorkloadRolloutInfo[] = [];
+  for (const d of deployments.items || []) {
+    const m = mapDeployment(d);
+    if (m) out.push(m);
+  }
+  for (const s of statefulSets.items || []) {
+    const m = mapStatefulSet(s);
+    if (m) out.push(m);
+  }
+  for (const d of daemonSets.items || []) {
+    const m = mapDaemonSet(d);
+    if (m) out.push(m);
   }
   return out;
 }

@@ -733,6 +733,52 @@ function publishPodVolumes(clusterId: string, publisherHostId: string, volumes: 
   });
 }
 
+interface WorkloadRolloutPayloadItem {
+  kind: 'Deployment' | 'StatefulSet' | 'DaemonSet';
+  namespace: string;
+  name: string;
+  desired: number;
+  ready: number;
+  updated: number;
+  generation: number;
+  observedGeneration: number;
+  progressDeadlineExceeded: boolean;
+}
+
+function publishWorkloadRollouts(clusterId: string, publisherHostId: string, rollouts: WorkloadRolloutPayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/workload-rollouts`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: rollouts.map(r => ({
+      kind: r.kind,
+      namespace: r.namespace,
+      name: r.name,
+      desired: r.desired,
+      ready: r.ready,
+      updated: r.updated,
+      generation: r.generation,
+      observed_generation: r.observedGeneration,
+      progress_deadline_exceeded: r.progressDeadlineExceeded,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${rollouts.length} workload rollouts for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -766,4 +812,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, disconnect, containerInfoToPayload };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, disconnect, containerInfoToPayload };

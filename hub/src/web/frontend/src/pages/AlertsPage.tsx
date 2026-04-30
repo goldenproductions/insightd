@@ -86,6 +86,19 @@ function alertDetailHref(a: Alert): string {
   if (a.alert_type === 'pod_pending') {
     return `/alerts?q=${encodeURIComponent(a.target)}`;
   }
+  // Workload-scoped alerts: target is "Kind/namespace/name" — drop the user
+  // on the namespace topology page where the workload card is tinted by the
+  // active alert. ?focus= can be picked up by the topology to highlight the
+  // node; topology already supports ?q= as a fallback search filter.
+  if (a.alert_type === 'workload_unavailable'
+      || a.alert_type === 'workload_degraded'
+      || a.alert_type === 'workload_rollout_stuck') {
+    const parts = a.target.split('/');
+    if (parts.length === 3 && parts[1] && parts[2]) {
+      return `/clusters/${encodeURIComponent(a.host_id)}/namespaces/${encodeURIComponent(parts[1])}/topology?q=${encodeURIComponent(parts[2])}`;
+    }
+    return `/alerts?q=${encodeURIComponent(a.target)}`;
+  }
   return `/hosts/${encodeURIComponent(a.host_id)}/containers/${encodeURIComponent(a.target)}`;
 }
 

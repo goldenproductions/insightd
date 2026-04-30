@@ -419,6 +419,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   endpoint_down: 'critical',
   node_not_ready: 'critical',
   cert_expired: 'critical',
+  workload_unavailable: 'critical',
   container_unhealthy: 'error',
   restart_loop: 'error',
   disk_full: 'error',
@@ -426,6 +427,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   container_memory_saturation: 'error',
   cert_invalid: 'error',
   pod_pending: 'error',
+  workload_degraded: 'error',
   high_cpu: 'warning',
   high_memory: 'warning',
   high_host_cpu: 'warning',
@@ -433,6 +435,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   high_load: 'warning',
   container_cpu_saturation: 'warning',
   cert_expiring_soon: 'warning',
+  workload_rollout_stuck: 'warning',
 };
 
 /** The CASE expression equivalent of LEVEL_BY_ALERT_TYPE — used in SQL filters/facets. */
@@ -443,6 +446,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'endpoint_down' THEN 'critical'
     WHEN 'node_not_ready' THEN 'critical'
     WHEN 'cert_expired' THEN 'critical'
+    WHEN 'workload_unavailable' THEN 'critical'
     WHEN 'container_unhealthy' THEN 'error'
     WHEN 'restart_loop' THEN 'error'
     WHEN 'disk_full' THEN 'error'
@@ -450,6 +454,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'container_memory_saturation' THEN 'error'
     WHEN 'cert_invalid' THEN 'error'
     WHEN 'pod_pending' THEN 'error'
+    WHEN 'workload_degraded' THEN 'error'
     WHEN 'high_cpu' THEN 'warning'
     WHEN 'high_memory' THEN 'warning'
     WHEN 'high_host_cpu' THEN 'warning'
@@ -457,6 +462,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'high_load' THEN 'warning'
     WHEN 'container_cpu_saturation' THEN 'warning'
     WHEN 'cert_expiring_soon' THEN 'warning'
+    WHEN 'workload_rollout_stuck' THEN 'warning'
     ELSE 'info'
   END
 `;
@@ -2439,6 +2445,52 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
       const wlKey = containerToWorkload.get(a.target);
       if (!wlKey) continue;
       const wl = workloadMap.get(wlKey);
+      if (!wl) continue;
+      const level = LEVEL_BY_ALERT_TYPE[a.alert_type] ?? 'info';
+      wl.active_alerts.push({
+        type: a.alert_type,
+        container_name: a.target,
+        level,
+        message: a.message,
+        triggered_at: a.triggered_at,
+      });
+      wl.severity = mergeSeverity(wl.severity, level);
+    }
+
+    // Workload-scoped alerts (workload_unavailable / _degraded / _rollout_stuck)
+    // don't target container_name — they target "Kind/namespace/name". Pull
+    // them by host_id=cluster_id and target prefix and merge into the same
+    // workload severity + alert lists. Same time-travel semantics as above.
+    const workloadAlerts = db.prepare(`
+      SELECT host_id, alert_type, target, message, triggered_at
+      FROM alert_state
+      WHERE host_id = ?
+        AND alert_type IN ('workload_unavailable','workload_degraded','workload_rollout_stuck')
+        AND target LIKE ?
+        ${isTimeTraveled
+          ? 'AND datetime(triggered_at) <= datetime(?) AND (resolved_at IS NULL OR datetime(resolved_at) > datetime(?))'
+          : 'AND resolved_at IS NULL'}
+      ORDER BY triggered_at DESC
+    `).all(
+      clusterId,
+      `%/${namespace}/%`,
+      ...(isTimeTraveled ? [at, at] : []),
+    ) as Array<{
+      host_id: string; alert_type: string; target: string;
+      message: string | null; triggered_at: string;
+    }>;
+
+    for (const a of workloadAlerts) {
+      // target = "Kind/namespace/name" — match second segment exactly to the
+      // namespace we're rendering (LIKE filter is necessary but loose).
+      const parts = a.target.split('/');
+      if (parts.length !== 3 || parts[1] !== namespace) continue;
+      const [kind, , name] = parts;
+      const wlKey = `wl:${kind}:${name}`;
+      const wl = workloadMap.get(wlKey);
+      // Tolerate misses: a workload might be in workload_rollouts but have
+      // zero pods captured in container_snapshots (still creating, just
+      // deleted, etc.). Skip rather than fabricate an empty card.
       if (!wl) continue;
       const level = LEVEL_BY_ALERT_TYPE[a.alert_type] ?? 'info';
       wl.active_alerts.push({

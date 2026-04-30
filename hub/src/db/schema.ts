@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 44;
+const SCHEMA_VERSION = 45;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -310,6 +310,30 @@ function bootstrap(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_pending_pods_cluster_first
       ON pending_pods (cluster_id, first_seen_at);
+
+    -- Workload rollout state (Deployment/StatefulSet/DaemonSet, cluster-scoped,
+    -- leader-published). Same registry-style upsert as pending_pods: one row
+    -- per workload, refreshed each leader cycle. The alert evaluator reads
+    -- this for workload_unavailable / workload_degraded / workload_rollout_stuck.
+    -- first_seen_at is preserved across cycles so the evaluator can age out
+    -- by duration; rows are deleted when the workload no longer exists.
+    CREATE TABLE IF NOT EXISTS workload_rollouts (
+      cluster_id                  TEXT NOT NULL,
+      kind                        TEXT NOT NULL, -- Deployment | StatefulSet | DaemonSet
+      namespace                   TEXT NOT NULL,
+      name                        TEXT NOT NULL,
+      desired                     INTEGER NOT NULL,
+      ready                       INTEGER NOT NULL,
+      updated                     INTEGER NOT NULL,
+      generation                  INTEGER NOT NULL,
+      observed_generation         INTEGER NOT NULL,
+      progress_deadline_exceeded  INTEGER NOT NULL DEFAULT 0,
+      first_seen_at               TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at                TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, kind, namespace, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_workload_rollouts_cluster_first
+      ON workload_rollouts (cluster_id, first_seen_at);
 
     CREATE TABLE IF NOT EXISTS update_checks (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1083,6 +1107,29 @@ function migrate(db: Database.Database, fromVersion: number): void {
         ON pod_volumes (cluster_id, namespace);
       CREATE INDEX IF NOT EXISTS idx_pod_volumes_target
         ON pod_volumes (cluster_id, namespace, volume_type, target_name);
+    `);
+  }
+  if (fromVersion < 45) {
+    // Workload rollout state — feeds workload_unavailable / workload_degraded /
+    // workload_rollout_stuck alerts. Cluster-scoped, leader-published.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_rollouts (
+        cluster_id                  TEXT NOT NULL,
+        kind                        TEXT NOT NULL,
+        namespace                   TEXT NOT NULL,
+        name                        TEXT NOT NULL,
+        desired                     INTEGER NOT NULL,
+        ready                       INTEGER NOT NULL,
+        updated                     INTEGER NOT NULL,
+        generation                  INTEGER NOT NULL,
+        observed_generation         INTEGER NOT NULL,
+        progress_deadline_exceeded  INTEGER NOT NULL DEFAULT 0,
+        first_seen_at               TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at                TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, kind, namespace, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_workload_rollouts_cluster_first
+        ON workload_rollouts (cluster_id, first_seen_at);
     `);
   }
 }

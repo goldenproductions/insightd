@@ -22,10 +22,13 @@ rules:
   - apiGroups: [""]
     resources: ["nodes/metrics", "nodes/stats", "nodes/proxy"]
     verbs: ["get"]
-  # Read ReplicaSets to walk pod owners up to their Deployment for stable naming
+  # Read ReplicaSets to walk pod owners up to their Deployment for stable naming.
+  # Deployments / StatefulSets / DaemonSets back the workload-rollout alerts —
+  # the elected leader compares spec.replicas vs status.readyReplicas etc. and
+  # publishes the result for the hub to evaluate.
   - apiGroups: ["apps"]
-    resources: ["replicasets"]
-    verbs: ["get", "list"]
+    resources: ["replicasets", "deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
   # Cluster-scoped PV/PVC + Service inventory (the elected leader publishes
   # to the hub). Services back the topology view's Ingress→Service→Workload
   # edges, replacing the heuristic name-matching in earlier versions.
