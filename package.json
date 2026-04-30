@@ -21,7 +21,7 @@
   "license": "MIT",
   "dependencies": {
     "better-sqlite3": "^12.9.0",
-    "dockerode": "^4.0.10",
+    "dockerode": "^5.0.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.7",
     "tsx": "^4.19.0"
