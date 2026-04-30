@@ -59,6 +59,11 @@ interface CollectionPayload {
     cpu_limit_percent?: number | null;
     memory_limit_mb?: number | null;
     last_oom_killed_at?: string | null;
+    workload_kind?: string | null;
+    pod_ip?: string | null;
+    host_ip?: string | null;
+    /** JSON-stringified PodCondition[] — hub stores as text, frontend parses. */
+    pod_conditions?: string | null;
   }>;
   disk?: Array<{
     mount_point: string;
@@ -297,6 +302,10 @@ export function payloadContainerToSnapshot(c: NonNullable<CollectionPayload['con
     cpuLimitPercent: c.cpu_limit_percent ?? null,
     memoryLimitMb: c.memory_limit_mb ?? null,
     lastOomKilledAt: c.last_oom_killed_at ?? null,
+    workloadKind: c.workload_kind ?? null,
+    podIp: c.pod_ip ?? null,
+    hostIp: c.host_ip ?? null,
+    podConditions: c.pod_conditions ?? null,
   };
 }
 

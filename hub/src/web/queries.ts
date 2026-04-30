@@ -989,6 +989,7 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
            cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
            cs.size_rootfs_bytes, cs.size_rw_bytes,
            cs.last_oom_killed_at,
+           cs.workload_kind, cs.pod_ip, cs.host_ip, cs.pod_conditions,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')

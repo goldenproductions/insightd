@@ -30,6 +30,7 @@ import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { LogTemplatesList } from '@/components/LogTemplatesList';
 import { K8sIdentityStrip } from '@/components/K8sIdentityStrip';
 import { PodEventsCard } from '@/components/PodEventsCard';
+import { PodConditionsBadges } from '@/components/PodConditionsBadges';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -399,6 +400,8 @@ export function ContainerDetailPage() {
             hostId={data.host_id}
             image={data.image ?? null}
             labelsJson={data.labels ?? null}
+            workloadKind={data.workload_kind}
+            podIp={data.pod_ip}
           />
         )}
 
@@ -418,6 +421,9 @@ export function ContainerDetailPage() {
                 <Badge text={oomChip} color="red" />
               </span>
             )}
+            {/* k8s pod conditions — only renders pills for non-True conditions,
+                so a fully healthy pod shows nothing here. */}
+            {isKubernetes && <PodConditionsBadges conditionsJson={data.pod_conditions} />}
           </div>
           <span
             className="text-sm"

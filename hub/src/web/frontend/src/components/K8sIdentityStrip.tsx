@@ -7,6 +7,11 @@ interface Props {
   image: string | null;
   /** Raw labels JSON from `container_snapshots.labels`; null when missing. */
   labelsJson: string | null;
+  /** v42 — Workload kind from ownerReferences walk (Deployment / StatefulSet / etc.).
+   *  Renders as a "Kind/Name" prefix on the Workload field when present. */
+  workloadKind?: string | null;
+  /** v42 — pod.status.podIP. Surfaces as a separate field when present. */
+  podIp?: string | null;
 }
 
 /**
@@ -17,7 +22,7 @@ interface Props {
  * Renders nothing when the container_name doesn't look like a k8s entity
  * (no slashes), so this component is safe to mount unconditionally.
  */
-export function K8sIdentityStrip({ containerName, hostId, image, labelsJson }: Props) {
+export function K8sIdentityStrip({ containerName, hostId, image, labelsJson, workloadKind, podIp }: Props) {
   const firstSlash = containerName.indexOf('/');
   if (firstSlash <= 0) return null;
   const namespace = containerName.slice(0, firstSlash);
@@ -25,6 +30,7 @@ export function K8sIdentityStrip({ containerName, hostId, image, labelsJson }: P
   const secondSlash = rest.indexOf('/');
   const workload = secondSlash > 0 ? rest.slice(0, secondSlash) : rest;
   const containerOnly = secondSlash > 0 ? rest.slice(secondSlash + 1) : null;
+  const workloadDisplay = workloadKind ? `${workloadKind}/${workload}` : workload;
 
   const labels = parseLabels(labelsJson);
   const featured = pickFeaturedLabels(labels);
@@ -32,9 +38,10 @@ export function K8sIdentityStrip({ containerName, hostId, image, labelsJson }: P
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-border bg-bg-secondary/40 px-3 py-2 text-xs">
       <Field label="Namespace" value={namespace} mono />
-      <Field label="Workload" value={workload} mono />
+      <Field label="Workload" value={workloadDisplay} mono />
       {containerOnly && <Field label="Container" value={containerOnly} mono />}
       <Field label="Node" value={hostId} mono />
+      {podIp && <Field label="Pod IP" value={podIp} mono />}
       {image && <Field label="Image" value={image} mono title={image} truncate />}
       {featured.length > 0 && (
         <span className="flex flex-wrap items-center gap-1.5">

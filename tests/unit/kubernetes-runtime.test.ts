@@ -675,3 +675,122 @@ describe('KubernetesRuntime.listContainers: lastOomKilledAt extraction', () => {
     assert.ok(Math.abs(Date.now() - ts) < 5000, 'fallback timestamp should be near "now"');
   });
 });
+
+describe('KubernetesRuntime.listContainers: v42 pod identity + status', () => {
+  function makeRuntime(pods: any[], replicaSets: Record<string, any> = {}): any {
+    const runtime: any = new KubernetesRuntime({ nodeName: 'k3d-test', nodeIp: '127.0.0.1' });
+    runtime.coreApi = { listPods: async () => ({ items: pods }) };
+    runtime.appsApi = {
+      readReplicaSet: async (ns: string, name: string) => {
+        const rs = replicaSets[`${ns}/${name}`];
+        if (!rs) throw new Error('not found');
+        return rs;
+      },
+    };
+    return runtime;
+  }
+
+  function makePod(opts: {
+    name: string;
+    owner?: { kind: string; name: string };
+    podIP?: string;
+    hostIP?: string;
+    conditions?: Array<{ type: string; status: string; reason?: string; message?: string }>;
+    containerName?: string;
+  }): any {
+    return {
+      metadata: {
+        name: opts.name,
+        namespace: 'default',
+        uid: `uid-${opts.name}`,
+        labels: {},
+        ownerReferences: opts.owner ? [opts.owner] : undefined,
+      },
+      status: {
+        phase: 'Running',
+        podIP: opts.podIP,
+        hostIP: opts.hostIP,
+        conditions: opts.conditions,
+        containerStatuses: [{
+          name: opts.containerName ?? 'app',
+          ready: true,
+          restartCount: 0,
+          image: 'busybox:latest',
+          state: { running: { startedAt: new Date().toISOString() } },
+        }],
+      },
+    };
+  }
+
+  it('captures workloadKind=Deployment via the ReplicaSet → Deployment walk', async () => {
+    const r = makeRuntime(
+      [makePod({ name: 'web-7d-abc', owner: { kind: 'ReplicaSet', name: 'web-7d' } })],
+      { 'default/web-7d': { metadata: { ownerReferences: [{ kind: 'Deployment', name: 'web' }] } } },
+    );
+    const containers = await r.listContainers();
+    assert.equal(containers[0].workloadKind, 'Deployment');
+    assert.equal(containers[0].name, 'default/web/app');
+  });
+
+  it('captures workloadKind=StatefulSet (uses pod name as stable)', async () => {
+    const r = makeRuntime([makePod({ name: 'db-0', owner: { kind: 'StatefulSet', name: 'db' } })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].workloadKind, 'StatefulSet');
+    assert.equal(containers[0].name, 'default/db-0/app');
+  });
+
+  it('captures workloadKind=DaemonSet (uses controller name)', async () => {
+    const r = makeRuntime([makePod({ name: 'fluentd-xyz', owner: { kind: 'DaemonSet', name: 'fluentd' } })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].workloadKind, 'DaemonSet');
+    assert.equal(containers[0].name, 'default/fluentd/app');
+  });
+
+  it('captures workloadKind=ReplicaSet for orphaned RSes (no parent Deployment)', async () => {
+    const r = makeRuntime(
+      [makePod({ name: 'orphan-abc', owner: { kind: 'ReplicaSet', name: 'orphan' } })],
+      { 'default/orphan': { metadata: { ownerReferences: [] } } },
+    );
+    const containers = await r.listContainers();
+    assert.equal(containers[0].workloadKind, 'ReplicaSet');
+  });
+
+  it('captures workloadKind=null for standalone pods (no ownerReferences)', async () => {
+    const r = makeRuntime([makePod({ name: 'standalone' })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].workloadKind, null);
+  });
+
+  it('passes through podIp and hostIp from pod.status', async () => {
+    const r = makeRuntime([makePod({
+      name: 'web', podIP: '10.42.0.7', hostIP: '192.168.1.10',
+    })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].podIp, '10.42.0.7');
+    assert.equal(containers[0].hostIp, '192.168.1.10');
+  });
+
+  it('captures pod conditions with reason + message', async () => {
+    const r = makeRuntime([makePod({
+      name: 'web',
+      conditions: [
+        { type: 'Ready', status: 'False', reason: 'ContainersNotReady', message: 'containers with unready status: [app]' },
+        { type: 'PodScheduled', status: 'True' },
+      ],
+    })]);
+    const containers = await r.listContainers();
+    const conds = containers[0].podConditions;
+    assert.equal(conds.length, 2);
+    const ready = conds.find((c: any) => c.type === 'Ready')!;
+    assert.equal(ready.status, 'False');
+    assert.equal(ready.reason, 'ContainersNotReady');
+    assert.match(ready.message, /unready status/);
+  });
+
+  it('returns podConditions=null when the pod has no conditions array', async () => {
+    const r = makeRuntime([makePod({ name: 'web' })]);
+    const containers = await r.listContainers();
+    assert.equal(containers[0].podConditions, null);
+  });
+});
+

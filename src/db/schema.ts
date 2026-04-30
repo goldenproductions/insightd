@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 41;
+const SCHEMA_VERSION = 42;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -43,6 +43,10 @@ function bootstrap(db: Database.Database): void {
       cpu_limit_percent REAL,
       memory_limit_mb REAL,
       last_oom_killed_at TEXT,
+      workload_kind   TEXT,
+      pod_ip          TEXT,
+      host_ip         TEXT,
+      pod_conditions  TEXT,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -924,6 +928,12 @@ function migrate(db: Database.Database, fromVersion: number): void {
         PRIMARY KEY (cluster_id, namespace, pod_name)
       );
     `);
+  }
+  if (fromVersion < 42) {
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN workload_kind TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN host_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_conditions TEXT'); } catch { /* already exists */ }
   }
 }
 

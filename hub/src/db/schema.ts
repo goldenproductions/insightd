@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 41;
+const SCHEMA_VERSION = 42;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -43,6 +43,14 @@ function bootstrap(db: Database.Database): void {
       cpu_limit_percent REAL,
       memory_limit_mb REAL,
       last_oom_killed_at TEXT,
+      -- v42: k8s pod-level identity + status. Duplicated across each
+      -- container in the pod (no separate pods table). All nullable —
+      -- Docker leaves them blank, k8s standalone pods (no ownerReferences)
+      -- leave workload_kind null.
+      workload_kind   TEXT,
+      pod_ip          TEXT,
+      host_ip         TEXT,
+      pod_conditions  TEXT,  -- JSON array: [{type,status,reason?,message?}]
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -975,6 +983,16 @@ function migrate(db: Database.Database, fromVersion: number): void {
       CREATE INDEX IF NOT EXISTS idx_pending_pods_cluster_first
         ON pending_pods (cluster_id, first_seen_at);
     `);
+  }
+  if (fromVersion < 42) {
+    // K8s pod-level identity + status carried on every container snapshot.
+    // workload_kind: Deployment/StatefulSet/DaemonSet/Job/CronJob (or
+    // ReplicaSet for orphaned RSes; null for standalone pods + Docker).
+    // pod_conditions: JSON-serialized [{type,status,reason?,message?}].
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN workload_kind TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN host_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_conditions TEXT'); } catch { /* already exists */ }
   }
 }
 
