@@ -2154,11 +2154,32 @@ export interface TopologyIngress {
   id: number;
   name: string;
   hosts: string[];
-  /** Service names extracted from paths[].serviceName — used by the UI to
-   *  draw heuristic Ingress→Workload edges by matching service name to
-   *  workload name. We don't ingest k8s Services today, so this is the
-   *  closest signal we have. */
+  /** Service names extracted from paths[].serviceName — UI joins these to
+   *  topology services by exact name to draw real Ingress→Service edges. */
   service_targets: string[];
+}
+
+export interface TopologyServicePort {
+  name: string | null;
+  port: number;
+  target_port: number | string | null;
+  protocol: string | null;
+  node_port: number | null;
+}
+
+export interface TopologyService {
+  name: string;
+  type: string;            // ClusterIP / NodePort / LoadBalancer / ExternalName
+  cluster_ip: string | null;
+  external_name: string | null;
+  ports: TopologyServicePort[];
+  /** Workload keys this service routes to (selector ⊆ pod labels). May be
+   *  empty for ExternalName services, headless services without backends,
+   *  or misconfigured selectors that match no pod. */
+  workload_keys: string[];
+  /** True when the service has no selector OR an empty selector — these
+   *  are leaf nodes in the graph (no pod backends). */
+  is_external: boolean;
 }
 
 export interface TopologyPvc {
@@ -2178,6 +2199,7 @@ export interface NamespaceTopology {
   cluster_id: string;
   namespace: string;
   workloads: TopologyWorkload[];
+  services: TopologyService[];
   ingresses: TopologyIngress[];
   pvcs: TopologyPvc[];
   nodes: TopologyNode[];
@@ -2191,6 +2213,10 @@ interface ContainerLatestRow {
   status: string;
   health_status: string | null;
   host_online: number;
+  /** JSON-stringified Record<string,string> from container_snapshots.labels.
+   *  We need it for selector→workload matching now that v43 ingests
+   *  Services. */
+  labels: string | null;
 }
 
 function getNamespaceTopology(db: Database.Database, clusterId: string, namespace: string, offlineThresholdMinutes: number): NamespaceTopology {
@@ -2200,7 +2226,7 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
   const containerRows = db.prepare(`
     WITH latest AS (
       SELECT cs.host_id, cs.container_name, cs.container_id,
-             cs.workload_kind, cs.status, cs.health_status,
+             cs.workload_kind, cs.status, cs.health_status, cs.labels,
              CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
                THEN 1 ELSE 0 END AS host_online,
              ROW_NUMBER() OVER (
@@ -2215,7 +2241,7 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
         AND COALESCE(h.host_group_override, h.host_group, 'cluster-' || h.host_id) = ?
         AND cs.container_name LIKE ?
     )
-    SELECT host_id, container_name, container_id, workload_kind, status, health_status, host_online
+    SELECT host_id, container_name, container_id, workload_kind, status, health_status, host_online, labels
     FROM latest
     WHERE rn = 1
   `).all(offlineThresholdMinutes, clusterId, `${namespace}/%`) as ContainerLatestRow[];
@@ -2235,6 +2261,10 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
   // container_name = "namespace/stable/container[/...]"
   // container_id   = "podUid/stable/container"
   const workloadMap = new Map<string, TopologyWorkload>();
+  // Parallel map of per-workload pod label sets, used downstream to match
+  // Service selectors against pods (selector ⊆ pod_labels). Keyed by podUid
+  // so sidecars don't double-count.
+  const workloadLabels = new Map<string, Map<string, Record<string, string>>>();
   const nodeIdSet = new Set<string>();
   for (const r of containerRows) {
     const firstSlash = r.container_name.indexOf('/');
@@ -2244,7 +2274,8 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     const stable = secondSlash > 0 ? rest.slice(0, secondSlash) : rest;
     const containerSegment = secondSlash > 0 ? rest.slice(secondSlash + 1) : '';
     const podUid = r.container_id.split('/')[0] ?? r.host_id;
-    const workloadKey = `${r.workload_kind ?? '_'}${stable}`;
+    // Format matches the frontend workloadKeyOf so service.workload_keys line up with React Flow node ids.
+    const workloadKey = `wl:${r.workload_kind ?? "_"}:${stable}`;
 
     let wl = workloadMap.get(workloadKey);
     if (!wl) {
@@ -2257,6 +2288,7 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
         pods: [],
       };
       workloadMap.set(workloadKey, wl);
+      workloadLabels.set(workloadKey, new Map());
     }
 
     let pod = wl.pods.find(p => p.pod_uid === podUid);
@@ -2265,6 +2297,10 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
       wl.pods.push(pod);
       wl.total_pods += 1;
       wl.pods_by_node[r.host_id] = (wl.pods_by_node[r.host_id] ?? 0) + 1;
+      // First container we've seen for this pod — capture its labels for
+      // selector matching. All containers in a pod share pod-level labels.
+      const labels = parseLabelsJson(r.labels);
+      if (labels) workloadLabels.get(workloadKey)!.set(podUid, labels);
     }
     pod.containers.push({
       container_name: r.container_name,
@@ -2344,14 +2380,100 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     a.name.localeCompare(b.name),
   );
 
+  // Services in this namespace + selector→workload matching.
+  const serviceRows = db.prepare(`
+    SELECT name, type, cluster_ip, external_name, selector, ports
+    FROM k8s_services
+    WHERE cluster_id = ? AND namespace = ? AND removed_at IS NULL
+    ORDER BY name
+  `).all(clusterId, namespace) as Array<{
+    name: string;
+    type: string;
+    cluster_ip: string | null;
+    external_name: string | null;
+    selector: string | null;
+    ports: string;
+  }>;
+
+  const services: TopologyService[] = serviceRows.map(row => {
+    let ports: TopologyServicePort[] = [];
+    try {
+      const raw = JSON.parse(row.ports) as Array<{
+        name?: string | null; port: number; targetPort?: number | string | null;
+        protocol?: string | null; nodePort?: number | null;
+      }>;
+      ports = raw.map(p => ({
+        name: p.name ?? null,
+        port: p.port,
+        target_port: p.targetPort ?? null,
+        protocol: p.protocol ?? null,
+        node_port: p.nodePort ?? null,
+      }));
+    } catch { /* ignore malformed */ }
+
+    let selector: Record<string, string> | null = null;
+    try { selector = row.selector ? JSON.parse(row.selector) : null; } catch { /* ignore */ }
+
+    // Match selector against pod labels of every workload. A workload matches
+    // if any of its pods has a label set whose entries are a superset of the
+    // selector. Empty/null selector means "no pod backends" — common for
+    // ExternalName services, headless services with manual Endpoints, or
+    // misconfigured services.
+    const workloadKeys: string[] = [];
+    if (selector && Object.keys(selector).length > 0) {
+      for (const [wlKey, podLabels] of workloadLabels) {
+        for (const labels of podLabels.values()) {
+          if (selectorMatches(selector, labels)) {
+            workloadKeys.push(wlKey);
+            break;
+          }
+        }
+      }
+    }
+
+    return {
+      name: row.name,
+      type: row.type,
+      cluster_ip: row.cluster_ip,
+      external_name: row.external_name,
+      ports,
+      workload_keys: workloadKeys.sort(),
+      is_external: !selector || Object.keys(selector).length === 0,
+    };
+  });
+
   return {
     cluster_id: clusterId,
     namespace,
     workloads,
+    services,
     ingresses,
     pvcs,
     nodes,
   };
+}
+
+/** Parse a labels JSON column. Returns null on bad input — caller treats as no labels. */
+function parseLabelsJson(raw: string | null): Record<string, string> | null {
+  if (!raw) return null;
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (typeof v === 'string') out[k] = v;
+    }
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/** True when every key/value in `selector` is present in `labels`. */
+function selectorMatches(selector: Record<string, string>, labels: Record<string, string>): boolean {
+  for (const [k, v] of Object.entries(selector)) {
+    if (labels[k] !== v) return false;
+  }
+  return true;
 }
 
 // ── Cluster overview (landing page for a k8s cluster) ───────────────────────

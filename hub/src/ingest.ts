@@ -463,6 +463,72 @@ function ingestIngresses(db: Database.Database, clusterId: string, ingresses: In
   logger.info('ingest', `Upserted ${ingresses.length} ingresses for cluster ${clusterId}`);
 }
 
+interface ServiceRecord {
+  namespace: string;
+  name: string;
+  type: string;
+  clusterIp: string | null;
+  externalIps: string;            // JSON-stringified by the agent
+  externalName: string | null;
+  selector: string | null;        // JSON-stringified or null
+  ports: string;                  // JSON-stringified
+  createdAt: string | null;
+  labels: string | null;          // JSON-stringified
+}
+
+/**
+ * Registry-style ingest for k8s Services. Same upsert + stamp_removed pattern
+ * as k8s_ingresses — services that vanish between publish cycles get
+ * `removed_at` stamped, so the topology view drops them within one cycle.
+ */
+function ingestServices(db: Database.Database, clusterId: string, services: ServiceRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO k8s_services
+      (cluster_id, namespace, name, type, cluster_ip, external_ips, external_name,
+       selector, ports, created_at, labels, observed_at, removed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
+    ON CONFLICT(cluster_id, namespace, name) DO UPDATE SET
+      type          = excluded.type,
+      cluster_ip    = excluded.cluster_ip,
+      external_ips  = excluded.external_ips,
+      external_name = excluded.external_name,
+      selector      = excluded.selector,
+      ports         = excluded.ports,
+      created_at    = excluded.created_at,
+      labels        = excluded.labels,
+      observed_at   = excluded.observed_at,
+      removed_at    = NULL
+  `);
+  const stampRemoved = db.prepare(`
+    UPDATE k8s_services
+       SET removed_at = ?
+     WHERE cluster_id = ? AND removed_at IS NULL AND observed_at < ?
+  `);
+
+  const tx = db.transaction((items: ServiceRecord[]) => {
+    for (const s of items) {
+      upsert.run(
+        clusterId,
+        s.namespace,
+        s.name,
+        s.type,
+        s.clusterIp,
+        s.externalIps,
+        s.externalName,
+        s.selector,
+        s.ports,
+        s.createdAt,
+        s.labels,
+        batchAt,
+      );
+    }
+    stampRemoved.run(batchAt, clusterId, batchAt);
+  });
+  tx(services);
+  logger.info('ingest', `Upserted ${services.length} services for cluster ${clusterId}`);
+}
+
 interface PendingPodRecord {
   namespace: string;
   podName: string;
@@ -562,4 +628,4 @@ function ingestNodeConditions(db: Database.Database, hostId: string, conditions:
   upsertMany(conditions);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestPendingPods, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };

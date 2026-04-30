@@ -15,20 +15,22 @@ function seedK8sContainer(db: any, opts: {
   containerId: string;
   workloadKind?: string | null;
   health?: string | null;
+  labels?: Record<string, string>;
 }) {
   // Mark the host as kubernetes so the topology query's runtime_type filter passes.
   db.prepare("UPDATE hosts SET runtime_type='kubernetes' WHERE host_id = ?").run(opts.hostId);
   // Seed the snapshot with the new v42 columns.
+  const labelsJson = opts.labels ? JSON.stringify(opts.labels) : '{}';
   db.prepare(`
     INSERT INTO container_snapshots (host_id, container_name, container_id, status,
       cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes,
       blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels,
       exit_code, size_rootfs_bytes, size_rw_bytes, cpu_limit_cores, cpu_limit_percent,
       memory_limit_mb, last_oom_killed_at, workload_kind, pod_ip, host_ip, pod_conditions, collected_at)
-    VALUES (?, ?, ?, 'running', null, null, 0, null, null, null, null, ?, null, '{}', null,
+    VALUES (?, ?, ?, 'running', null, null, 0, null, null, null, null, ?, null, ?, null,
             null, null, null, null, null, null, ?, null, null, null, ?)
   `).run(opts.hostId, opts.containerName, opts.containerId, opts.health ?? null,
-         opts.workloadKind ?? null, ts(Date.now()));
+         labelsJson, opts.workloadKind ?? null, ts(Date.now()));
   db.prepare(`
     INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
     VALUES (?, ?, ?, ?, NULL)
@@ -157,5 +159,108 @@ describe('getNamespaceTopology', () => {
     assert.equal(topo.nodes.length, 2);
     const byHost = Object.fromEntries(topo.nodes.map((n: any) => [n.host_id, n.pod_count]));
     assert.deepEqual(byHost, { 'k3d-server': 1, 'k3d-worker': 1 });
+  });
+
+  function seedService(db: any, opts: {
+    namespace?: string;
+    name: string;
+    type?: string;
+    selector?: Record<string, string> | null;
+    ports?: Array<{ port: number; targetPort?: number | string; protocol?: string }>;
+    externalName?: string | null;
+  }) {
+    const ports = JSON.stringify((opts.ports ?? [{ port: 80 }]).map(p => ({
+      name: null, port: p.port, targetPort: p.targetPort ?? null, protocol: p.protocol ?? null, nodePort: null,
+    })));
+    db.prepare(`
+      INSERT INTO k8s_services (cluster_id, namespace, name, type, cluster_ip, external_ips,
+        external_name, selector, ports, created_at, labels, observed_at, removed_at)
+      VALUES ('prod', ?, ?, ?, null, '[]', ?, ?, ?, null, '{}', datetime('now'), null)
+    `).run(
+      opts.namespace ?? 'default', opts.name, opts.type ?? 'ClusterIP',
+      opts.externalName ?? null,
+      opts.selector === undefined ? null : (opts.selector === null ? null : JSON.stringify(opts.selector)),
+      ports,
+    );
+  }
+
+  it('returns services in the namespace with selector→workload matching', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment', health: 'healthy',
+      labels: { app: 'web', tier: 'frontend' },
+    });
+    seedService(db, { name: 'web', selector: { app: 'web' } });
+
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.services.length, 1);
+    const svc = topo.services[0];
+    assert.equal(svc.name, 'web');
+    assert.equal(svc.is_external, false);
+    assert.equal(svc.workload_keys.length, 1);
+    assert.equal(svc.workload_keys[0], 'wl:Deployment:web', 'workload_key matches frontend workloadKeyOf format');
+  });
+
+  it('selector intersection is set-inclusion (selector ⊆ pod labels), not equality', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+      labels: { app: 'web', tier: 'frontend', version: 'v2' },
+    });
+    seedService(db, { name: 'web', selector: { app: 'web', tier: 'frontend' } });
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.services[0].workload_keys.length, 1, 'pod has more labels than selector — still matches');
+  });
+
+  it('selector that requires a missing label does not match', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+      labels: { app: 'web' },
+    });
+    seedService(db, { name: 'mismatch', selector: { app: 'web', tier: 'frontend' } });
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.services.length, 1);
+    assert.deepEqual(topo.services[0].workload_keys, []);
+  });
+
+  it('flags services with no selector or empty selector as external', () => {
+    seedService(db, { name: 'manual', selector: null });
+    seedService(db, { name: 'empty', selector: {} });
+    seedService(db, {
+      name: 'extname', type: 'ExternalName', externalName: 'mysql.example.com', selector: null,
+    });
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    const byName = Object.fromEntries(topo.services.map((s: any) => [s.name, s]));
+    assert.equal(byName['manual'].is_external, true);
+    assert.equal(byName['empty'].is_external, true);
+    assert.equal(byName['extname'].is_external, true);
+    assert.equal(byName['extname'].external_name, 'mysql.example.com');
+  });
+
+  it('parses ports including targetPort and protocol', () => {
+    seedService(db, {
+      name: 'multi', selector: { app: 'm' },
+      ports: [{ port: 80, targetPort: 8080, protocol: 'TCP' }, { port: 443, targetPort: 8443 }],
+    });
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    const ports = topo.services[0].ports;
+    assert.equal(ports.length, 2);
+    assert.equal(ports[0].port, 80);
+    assert.equal(ports[0].target_port, 8080);
+    assert.equal(ports[0].protocol, 'TCP');
+    assert.equal(ports[1].port, 443);
+  });
+
+  it('does not return services from other namespaces or removed services', () => {
+    seedService(db, { namespace: 'kube-system', name: 'coredns', selector: { k8s: 'dns' } });
+    db.prepare(`
+      INSERT INTO k8s_services (cluster_id, namespace, name, type, cluster_ip, external_ips,
+        external_name, selector, ports, created_at, labels, observed_at, removed_at)
+      VALUES ('prod', 'default', 'orphan', 'ClusterIP', null, '[]', null, '{}', '[]', null, '{}',
+              datetime('now', '-10 minutes'), datetime('now', '-5 minutes'))
+    `).run();
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.services.length, 0);
   });
 });

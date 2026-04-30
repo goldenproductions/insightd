@@ -184,6 +184,32 @@ export interface K8sIngress {
   status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
 }
 
+// ---- Service ----------------------------------------------------------------
+
+export interface K8sServicePort {
+  name?: string;
+  port: number;
+  targetPort?: number | string;
+  protocol?: string;
+  nodePort?: number;
+}
+
+export interface K8sServiceSpec {
+  type?: string;             // ClusterIP | NodePort | LoadBalancer | ExternalName
+  clusterIP?: string;
+  clusterIPs?: string[];
+  externalIPs?: string[];
+  externalName?: string;
+  selector?: Record<string, string>;
+  ports?: K8sServicePort[];
+}
+
+export interface K8sService {
+  metadata?: K8sMeta;
+  spec?: K8sServiceSpec;
+  status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
+}
+
 export interface K8sLeaseSpec {
   holderIdentity?: string | null;
   leaseDurationSeconds?: number;
@@ -371,6 +397,11 @@ export class K8sClient {
    */
   async listIngresses(): Promise<K8sList<K8sIngress>> {
     return this.get<K8sList<K8sIngress>>('/apis/networking.k8s.io/v1/ingresses');
+  }
+
+  /** List cluster-wide Services. Same leader-elected publisher cadence. */
+  async listServices(): Promise<K8sList<K8sService>> {
+    return this.get<K8sList<K8sService>>('/api/v1/services');
   }
 
   /** Returns null on 404 (lease doesn't exist yet). */

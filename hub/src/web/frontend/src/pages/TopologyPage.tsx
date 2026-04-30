@@ -19,6 +19,7 @@ import type {
   TopologyNode,
   TopologyPvc,
   TopologyPod,
+  TopologyService,
 } from '@/types/api';
 import { Card } from '@/components/Card';
 import { BackLink } from '@/components/BackLink';
@@ -28,56 +29,28 @@ import { EmptyState } from '@/components/EmptyState';
 
 // ── Layout ──────────────────────────────────────────────────────────────────
 //
-// A horizontal three-column layout: Ingresses (left) → Workloads (center) →
-// Nodes (right). Edges run left-to-right. The graph is fully laid out by
-// hand — react-flow only does rendering + interaction, not layout. Hand-
-// computed positions are good enough for the small namespaces a homelab
-// typically runs (≤30 workloads); past that we can swap in dagre or elk.
+// A horizontal four-column layout:
+//   Ingresses (left) → Services → Workloads → Nodes (right).
+// Edges run left-to-right and follow the real k8s plumbing:
+//   Ingress.paths[].serviceName  → Service node by exact namespace+name match
+//   Service.selector ⊆ pod_labels → Workload nodes (computed server-side,
+//                                   surfaced as service.workload_keys)
+//   Workload                     → Node (one edge per node hosting a pod,
+//                                   weighted by pod count)
+// The graph is laid out by hand; react-flow only renders + handles
+// interaction. Good enough for the small namespaces a homelab typically
+// runs (≤30 workloads); past that we can swap in dagre or elk.
 
-const COL_X = { ingress: 0, workload: 360, node: 760 };
+const COL_X = { ingress: 0, service: 320, workload: 660, node: 1040 };
 const Y_STEP = 90;
 const Y_TOP = 40;
 
-// ── Heuristic Ingress→Workload matching ─────────────────────────────────────
-//
-// We don't ingest k8s Services today (only Ingresses), so to draw an
-// Ingress→Workload edge we match the ingress's `paths[].serviceName` against
-// workload names by simple equality first, then by prefix. This catches the
-// common pattern where a Service has the same name as its parent Deployment
-// (e.g. `frontend` Service → `frontend` Deployment), which Helm + most
-// hand-rolled charts default to.
-
-function matchIngressToWorkloads(
-  ingresses: TopologyIngress[],
-  workloads: TopologyWorkload[],
-): Map<number, Set<string>> {
-  const out = new Map<number, Set<string>>();
-  const workloadKeys = new Map(workloads.map(w => [w.name, workloadKeyOf(w)]));
-
-  for (const ing of ingresses) {
-    const matches = new Set<string>();
-    for (const target of ing.service_targets) {
-      // Exact match first.
-      if (workloadKeys.has(target)) {
-        matches.add(workloadKeys.get(target)!);
-        continue;
-      }
-      // Prefix fallback — the Service might be `foo-svc` against a
-      // `foo` workload. Conservative: only when the workload name is a
-      // strict prefix of the service name with a dash boundary.
-      for (const wl of workloads) {
-        if (target.startsWith(`${wl.name}-`)) {
-          matches.add(workloadKeyOf(wl));
-        }
-      }
-    }
-    if (matches.size > 0) out.set(ing.id, matches);
-  }
-  return out;
-}
-
 function workloadKeyOf(wl: { kind: string | null; name: string }): string {
   return `wl:${wl.kind ?? '_'}:${wl.name}`;
+}
+
+function serviceKeyOf(s: { name: string }): string {
+  return `svc:${s.name}`;
 }
 
 function ingressKeyOf(ing: { id: number }): string {
@@ -86,6 +59,25 @@ function ingressKeyOf(ing: { id: number }): string {
 
 function nodeKeyOf(n: { host_id: string }): string {
   return `node:${n.host_id}`;
+}
+
+/** Match Ingress→Service by exact serviceName lookup. Pre-computes a
+ *  service-name index so each ingress costs O(N_targets). */
+function matchIngressesToServices(
+  ingresses: TopologyIngress[],
+  services: TopologyService[],
+): Map<number, Set<string>> {
+  const byName = new Map(services.map(s => [s.name, serviceKeyOf(s)]));
+  const out = new Map<number, Set<string>>();
+  for (const ing of ingresses) {
+    const matches = new Set<string>();
+    for (const target of ing.service_targets) {
+      const key = byName.get(target);
+      if (key) matches.add(key);
+    }
+    if (matches.size > 0) out.set(ing.id, matches);
+  }
+  return out;
 }
 
 // ── React-Flow custom node renderers ────────────────────────────────────────
@@ -173,10 +165,55 @@ function NodeCard({ data }: { data: { node: TopologyNode } }) {
   );
 }
 
+interface ServiceCardData {
+  service: TopologyService;
+  onClick: () => void;
+  active: boolean;
+}
+
+function ServiceCard({ data }: { data: ServiceCardData }) {
+  const { service: s, onClick, active } = data;
+  // Service tone: warning for type=ExternalName + leaf services with no
+  // pod backends (selector matched nothing → operator probably wants to
+  // see this); otherwise calm purple to distinguish from Workloads.
+  const noBackends = s.is_external || s.workload_keys.length === 0;
+  const isExternalName = s.type === 'ExternalName';
+  const tone = isExternalName
+    ? 'border-info/40 bg-info/5'
+    : noBackends
+      ? 'border-warning/40 bg-warning/5'
+      : 'border-purple-400/40 bg-purple-500/5';
+  const portSummary = s.ports.length === 0
+    ? '—'
+    : s.ports.slice(0, 2).map(p => `${p.port}${p.target_port != null && String(p.target_port) !== String(p.port) ? `→${p.target_port}` : ''}`).join(', ')
+      + (s.ports.length > 2 ? ` +${s.ports.length - 2}` : '');
+
+  return (
+    <button
+      onClick={onClick}
+      className={`flex min-w-[220px] flex-col items-start rounded-lg border p-3 text-left shadow-sm transition-colors ${tone} ${active ? 'ring-2 ring-info' : ''}`}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+        Service · {s.type}
+      </div>
+      <div className="mt-0.5 truncate font-mono text-sm font-bold text-fg" title={s.name}>
+        {s.name}
+      </div>
+      <div className="mt-1 text-[11px] text-muted">
+        {isExternalName && s.external_name ? `→ ${s.external_name}` : `ports ${portSummary}`}
+      </div>
+      {noBackends && !isExternalName && (
+        <div className="mt-0.5 text-[10px] text-warning">no pod backends</div>
+      )}
+    </button>
+  );
+}
+
 const NODE_TYPES = {
   workload: WorkloadCard,
   ingress: IngressCard,
   k8sNode: NodeCard,
+  service: ServiceCard,
 };
 
 // ── Build nodes + edges ─────────────────────────────────────────────────────
@@ -186,7 +223,7 @@ function buildGraph(
   selected: string | null,
   setSelected: (k: string | null) => void,
 ): { nodes: Node[]; edges: Edge[] } {
-  const ingressMatches = matchIngressToWorkloads(topo.ingresses, topo.workloads);
+  const ingressToService = matchIngressesToServices(topo.ingresses, topo.services);
 
   const nodes: Node[] = [];
   const edges: Edge[] = [];
@@ -198,6 +235,22 @@ function buildGraph(
       position: { x: COL_X.ingress, y: Y_TOP + i * Y_STEP },
       data: { ingress: ing },
       sourcePosition: Position.Right,
+    });
+  });
+
+  topo.services.forEach((s, i) => {
+    const key = serviceKeyOf(s);
+    nodes.push({
+      id: key,
+      type: 'service',
+      position: { x: COL_X.service, y: Y_TOP + i * Y_STEP },
+      data: {
+        service: s,
+        onClick: () => setSelected(selected === key ? null : key),
+        active: selected === key,
+      },
+      sourcePosition: Position.Right,
+      targetPosition: Position.Left,
     });
   });
 
@@ -227,15 +280,29 @@ function buildGraph(
     });
   });
 
-  // Ingress → Workload edges (heuristic).
-  for (const [ingId, workloadKeys] of ingressMatches) {
-    for (const wlKey of workloadKeys) {
+  // Ingress → Service edges (real, by serviceName match).
+  for (const [ingId, svcKeys] of ingressToService) {
+    for (const svcKey of svcKeys) {
       edges.push({
-        id: `e:ing-${ingId}->${wlKey}`,
+        id: `e:ing-${ingId}->${svcKey}`,
         source: ingressKeyOf({ id: ingId }),
-        target: wlKey,
+        target: svcKey,
         animated: true,
         style: { stroke: 'var(--color-info)', strokeWidth: 1.5 },
+      });
+    }
+  }
+
+  // Service → Workload edges (real, via selector ⊆ pod_labels — computed
+  // server-side and surfaced as service.workload_keys).
+  for (const s of topo.services) {
+    const svcKey = serviceKeyOf(s);
+    for (const wlKey of s.workload_keys) {
+      edges.push({
+        id: `e:${svcKey}->${wlKey}`,
+        source: svcKey,
+        target: wlKey,
+        style: { stroke: 'var(--color-purple, #a855f7)', strokeWidth: 1.5 },
       });
     }
   }
@@ -266,29 +333,36 @@ function buildGraph(
 
 function SidePanel({
   workload,
+  service,
   topo,
   onClose,
 }: {
   workload: TopologyWorkload | null;
+  service: TopologyService | null;
   topo: NamespaceTopology;
   onClose: () => void;
 }) {
   const navigate = useNavigate();
-  if (!workload) {
+  if (!workload && !service) {
     return (
       <Card title="Namespace summary">
         <ul className="space-y-1 text-sm">
           <li><span className="text-muted">Workloads:</span> {topo.workloads.length}</li>
           <li><span className="text-muted">Pods:</span> {topo.workloads.reduce((s, w) => s + w.total_pods, 0)}</li>
+          <li><span className="text-muted">Services:</span> {topo.services.length}</li>
           <li><span className="text-muted">Ingresses:</span> {topo.ingresses.length}</li>
           <li><span className="text-muted">PVCs:</span> {topo.pvcs.length}</li>
           <li><span className="text-muted">Nodes hosting pods:</span> {topo.nodes.length}</li>
         </ul>
         <p className="mt-3 text-[11px] text-muted">
-          Click a workload to inspect its pods.
+          Click a workload or service to inspect it.
         </p>
       </Card>
     );
+  }
+
+  if (service) {
+    return <ServiceDetail service={service} topo={topo} onClose={onClose} />;
   }
 
   return (
@@ -296,9 +370,9 @@ function SidePanel({
       title={
         <span className="flex items-center gap-2">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-            {workload.kind ?? 'Standalone pod'}
+            {workload!.kind ?? 'Standalone pod'}
           </span>
-          <span className="font-mono">{workload.name}</span>
+          <span className="font-mono">{workload!.name}</span>
         </span>
       }
       actions={
@@ -308,8 +382,70 @@ function SidePanel({
       }
     >
       <ul className="space-y-2 text-sm">
-        {workload.pods.map(pod => <PodRow key={pod.pod_uid} pod={pod} navigate={navigate} />)}
+        {workload!.pods.map(pod => <PodRow key={pod.pod_uid} pod={pod} navigate={navigate} />)}
       </ul>
+    </Card>
+  );
+}
+
+function ServiceDetail({ service: s, topo, onClose }: {
+  service: TopologyService;
+  topo: NamespaceTopology;
+  onClose: () => void;
+}) {
+  const matchedWorkloads = topo.workloads.filter(wl => s.workload_keys.includes(workloadKeyOf(wl)));
+  return (
+    <Card
+      title={
+        <span className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+            Service · {s.type}
+          </span>
+          <span className="font-mono">{s.name}</span>
+        </span>
+      }
+      actions={
+        <button onClick={onClose} className="text-xs text-muted hover:text-fg" title="Close">
+          ✕
+        </button>
+      }
+    >
+      <ul className="space-y-1 text-sm">
+        {s.cluster_ip && (
+          <li><span className="text-muted">Cluster IP:</span> <span className="font-mono">{s.cluster_ip}</span></li>
+        )}
+        {s.external_name && (
+          <li><span className="text-muted">External name:</span> <span className="font-mono">{s.external_name}</span></li>
+        )}
+        {s.ports.length > 0 && (
+          <li>
+            <span className="text-muted">Ports:</span>{' '}
+            <span className="font-mono text-xs">
+              {s.ports.map(p => `${p.protocol ?? 'TCP'} ${p.port}${p.target_port != null ? `→${p.target_port}` : ''}${p.node_port != null ? ` (nodePort ${p.node_port})` : ''}`).join(', ')}
+            </span>
+          </li>
+        )}
+      </ul>
+      <h4 className="mt-3 text-[10px] font-semibold uppercase tracking-wider text-muted">Backed by</h4>
+      {matchedWorkloads.length === 0 ? (
+        <p className="mt-1 text-xs text-warning">
+          {s.is_external
+            ? 'No selector — endpoints must be configured manually or this is an ExternalName.'
+            : 'Selector matches no running pod in this namespace.'}
+        </p>
+      ) : (
+        <ul className="mt-1 space-y-1 text-sm">
+          {matchedWorkloads.map(wl => (
+            <li key={workloadKeyOf(wl)} className="flex items-center justify-between gap-2 rounded border border-border bg-bg-secondary/40 px-2 py-1">
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted">{wl.kind ?? 'Pod'}</span>
+                <span className="truncate font-mono">{wl.name}</span>
+              </span>
+              <span className="text-[11px] text-muted">{wl.total_pods} pod{wl.total_pods === 1 ? '' : 's'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }
@@ -375,11 +511,15 @@ export function TopologyPage() {
     if (!data || !selected) return null;
     return data.workloads.find(w => workloadKeyOf(w) === selected) ?? null;
   }, [data, selected]);
+  const selectedService = useMemo(() => {
+    if (!data || !selected) return null;
+    return data.services.find(s => serviceKeyOf(s) === selected) ?? null;
+  }, [data, selected]);
 
   if (isLoading) return <LoadingState />;
   if (!data) return <EmptyState message="No topology data" />;
 
-  const isEmpty = data.workloads.length === 0 && data.ingresses.length === 0;
+  const isEmpty = data.workloads.length === 0 && data.ingresses.length === 0 && data.services.length === 0;
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -422,7 +562,7 @@ export function TopologyPage() {
             </ReactFlow>
           </div>
           <div className="space-y-4">
-            <SidePanel workload={selectedWorkload} topo={data} onClose={() => setSelected(null)} />
+            <SidePanel workload={selectedWorkload} service={selectedService} topo={data} onClose={() => setSelected(null)} />
             {data.pvcs.length > 0 && (
               <Card title={<>PVCs <span className="ml-1 text-xs font-normal text-muted">({data.pvcs.length})</span></>}>
                 <ul className="space-y-1.5 text-sm">
