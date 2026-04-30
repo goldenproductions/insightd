@@ -841,14 +841,14 @@ function AlertRow({ alert, hostId }: { alert: TopologyAlert; hostId: string | nu
 
 function FindingRow({ finding, hostId }: { finding: TopologyFinding; hostId: string | null }) {
   const tone = ALERT_TONE[finding.severity] ?? ALERT_TONE.info;
-  const href = hostId
+  // Workload-scoped findings (container_name='') aren't tied to a specific
+  // pod — render as a non-link card. Container-scoped findings (most existing
+  // ones) link to the container detail page.
+  const href = hostId && finding.container_name
     ? `/hosts/${encodeURIComponent(hostId)}/containers/${encodeURIComponent(finding.container_name)}`
-    : '#';
-  return (
-    <Link
-      to={href}
-      className="block rounded border border-border bg-bg-secondary/40 p-1.5 text-xs hover:border-info/40 hover:bg-info/5"
-    >
+    : null;
+  const body = (
+    <>
       <div className="flex items-center gap-2">
         <span className={`shrink-0 rounded border px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider ${tone}`}>
           {finding.severity}
@@ -860,7 +860,22 @@ function FindingRow({ finding, hostId }: { finding: TopologyFinding; hostId: str
           → {finding.suggested_action}
         </div>
       )}
-    </Link>
+    </>
+  );
+  if (href) {
+    return (
+      <Link
+        to={href}
+        className="block rounded border border-border bg-bg-secondary/40 p-1.5 text-xs hover:border-info/40 hover:bg-info/5"
+      >
+        {body}
+      </Link>
+    );
+  }
+  return (
+    <div className="block rounded border border-border bg-bg-secondary/40 p-1.5 text-xs">
+      {body}
+    </div>
   );
 }
 

@@ -578,11 +578,16 @@ export class KubernetesRuntime implements ContainerRuntime {
   // Previous cadvisor CPU counters for delta calculation
   private prevCpuUsage = new Map<string, { value: number; ts: number }>();
 
-  // Per-cycle cache of pod resource limits, keyed by container id (pod_uid/
-  // container_name format — see listContainers). Populated in listContainers
-  // because that's where we have pod.spec; consumed in collectResources to
-  // attach to ContainerWithResources rows.
-  private lastLimits = new Map<string, { cpuLimitCores: number | null; memoryLimitMb: number | null }>();
+  // Per-cycle cache of pod resource limits + requests, keyed by container id
+  // (pod_uid/container_name format — see listContainers). Populated in
+  // listContainers because that's where we have pod.spec; consumed in
+  // collectResources to attach to ContainerWithResources rows.
+  private lastLimits = new Map<string, {
+    cpuLimitCores: number | null;
+    memoryLimitMb: number | null;
+    cpuRequestCores: number | null;
+    memoryRequestMb: number | null;
+  }>();
 
   // Cached node core count for converting node-normalized cpuPercent back
   // into cores for the cpuLimitPercent math. Populated by getHostMetrics
@@ -768,7 +773,14 @@ export class KubernetesRuntime implements ContainerRuntime {
         const memoryLimitMb = memLimitBytes != null
           ? Math.round((memLimitBytes / 1024 / 1024) * 100) / 100
           : null;
-        this.lastLimits.set(id, { cpuLimitCores, memoryLimitMb });
+        const cpuRequestStr = specContainer?.resources?.requests?.cpu;
+        const memRequestStr = specContainer?.resources?.requests?.memory;
+        const cpuRequestCores = parseCpuQuantity(cpuRequestStr);
+        const memRequestBytes = parseQuantity(memRequestStr);
+        const memoryRequestMb = memRequestBytes != null
+          ? Math.round((memRequestBytes / 1024 / 1024) * 100) / 100
+          : null;
+        this.lastLimits.set(id, { cpuLimitCores, memoryLimitMb, cpuRequestCores, memoryRequestMb });
       }
     }
 
@@ -886,6 +898,8 @@ export class KubernetesRuntime implements ContainerRuntime {
       if (!lim) continue;
       c.cpuLimitCores = lim.cpuLimitCores;
       c.memoryLimitMb = lim.memoryLimitMb;
+      c.cpuRequestCores = lim.cpuRequestCores;
+      c.memoryRequestMb = lim.memoryRequestMb;
       if (lim.cpuLimitCores && lim.cpuLimitCores > 0 && c.cpuPercent != null && this.nodeCoreCount > 0) {
         const coresUsed = (c.cpuPercent / 100) * this.nodeCoreCount;
         c.cpuLimitPercent = Math.round((coresUsed / lim.cpuLimitCores) * 100 * 100) / 100;

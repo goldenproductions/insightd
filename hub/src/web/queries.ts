@@ -2552,6 +2552,47 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
         f.severity === 'warning'  ? 'warning' : 'info';
       wl.severity = mergeSeverity(wl.severity, insightLevel);
     }
+
+    // Workload-scoped insights (entity_type='workload') — currently used by
+    // the right-sizing detector. entity_id format: cluster_id/kind/ns/name.
+    // Same live-only caveat as container insights (the table is rebuilt every
+    // detector cycle, no history).
+    if (!isTimeTraveled) {
+      const workloadInsightRows = db.prepare(`
+        SELECT entity_id, category, severity, title, message, suggested_action, confidence
+        FROM insights
+        WHERE entity_type = 'workload' AND entity_id LIKE ?
+      `).all(`${clusterId}/%/${namespace}/%`) as Array<{
+        entity_id: string; category: string; severity: string;
+        title: string; message: string;
+        suggested_action: string | null; confidence: string | null;
+      }>;
+
+      for (const f of workloadInsightRows) {
+        // entity_id = "cluster_id/kind/namespace/name" — match second-to-last
+        // segment exactly to namespace (LIKE filter is necessary but loose).
+        const parts = f.entity_id.split('/');
+        if (parts.length !== 4 || parts[0] !== clusterId || parts[2] !== namespace) continue;
+        const [, kind, , name] = parts;
+        const wlKey = `wl:${kind}:${name}`;
+        const wl = workloadMap.get(wlKey);
+        if (!wl) continue;
+        wl.findings.push({
+          // No specific container — workload-level recommendation applies to all replicas.
+          container_name: '',
+          category: f.category,
+          severity: f.severity,
+          title: f.title,
+          message: f.message,
+          suggested_action: f.suggested_action,
+          confidence: f.confidence,
+        });
+        const insightLevel: 'critical' | 'warning' | 'info' =
+          f.severity === 'critical' ? 'critical' :
+          f.severity === 'warning'  ? 'warning' : 'info';
+        wl.severity = mergeSeverity(wl.severity, insightLevel);
+      }
+    }
   }
 
   // ── RCA neighbor edges within this namespace ────────────────────────────

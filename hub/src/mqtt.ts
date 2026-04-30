@@ -61,6 +61,8 @@ interface CollectionPayload {
     cpu_limit_cores?: number | null;
     cpu_limit_percent?: number | null;
     memory_limit_mb?: number | null;
+    cpu_request_cores?: number | null;
+    memory_request_mb?: number | null;
     last_oom_killed_at?: string | null;
     workload_kind?: string | null;
     pod_ip?: string | null;
@@ -322,6 +324,8 @@ export function payloadContainerToSnapshot(c: NonNullable<CollectionPayload['con
     cpuLimitCores: c.cpu_limit_cores ?? null,
     cpuLimitPercent: c.cpu_limit_percent ?? null,
     memoryLimitMb: c.memory_limit_mb ?? null,
+    cpuRequestCores: c.cpu_request_cores ?? null,
+    memoryRequestMb: c.memory_request_mb ?? null,
     lastOomKilledAt: c.last_oom_killed_at ?? null,
     workloadKind: c.workload_kind ?? null,
     podIp: c.pod_ip ?? null,

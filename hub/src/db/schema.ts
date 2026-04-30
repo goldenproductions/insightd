@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 45;
+const SCHEMA_VERSION = 46;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -42,6 +42,10 @@ function bootstrap(db: Database.Database): void {
       cpu_limit_cores REAL,
       cpu_limit_percent REAL,
       memory_limit_mb REAL,
+      -- v46: pod spec resource requests, mirror of limits. Drives the
+      -- right-sizing insight detector (over/under-provisioning vs P95 actual).
+      cpu_request_cores REAL,
+      memory_request_mb REAL,
       last_oom_killed_at TEXT,
       -- v42: k8s pod-level identity + status. Duplicated across each
       -- container in the pod (no separate pods table). All nullable —
@@ -1131,6 +1135,13 @@ function migrate(db: Database.Database, fromVersion: number): void {
       CREATE INDEX IF NOT EXISTS idx_workload_rollouts_cluster_first
         ON workload_rollouts (cluster_id, first_seen_at);
     `);
+  }
+  if (fromVersion < 46) {
+    // Pod spec resource requests, alongside the existing limits. Drives the
+    // right-sizing insight detector — compares P95 actual usage from
+    // baselines against requests/limits to flag over/under-provisioning.
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN cpu_request_cores REAL'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN memory_request_mb REAL'); } catch { /* already exists */ }
   }
 }
 

@@ -25,6 +25,7 @@ const CATEGORY_LABELS: Record<string, string> = {
   availability: 'Availability',
   prediction: 'Prediction',
   health: 'Health Check',
+  right_sizing: 'Right-sizing',
 };
 
 const CATEGORY_ICONS: Record<string, string> = {
@@ -33,6 +34,7 @@ const CATEGORY_ICONS: Record<string, string> = {
   availability: '\u23f0',
   prediction: '\ud83d\udd2e',
   health: '\ud83e\ude7a',
+  right_sizing: '\ud83d\udcd0',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {

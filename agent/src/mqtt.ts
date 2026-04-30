@@ -34,6 +34,8 @@ interface CollectionData {
     cpuLimitCores?: number | null;
     cpuLimitPercent?: number | null;
     memoryLimitMb?: number | null;
+    cpuRequestCores?: number | null;
+    memoryRequestMb?: number | null;
     lastOomKilledAt?: string | null;
     workloadKind?: string | null;
     podIp?: string | null;
@@ -311,6 +313,8 @@ export function containerInfoToPayload(c: CollectionData['containers'][number]):
     cpu_limit_cores: c.cpuLimitCores ?? null,
     cpu_limit_percent: c.cpuLimitPercent ?? null,
     memory_limit_mb: c.memoryLimitMb ?? null,
+    cpu_request_cores: c.cpuRequestCores ?? null,
+    memory_request_mb: c.memoryRequestMb ?? null,
     last_oom_killed_at: c.lastOomKilledAt ?? null,
     workload_kind: c.workloadKind ?? null,
     pod_ip: c.podIp ?? null,
