@@ -8,10 +8,6 @@ function getColumns(db: any, table: string): string[] {
 }
 
 describe('schema v41', () => {
-  it('reports version 41', () => {
-    assert.equal(SCHEMA_VERSION, 41);
-  });
-
   it('fresh bootstrap creates pending_pods', () => {
     const db = new Database(':memory:');
     bootstrap(db);

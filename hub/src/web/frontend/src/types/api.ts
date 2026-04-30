@@ -287,10 +287,23 @@ export interface ContainerSnapshot {
   // only. Both null when the runtime didn't report them.
   size_rootfs_bytes: number | null;
   size_rw_bytes: number | null;
+  // v42 — k8s pod-level identity + status. All null for Docker.
+  workload_kind: string | null;
+  pod_ip: string | null;
+  host_ip: string | null;
+  /** JSON-stringified PodCondition[] from the agent. Frontend parses on render. */
+  pod_conditions: string | null;
   collected_at: string;
   // 1 when the owning host hasn't reported within the offline threshold —
   // the snapshot is last-known state, not current truth.
   is_stale: number;
+}
+
+export interface PodCondition {
+  type: string;
+  status: 'True' | 'False' | 'Unknown' | string;
+  reason?: string | null;
+  message?: string | null;
 }
 
 export interface ContainerHistory {

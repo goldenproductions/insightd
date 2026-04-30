@@ -35,6 +35,10 @@ interface CollectionData {
     cpuLimitPercent?: number | null;
     memoryLimitMb?: number | null;
     lastOomKilledAt?: string | null;
+    workloadKind?: string | null;
+    podIp?: string | null;
+    hostIp?: string | null;
+    podConditions?: Array<{ type: string; status: string; reason?: string | null; message?: string | null }> | null;
   }>;
   disk: Array<{
     mountPoint: string;
@@ -308,6 +312,10 @@ export function containerInfoToPayload(c: CollectionData['containers'][number]):
     cpu_limit_percent: c.cpuLimitPercent ?? null,
     memory_limit_mb: c.memoryLimitMb ?? null,
     last_oom_killed_at: c.lastOomKilledAt ?? null,
+    workload_kind: c.workloadKind ?? null,
+    pod_ip: c.podIp ?? null,
+    host_ip: c.hostIp ?? null,
+    pod_conditions: c.podConditions ? JSON.stringify(c.podConditions) : null,
   };
 }
 
