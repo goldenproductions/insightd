@@ -1009,6 +1009,21 @@ function getContainerId(db: Database.Database, hostId: string, containerName: st
   return row?.container_id || null;
 }
 
+/**
+ * Latest image string for a container, sourced from the most recent
+ * update_checks row. Returns null if the agent hasn't reported one yet
+ * (some k8s containers — e.g. distroless or images without registry tags
+ * — never produce an update_checks row).
+ */
+function getContainerImage(db: Database.Database, hostId: string, containerName: string): string | null {
+  const row = db.prepare(`
+    SELECT image FROM update_checks
+    WHERE host_id = ? AND container_name = ?
+    ORDER BY checked_at DESC LIMIT 1
+  `).get(hostId, containerName) as { image?: string } | undefined;
+  return row?.image ?? null;
+}
+
 function getHostRuntimeType(db: Database.Database, hostId: string): string {
   const row = db.prepare('SELECT runtime_type FROM hosts WHERE host_id = ?')
     .get(hostId) as { runtime_type?: string } | undefined;
@@ -1880,6 +1895,57 @@ function getClusterIdForHost(db: Database.Database, hostId: string): string | nu
     : `cluster-${hostId}`;
 }
 
+/**
+ * K8s events scoped to a single pod / its parent workload. Pulled from the
+ * already-ingested cluster-wide `k8s_events` table.
+ *
+ * The container_name format for k8s entities is "namespace/stable/container",
+ * where `stable` is the workload identity resolved by the agent (Deployment
+ * name for RS-owned pods, pod name for StatefulSet, controller name for
+ * DaemonSet/Job). We match three event scopes:
+ *
+ *   1. Pod-level: involved_kind='Pod' AND involved_name LIKE 'stable%' —
+ *      the trailing % catches both the deterministic StatefulSet names
+ *      (exact match) and the random-suffix names of Deployment-owned pods.
+ *   2. Direct workload: involved_kind IN (Deployment/StatefulSet/DaemonSet/
+ *      Job/CronJob) AND involved_name = 'stable'.
+ *   3. ReplicaSet: involved_kind='ReplicaSet' AND involved_name LIKE 'stable-%'
+ *      — Deployment-owned RSes are named `<deployment>-<hash>`, so this
+ *      catches them without bleeding across deployments.
+ *
+ * Returns [] for non-k8s containers and for cases where parsing fails.
+ */
+function getPodEvents(db: Database.Database, hostId: string, containerName: string, limit: number = 20): K8sEventRow[] {
+  const clusterId = getClusterIdForHost(db, hostId);
+  if (!clusterId) return [];
+
+  const firstSlash = containerName.indexOf('/');
+  if (firstSlash <= 0) return [];
+  const namespace = containerName.slice(0, firstSlash);
+  const rest = containerName.slice(firstSlash + 1);
+  const secondSlash = rest.indexOf('/');
+  // No second slash → container_name is just "namespace/pod" with no
+  // container component. Still usable: stable = pod name.
+  const stable = secondSlash > 0 ? rest.slice(0, secondSlash) : rest;
+  if (!namespace || !stable) return [];
+
+  const lim = Math.max(1, Math.min(100, limit));
+  return db.prepare(`
+    SELECT event_uid, cluster_id, namespace, involved_kind, involved_name,
+           reason, message, type, count, first_seen_at, last_seen_at
+    FROM k8s_events
+    WHERE cluster_id = ? AND namespace = ?
+      AND (
+        (involved_kind = 'Pod'        AND involved_name LIKE ?)
+        OR (involved_kind IN ('Deployment','StatefulSet','DaemonSet','Job','CronJob')
+            AND involved_name = ?)
+        OR (involved_kind = 'ReplicaSet' AND involved_name LIKE ?)
+      )
+    ORDER BY last_seen_at DESC
+    LIMIT ${lim}
+  `).all(clusterId, namespace, `${stable}%`, stable, `${stable}-%`) as K8sEventRow[];
+}
+
 interface K8sEventFilters {
   limit?: number;
   reason?: string;
@@ -2054,4 +2120,4 @@ function getRcaNeighbors(
   return out;
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors };

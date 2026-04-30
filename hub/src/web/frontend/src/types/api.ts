@@ -438,6 +438,9 @@ export interface ContainerDetail extends ContainerSnapshot {
   host_id: string;
   /** Runtime of the host this container lives on — drives UI gating of Docker-only actions. */
   runtime_type?: 'docker' | 'kubernetes' | string;
+  /** Latest image string from update_checks; null when the agent hasn't
+   *  reported one yet. */
+  image: string | null;
   health_diagnosis: string | null;
   findings: Finding[];
   history: ContainerHistory[];
@@ -449,6 +452,26 @@ export interface ContainerDetail extends ContainerSnapshot {
   // NOTE: per-finding PPR neighbors live on `Finding.neighbors` (camelCase).
   // The top-level `neighbors` field used to hold raw rca_edges rows, which
   // caused a shape clash — removed in fix/neighbor-type-mismatch.
+}
+
+export interface PodEvent {
+  event_uid: string;
+  cluster_id: string;
+  namespace: string | null;
+  involved_kind: string;
+  involved_name: string;
+  reason: string;
+  message: string | null;
+  type: string;
+  count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface PodEventsResponse {
+  host_id: string;
+  container_name: string;
+  events: PodEvent[];
 }
 
 export interface HostDetail extends Host {
