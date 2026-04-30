@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import ReactFlow, {
   Background,
@@ -371,11 +371,134 @@ const NODE_TYPES = {
 
 // ── Build nodes + edges ─────────────────────────────────────────────────────
 
+interface FilterState {
+  /** Lowercase search query — empty string = no filter. */
+  q: string;
+  /** Hide orphan services (no backends) and PVCs (no workload mounts). */
+  hideOrphans: boolean;
+}
+
+/** Compute which node ids should be visible / dimmed given the active filters
+ *  and selection. A node is *visible* when it survives hide-orphans; it's
+ *  *highlighted* when no filter is active OR it matches the search query OR
+ *  it's the selected node OR it's a 1-hop neighbor of the selected node. */
+function computeVisibility(
+  topo: NamespaceTopology,
+  filter: FilterState,
+  selected: string | null,
+): { hidden: Set<string>; dimmed: Set<string> } {
+  const hidden = new Set<string>();
+  const dimmed = new Set<string>();
+
+  // Hide-orphans: services with no backends (and not ExternalName), PVCs that
+  // no workload mounts, ingresses that don't resolve to any service in this
+  // namespace. Workloads are kept even when they have 0 pods because that's
+  // a valid topology state.
+  if (filter.hideOrphans) {
+    const pvcsWithMount = new Set<string>();
+    for (const wl of topo.workloads) {
+      for (const vm of wl.volume_mounts) {
+        if (vm.type === 'pvc' && vm.target_name) pvcsWithMount.add(vm.target_name);
+      }
+    }
+    for (const s of topo.services) {
+      if (s.is_external) continue;
+      if (s.workload_keys.length === 0) hidden.add(serviceKeyOf(s));
+    }
+    for (const p of topo.pvcs) {
+      if (!pvcsWithMount.has(p.name)) hidden.add(pvcKeyOf(p));
+    }
+    const serviceNames = new Set(topo.services.map(s => s.name));
+    for (const ing of topo.ingresses) {
+      const anyHit = ing.service_targets.some(t => serviceNames.has(t));
+      if (!anyHit) hidden.add(ingressKeyOf(ing));
+    }
+  }
+
+  const allKeys = new Set<string>([
+    ...topo.workloads.map(workloadKeyOf),
+    ...topo.services.map(serviceKeyOf),
+    ...topo.ingresses.map(ingressKeyOf),
+    ...topo.pvcs.map(pvcKeyOf),
+    ...topo.nodes.map(nodeKeyOf),
+  ]);
+
+  // Search match: any node whose displayed name (workload.name, service.name,
+  // ingress.name, pvc.name, node.host_id) contains the lowercased query.
+  const q = filter.q.trim().toLowerCase();
+  const searchMatches = new Set<string>();
+  if (q) {
+    for (const w of topo.workloads) if (w.name.toLowerCase().includes(q)) searchMatches.add(workloadKeyOf(w));
+    for (const s of topo.services) if (s.name.toLowerCase().includes(q)) searchMatches.add(serviceKeyOf(s));
+    for (const i of topo.ingresses) if (i.name.toLowerCase().includes(q)) searchMatches.add(ingressKeyOf(i));
+    for (const p of topo.pvcs) if (p.name.toLowerCase().includes(q)) searchMatches.add(pvcKeyOf(p));
+    for (const n of topo.nodes) if (n.host_id.toLowerCase().includes(q)) searchMatches.add(nodeKeyOf(n));
+  }
+
+  // Selection focus: when a node is selected, dim everything not 1-hop
+  // connected to it. We compute the connectivity from the same edge sources
+  // the graph uses (Ingress→Service, Service→Workload, Workload→Node,
+  // Workload→PVC, RCA edges).
+  const focused = new Set<string>();
+  if (selected) {
+    focused.add(selected);
+    for (const ing of topo.ingresses) {
+      for (const target of ing.service_targets) {
+        const svc = topo.services.find(s => s.name === target);
+        if (!svc) continue;
+        const ingKey = ingressKeyOf(ing);
+        const svcKey = serviceKeyOf(svc);
+        if (selected === ingKey) focused.add(svcKey);
+        if (selected === svcKey) focused.add(ingKey);
+      }
+    }
+    for (const s of topo.services) {
+      const svcKey = serviceKeyOf(s);
+      for (const wlKey of s.workload_keys) {
+        if (selected === svcKey) focused.add(wlKey);
+        if (selected === wlKey) focused.add(svcKey);
+      }
+    }
+    for (const w of topo.workloads) {
+      const wlKey = workloadKeyOf(w);
+      for (const hostId of Object.keys(w.pods_by_node)) {
+        const nKey = nodeKeyOf({ host_id: hostId });
+        if (selected === wlKey) focused.add(nKey);
+        if (selected === nKey) focused.add(wlKey);
+      }
+      for (const vm of w.volume_mounts) {
+        if (vm.type !== 'pvc' || !vm.target_name) continue;
+        const pvcKey = pvcKeyOf({ name: vm.target_name });
+        if (selected === wlKey) focused.add(pvcKey);
+        if (selected === pvcKey) focused.add(wlKey);
+      }
+    }
+    for (const e of topo.rca_edges) {
+      if (selected === e.from) focused.add(e.to);
+      if (selected === e.to) focused.add(e.from);
+    }
+  }
+
+  // A node is dimmed when filters are active and it doesn't match.
+  const filterActive = q.length > 0 || selected !== null;
+  if (filterActive) {
+    for (const k of allKeys) {
+      if (hidden.has(k)) continue;
+      const matchesSearch = !q || searchMatches.has(k);
+      const matchesFocus = !selected || focused.has(k);
+      if (!matchesSearch || !matchesFocus) dimmed.add(k);
+    }
+  }
+  return { hidden, dimmed };
+}
+
 function buildGraph(
   topo: NamespaceTopology,
   selected: string | null,
   setSelected: (k: string | null) => void,
+  filter: FilterState = { q: '', hideOrphans: false },
 ): { nodes: Node[]; edges: Edge[] } {
+  const { hidden, dimmed } = computeVisibility(topo, filter, selected);
   const ingressToService = matchIngressesToServices(topo.ingresses, topo.services);
 
   const nodes: Node[] = [];
@@ -561,7 +684,22 @@ function buildGraph(
     }
   }
 
-  return { nodes, edges };
+  // Apply hide-orphans + dim filter post-build. Hide drops the node entirely
+  // and drops every edge that touches it; dim halves opacity on the node and
+  // its edges so the focused subgraph reads cleanly while the rest stays in
+  // sight as faint context.
+  const finalNodes = nodes
+    .filter(n => !hidden.has(n.id))
+    .map(n => dimmed.has(n.id)
+      ? { ...n, style: { ...(n.style ?? {}), opacity: 0.25 } }
+      : n);
+  const finalEdges = edges
+    .filter(e => !hidden.has(e.source) && !hidden.has(e.target))
+    .map(e => (dimmed.has(e.source) || dimmed.has(e.target))
+      ? { ...e, style: { ...(e.style ?? {}), opacity: 0.25 } }
+      : e);
+
+  return { nodes: finalNodes, edges: finalEdges };
 }
 
 // ── Side panel ──────────────────────────────────────────────────────────────
@@ -831,19 +969,37 @@ function PodRow({ pod, navigate }: { pod: TopologyPod; navigate: ReturnType<type
 export function TopologyPage() {
   const { clusterId, namespace } = useParams();
   const [selected, setSelected] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
+  // URL state — search, hide-orphans, time-travel.
+  const q = searchParams.get('q') ?? '';
+  const hideOrphans = searchParams.get('hide_orphans') === '1';
+  const at = searchParams.get('at') || null;
+
+  const updateParam = (key: string, value: string | null) => {
+    const next = new URLSearchParams(searchParams);
+    if (!value) next.delete(key);
+    else next.set(key, value);
+    setSearchParams(next, { replace: true });
+  };
+
+  // Refetch the topology when `at` changes — every URL state change creates
+  // a different cache key, which is what we want.
   const { data, isLoading } = useQuery({
-    queryKey: queryKeys.namespaceTopology(clusterId, namespace),
-    queryFn: () => api<NamespaceTopology>(
-      `/clusters/${encodeURIComponent(clusterId!)}/namespaces/${encodeURIComponent(namespace!)}/topology`,
-    ),
-    refetchInterval: 30_000,
+    queryKey: [...queryKeys.namespaceTopology(clusterId, namespace), at] as const,
+    queryFn: () => {
+      const path = `/clusters/${encodeURIComponent(clusterId!)}/namespaces/${encodeURIComponent(namespace!)}/topology`;
+      const qs = at ? `?at=${encodeURIComponent(at)}` : '';
+      return api<NamespaceTopology>(path + qs);
+    },
+    // Live mode polls; time-travel mode is a static snapshot.
+    refetchInterval: at ? false : 30_000,
   });
 
   const graph = useMemo(() => {
     if (!data) return { nodes: [], edges: [] };
-    return buildGraph(data, selected, setSelected);
-  }, [data, selected]);
+    return buildGraph(data, selected, setSelected, { q, hideOrphans });
+  }, [data, selected, q, hideOrphans]);
 
   const selectedWorkload = useMemo(() => {
     if (!data || !selected) return null;
@@ -876,10 +1032,21 @@ export function TopologyPage() {
         </span>
       </PageTitle>
 
+      {data.at && <TimeTraveledBanner at={data.at} onBackToLive={() => updateParam('at', null)} />}
+
       {isEmpty ? (
         <EmptyState message="No workloads or ingresses observed in this namespace." />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+          <div className="space-y-3">
+            <TopologyToolbar
+              q={q}
+              onSearch={(v) => updateParam('q', v || null)}
+              hideOrphans={hideOrphans}
+              onToggleHideOrphans={(v) => updateParam('hide_orphans', v ? '1' : null)}
+              at={at}
+              onSetAt={(v) => updateParam('at', v)}
+            />
           <div className="rounded-xl border border-border bg-surface" style={{ height: '70vh', minHeight: 480 }}>
             <ReactFlow
               nodes={graph.nodes}
@@ -898,6 +1065,7 @@ export function TopologyPage() {
               <Controls showInteractive={false} />
               <MiniMap pannable zoomable nodeStrokeWidth={2} />
             </ReactFlow>
+          </div>
           </div>
           <div className="space-y-4">
             <SidePanel workload={selectedWorkload} service={selectedService} topo={data} onClose={() => setSelected(null)} />
@@ -925,4 +1093,119 @@ function PvcRow({ pvc }: { pvc: TopologyPvc }) {
       <span className={`text-[11px] ${phaseTone}`}>{pvc.phase}</span>
     </li>
   );
+}
+
+// ── Toolbar (search, hide-orphans, time scrubber) ───────────────────────────
+
+interface TopologyToolbarProps {
+  q: string;
+  onSearch: (v: string) => void;
+  hideOrphans: boolean;
+  onToggleHideOrphans: (v: boolean) => void;
+  /** ISO timestamp, null when live. */
+  at: string | null;
+  /** Setter — pass an ISO string to time-travel, null to return to live. */
+  onSetAt: (v: string | null) => void;
+}
+
+function TopologyToolbar({ q, onSearch, hideOrphans, onToggleHideOrphans, at, onSetAt }: TopologyToolbarProps) {
+  const minutesAgo = (m: number): string =>
+    new Date(Date.now() - m * 60_000).toISOString();
+  const isLive = at === null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs">
+      <input
+        type="text"
+        placeholder="Filter nodes…"
+        value={q}
+        onChange={e => onSearch(e.target.value)}
+        className="w-48 rounded border border-border bg-bg-secondary/40 px-2 py-1 text-xs placeholder:text-muted focus:border-info focus:outline-none"
+        aria-label="Filter topology nodes by name"
+      />
+      <label className="flex cursor-pointer items-center gap-1.5">
+        <input
+          type="checkbox"
+          checked={hideOrphans}
+          onChange={e => onToggleHideOrphans(e.target.checked)}
+          className="h-3.5 w-3.5 cursor-pointer accent-info"
+        />
+        <span className="text-secondary">Hide orphans</span>
+      </label>
+
+      <div className="ml-auto flex items-center gap-1.5 border-l border-border pl-3">
+        <span className="text-[10px] uppercase tracking-wider text-muted">Time</span>
+        <button
+          type="button"
+          onClick={() => onSetAt(null)}
+          className={`rounded px-2 py-0.5 text-[11px] font-medium transition-colors ${
+            isLive
+              ? 'border border-success/40 bg-success/10 text-success'
+              : 'border border-border bg-bg-secondary/40 text-muted hover:text-fg'
+          }`}
+          title="Return to live data"
+        >
+          ● Live
+        </button>
+        {[
+          { label: '1h', m: 60 },
+          { label: '6h', m: 360 },
+          { label: '24h', m: 1440 },
+        ].map(({ label, m }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => onSetAt(minutesAgo(m))}
+            className="rounded border border-border bg-bg-secondary/40 px-2 py-0.5 text-[11px] text-muted hover:border-info/40 hover:text-fg"
+            title={`View namespace as it was ${label} ago`}
+          >
+            -{label}
+          </button>
+        ))}
+        <input
+          type="datetime-local"
+          // Bind the picker to the current `at` (if any), trimmed to local-input format.
+          value={at ? new Date(at).toISOString().slice(0, 16) : ''}
+          onChange={e => {
+            const v = e.target.value;
+            if (!v) { onSetAt(null); return; }
+            const ms = Date.parse(v);
+            if (Number.isFinite(ms)) onSetAt(new Date(ms).toISOString());
+          }}
+          className="rounded border border-border bg-bg-secondary/40 px-1.5 py-0.5 text-[11px] text-fg focus:border-info focus:outline-none"
+          aria-label="Custom timestamp"
+        />
+      </div>
+    </div>
+  );
+}
+
+function TimeTraveledBanner({ at, onBackToLive }: { at: string; onBackToLive: () => void }) {
+  const ago = relativeAgo(at);
+  return (
+    <div className="rounded-lg border border-info/40 bg-info/5 px-3 py-2 text-sm">
+      <span className="font-semibold text-info">⏱ Viewing snapshot</span>
+      <span className="ml-2 font-mono text-[11px] text-fg" title={at}>{at}</span>
+      {ago && <span className="ml-1 text-[11px] text-muted">({ago})</span>}
+      <span className="ml-3 text-[11px] text-muted">
+        RCA neighbor edges and diagnosis findings are live-only — hidden in time-traveled mode.
+      </span>
+      <button
+        type="button"
+        onClick={onBackToLive}
+        className="ml-3 rounded border border-info/40 bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info hover:bg-info/20"
+      >
+        ← Back to live
+      </button>
+    </div>
+  );
+}
+
+function relativeAgo(iso: string): string | null {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const sec = Math.round((Date.now() - ms) / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  if (sec < 3600) return `${Math.round(sec / 60)}m ago`;
+  if (sec < 86400) return `${Math.round(sec / 3600)}h ago`;
+  return `${Math.round(sec / 86400)}d ago`;
 }

@@ -998,7 +998,21 @@ function handleGetContainerBaselinesView(req: HandlerReq, res: ServerResponse, d
 function handleGetNamespaceTopology(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const clusterId = decodeURIComponent(params.clusterId);
   const namespace = decodeURIComponent(params.namespace);
-  return queries.getNamespaceTopology(db, clusterId, namespace, offlineThresholdMinutes());
+  // Optional ?at=ISO_TIMESTAMP — returns a historical view of the namespace.
+  // Reject malformed timestamps so we don't pass garbage to SQLite's
+  // datetime() comparisons (which would silently treat them as nulls).
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const atRaw = url.searchParams.get('at');
+  let at: string | null = null;
+  if (atRaw) {
+    const parsed = Date.parse(atRaw);
+    if (!Number.isFinite(parsed)) {
+      res.statusCode = 400;
+      return { error: 'Invalid `at` timestamp' };
+    }
+    at = new Date(parsed).toISOString();
+  }
+  return queries.getNamespaceTopology(db, clusterId, namespace, offlineThresholdMinutes(), at);
 }
 
 function handleGetClusterOverview(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {

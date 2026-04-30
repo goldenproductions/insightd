@@ -532,6 +532,8 @@ export interface NamespaceTopology {
   pvcs: TopologyPvc[];
   nodes: TopologyNode[];
   rca_edges: TopologyRcaEdge[];
+  /** ISO timestamp the response represents — null when live. */
+  at: string | null;
 }
 
 // Cluster overview — list of namespaces + cluster-level totals
