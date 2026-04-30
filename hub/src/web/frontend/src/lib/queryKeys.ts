@@ -23,6 +23,9 @@ export const queryKeys = {
   hostBaselines: (hostId?: string) => ['baselines', 'host', hostId] as const,
   containerBaselines: (hostId?: string, containerName?: string) => ['baselines', 'container', hostId, containerName] as const,
 
+  // RCA neighbors (Explore drawer on container detail)
+  containerRcaNeighbors: (hostId?: string, containerName?: string) => ['rca-neighbors', hostId, containerName] as const,
+
   // Alerts & Insights
   alerts: () => ['alerts'] as const,
   insights: () => ['insights'] as const,

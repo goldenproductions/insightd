@@ -979,6 +979,16 @@ function handleGetContainerBaselinesView(req: HandlerReq, res: ServerResponse, d
   };
 }
 
+function handleGetContainerRcaNeighbors(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+  const hostId = decodeURIComponent(params.hostId);
+  const containerName = decodeURIComponent(params.containerName);
+  return {
+    host_id: hostId,
+    container_name: containerName,
+    neighbors: queries.getRcaNeighbors(db, hostId, containerName, 10),
+  };
+}
+
 function handleGetAllHealthScores(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return insightQueries.getAllHealthScores(db);
 }
@@ -1480,7 +1490,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerLogs, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   if (!requireAuth(req)) { res.statusCode = 401; return { error: 'Unauthorized' }; }

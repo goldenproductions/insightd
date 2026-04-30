@@ -212,6 +212,38 @@ const ENTRIES: GlossaryEntry[] = [
       ),
     ),
   },
+  {
+    id: 'rca-neighbors',
+    title: 'RCA neighbors',
+    category: 'Detectors',
+    blurb: 'Containers correlated with this one — co-located, co-deployed, or moving together',
+    related: ['anomaly-detection', 'baselines'],
+    body: Group(
+      Para(
+        'When a container goes wrong, the answer is rarely just about that one container. RCA neighbors surface the ',
+        Strong('other entities the system thinks are related'), ', so when you start investigating one, you can see at a glance which neighbors are also unhealthy.',
+      ),
+      H('Edge types'),
+      List([
+        Group(Code('host'), ' — co-located on the same host. Cheap signal; weight 0.3.'),
+        Group(Code('compose'), ' — same docker-compose project label. Stronger: weight 0.6.'),
+        Group(Code('corr'), ' — CPU or memory correlation over the last 48h of hourly rollups (Pearson ≥ 0.4). Pruned to pairs that already share a structural edge, so two unrelated containers on different hosts won\'t correlate just because both spike at midnight.'),
+      ]),
+      H('Score'),
+      Para(
+        'A pair of containers can have multiple edge types — the score shown is the ',
+        Strong('strongest'), ' edge weight between them, and the chips list every type backing the pair.',
+      ),
+      H('Health dot'),
+      Para(
+        'Active alert beats everything else (red). Otherwise: yellow if the neighbor is unhealthy, blue if starting, green if healthy, gray if removed.',
+      ),
+      H('Where this comes from'),
+      Para(
+        'The graph is rebuilt every scheduler cycle from current container snapshots + the last 48h of rollups. It also feeds the diagnosis engine\'s personalized PageRank ranking, so the same neighbors that show up here are the ones the diagnoser considers when explaining "why".',
+      ),
+    ),
+  },
 ];
 
 export const GLOSSARY: Map<string, GlossaryEntry> = new Map(ENTRIES.map(e => [e.id, e]));

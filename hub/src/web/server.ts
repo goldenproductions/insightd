@@ -101,6 +101,7 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('GET', '/api/baselines/:entityType/:entityId', handlers.handleGetBaselines);
   router.add('GET', '/api/hosts/:hostId/baselines', handlers.handleGetHostBaselinesView);
   router.add('GET', '/api/hosts/:hostId/containers/:containerName/baselines', handlers.handleGetContainerBaselinesView);
+  router.add('GET', '/api/hosts/:hostId/containers/:containerName/rca-neighbors', handlers.handleGetContainerRcaNeighbors);
   router.add('GET', '/api/health-scores', handlers.handleGetAllHealthScores);
   router.add('GET', '/api/health-scores/:entityType/:entityId', handlers.handleGetHealthScore);
   router.add('GET', '/api/insights', handlers.handleGetInsights);

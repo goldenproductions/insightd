@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -25,6 +25,7 @@ import { ContainerHistoryTab } from './ContainerHistoryTab';
 import { FindingCard } from '@/components/FindingCard';
 import { AnomaliesList } from '@/components/AnomaliesList';
 import { BaselinesViewer } from '@/components/BaselinesViewer';
+import { RcaNeighborsList } from '@/components/RcaNeighborsList';
 import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { LogTemplatesList } from '@/components/LogTemplatesList';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
@@ -155,6 +156,12 @@ export function ContainerDetailPage() {
   const { data: baselines } = useQuery({
     queryKey: queryKeys.containerBaselines(hostId, containerName),
     queryFn: () => api<ContainerBaselinesResponse>(`/hosts/${hid}/containers/${cname}/baselines`).catch(() => ({ host_id: hostId!, container_name: containerName!, metrics: [], computed_at: null }) as ContainerBaselinesResponse),
+    refetchInterval: 5 * 60_000,
+  });
+
+  const { data: rcaNeighbors } = useQuery({
+    queryKey: queryKeys.containerRcaNeighbors(hostId, containerName),
+    queryFn: () => api<RcaNeighborsResponse>(`/hosts/${hid}/containers/${cname}/rca-neighbors`).catch(() => ({ host_id: hostId!, container_name: containerName!, neighbors: [] }) as RcaNeighborsResponse),
     refetchInterval: 5 * 60_000,
   });
 
@@ -460,9 +467,10 @@ export function ContainerDetailPage() {
 
       </section>
 
-      {((data.anomalies?.length ?? 0) > 0 || (data.logTemplates?.length ?? 0) > 0 || (baselines?.metrics?.length ?? 0) > 0) && (
-        <ExploreDrawer description="Baselines, historical anomalies, and mined log patterns for this container.">
+      {((data.anomalies?.length ?? 0) > 0 || (data.logTemplates?.length ?? 0) > 0 || (baselines?.metrics?.length ?? 0) > 0 || (rcaNeighbors?.neighbors?.length ?? 0) > 0) && (
+        <ExploreDrawer description="Baselines, RCA neighbors, historical anomalies, and mined log patterns for this container.">
           <BaselinesViewer data={baselines} />
+          <RcaNeighborsList data={rcaNeighbors} />
           <AnomaliesList anomalies={data.anomalies} scope="container" />
           <LogTemplatesList templates={data.logTemplates} />
         </ExploreDrawer>
