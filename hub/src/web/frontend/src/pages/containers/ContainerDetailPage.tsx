@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerSnapshot } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse, PodEventsResponse } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -13,7 +13,7 @@ import { LogViewer } from '@/components/LogViewer';
 import { UptimeTimeline } from '@/components/UptimeTimeline';
 import { Tabs } from '@/components/Tabs';
 import { fmtDurationMs, timeAgo } from '@/lib/formatters';
-import { sumPositiveRestartDeltas, deriveContainerDisplayStatus } from '@/lib/containers';
+import { sumPositiveRestartDeltas, deriveContainerDisplayStatus, getContainerDisplayName, getContainerNamespace } from '@/lib/containers';
 import { BackLink } from '@/components/BackLink';
 import { ActionResult } from '@/components/ActionResult';
 import { CardSkeleton } from '@/components/Skeleton';
@@ -24,7 +24,14 @@ import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { ContainerHistoryTab } from './ContainerHistoryTab';
 import { FindingCard } from '@/components/FindingCard';
 import { AnomaliesList } from '@/components/AnomaliesList';
+import { BaselinesViewer } from '@/components/BaselinesViewer';
+import { RcaNeighborsList } from '@/components/RcaNeighborsList';
+import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { LogTemplatesList } from '@/components/LogTemplatesList';
+import { K8sIdentityStrip } from '@/components/K8sIdentityStrip';
+import { PodEventsCard } from '@/components/PodEventsCard';
+import { PodConditionsBadges } from '@/components/PodConditionsBadges';
+import { TopologyLinkCard } from '@/components/TopologyLinkCard';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
 
@@ -149,6 +156,25 @@ export function ContainerDetailPage() {
     queryKey: queryKeys.hostContainers(hostId),
     queryFn: () => api<ContainerSnapshot[]>(`/hosts/${hid}/containers`),
     staleTime: 30_000,
+  });
+  const { data: baselines } = useQuery({
+    queryKey: queryKeys.containerBaselines(hostId, containerName),
+    queryFn: () => api<ContainerBaselinesResponse>(`/hosts/${hid}/containers/${cname}/baselines`).catch(() => ({ host_id: hostId!, container_name: containerName!, metrics: [], computed_at: null }) as ContainerBaselinesResponse),
+    refetchInterval: 5 * 60_000,
+  });
+
+  const { data: rcaNeighbors } = useQuery({
+    queryKey: queryKeys.containerRcaNeighbors(hostId, containerName),
+    queryFn: () => api<RcaNeighborsResponse>(`/hosts/${hid}/containers/${cname}/rca-neighbors`).catch(() => ({ host_id: hostId!, container_name: containerName!, neighbors: [] }) as RcaNeighborsResponse),
+    refetchInterval: 5 * 60_000,
+  });
+
+  // Pod-scoped k8s events. Fetched unconditionally — the endpoint returns
+  // an empty list for non-k8s containers, so the gating happens at render.
+  const { data: podEvents } = useQuery({
+    queryKey: queryKeys.containerPodEvents(hostId, containerName),
+    queryFn: () => api<PodEventsResponse>(`/hosts/${hid}/containers/${cname}/pod-events`).catch(() => ({ host_id: hostId!, container_name: containerName!, events: [] }) as PodEventsResponse),
+    refetchInterval: 60_000,
   });
 
   // Prev/next sibling navigation. Server-orders alphabetically by container_name,
@@ -338,7 +364,9 @@ export function ContainerDetailPage() {
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <StatusDot status={data.is_stale ? 'stale' : deriveContainerDisplayStatus(data.status, data.exit_code).dot} size="lg" />
-            <h1 className="truncate text-xl font-bold text-fg">{data.container_name}</h1>
+            <h1 className="truncate text-xl font-bold text-fg" title={data.container_name}>
+              {isKubernetes ? getContainerDisplayName(data.container_name).split('/').pop() : data.container_name}
+            </h1>
           </div>
           {isAuthenticated && !data.is_stale && (
             <div className="flex shrink-0 items-center gap-2" title={isKubernetes ? k8sReadOnlyTitle : undefined}>
@@ -366,6 +394,18 @@ export function ContainerDetailPage() {
           )}
         </div>
 
+        {/* K8s identity row — renders nothing for Docker containers */}
+        {isKubernetes && (
+          <K8sIdentityStrip
+            containerName={data.container_name}
+            hostId={data.host_id}
+            image={data.image ?? null}
+            labelsJson={data.labels ?? null}
+            workloadKind={data.workload_kind}
+            podIp={data.pod_ip}
+          />
+        )}
+
         {/* Status pills + compact stats — flat row, no card wrapper */}
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -382,6 +422,9 @@ export function ContainerDetailPage() {
                 <Badge text={oomChip} color="red" />
               </span>
             )}
+            {/* k8s pod conditions — only renders pills for non-True conditions,
+                so a fully healthy pod shows nothing here. */}
+            {isKubernetes && <PodConditionsBadges conditionsJson={data.pod_conditions} />}
           </div>
           <span
             className="text-sm"
@@ -451,12 +494,32 @@ export function ContainerDetailPage() {
             without competing with the calm-by-default state. */}
         {showHealthFailure && <AIDiagnosisCard hostId={hostId!} containerName={containerName!} />}
 
-        {/* v26 observability: historical anomalies + Drain template patterns.
-            These are secondary to the main finding, so they live outside the
-            hero as collapsible cards that only render when data is present. */}
-        <AnomaliesList anomalies={data.anomalies} scope="container" />
-        <LogTemplatesList templates={data.logTemplates} />
       </section>
+
+      {(() => {
+        const ns = isKubernetes ? getContainerNamespace(data.container_name) : null;
+        const showTopology = !!(isKubernetes && ns && data.cluster_id);
+        const hasOther = (data.anomalies?.length ?? 0) > 0
+          || (data.logTemplates?.length ?? 0) > 0
+          || (baselines?.metrics?.length ?? 0) > 0
+          || (rcaNeighbors?.neighbors?.length ?? 0) > 0;
+        if (!hasOther && !showTopology) return null;
+        return (
+          <ExploreDrawer description="Baselines, RCA neighbors, historical anomalies, mined log patterns, and (k8s) cluster topology for this container.">
+            <BaselinesViewer data={baselines} />
+            <RcaNeighborsList data={rcaNeighbors} />
+            {showTopology && (
+              <TopologyLinkCard
+                clusterId={data.cluster_id!}
+                namespaces={[ns!]}
+                description="See how this pod fits into the namespace — workloads, ingresses, and which nodes host the replicas."
+              />
+            )}
+            <AnomaliesList anomalies={data.anomalies} scope="container" />
+            <LogTemplatesList templates={data.logTemplates} />
+          </ExploreDrawer>
+        );
+      })()}
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
@@ -593,6 +656,10 @@ export function ContainerDetailPage() {
                   </div>
                 </Card>
               )}
+
+              {/* K8s events scoped to this pod — only rendered when the
+                  endpoint returned events for the namespace+workload match. */}
+              {isKubernetes && <PodEventsCard events={podEvents?.events} />}
 
               {/* AI diagnosis on healthy containers — available as a quiet
                   power-user option. On unhealthy containers it lives in the

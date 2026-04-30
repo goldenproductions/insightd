@@ -46,6 +46,29 @@ export interface ContainerInfo {
    * exits cleanly or the snapshot ages out of retention.
    */
   lastOomKilledAt?: string | null;
+
+  // ── K8s pod-level identity + status (v42) ─────────────────────────────
+  // All optional and Docker leaves them undefined. Replicated across each
+  // container in a pod since insightd's data model is container-centric;
+  // the hub stores them on every container_snapshot.
+
+  /** Workload kind from ownerReferences walk: Deployment / StatefulSet /
+   *  DaemonSet / Job / CronJob / ReplicaSet (orphaned RS only). Null for
+   *  standalone pods and Docker. */
+  workloadKind?: string | null;
+  /** pod.status.podIP — usually a private cluster IP. */
+  podIp?: string | null;
+  /** pod.status.hostIP — node IP the pod is scheduled on. */
+  hostIp?: string | null;
+  /** pod.status.conditions[] — small array (≤4 standard conditions). */
+  podConditions?: PodCondition[] | null;
+}
+
+export interface PodCondition {
+  type: string;
+  status: 'True' | 'False' | 'Unknown' | string;
+  reason?: string | null;
+  message?: string | null;
 }
 
 export interface ContainerWithResources extends ContainerInfo {

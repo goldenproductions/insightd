@@ -85,6 +85,8 @@ const config = Object.freeze({
     certExpiry: process.env.INSIGHTD_ALERT_CERT_EXPIRY !== 'false',
     certExpiryWarnDays: parseInt(process.env.INSIGHTD_ALERT_CERT_WARN_DAYS || '14', 10),
     certCheckIntervalHours: parseInt(process.env.INSIGHTD_CERT_CHECK_INTERVAL_HOURS || '6', 10),
+    podPending: process.env.INSIGHTD_ALERT_POD_PENDING !== 'false',
+    podPendingMinutes: parseInt(process.env.INSIGHTD_ALERT_POD_PENDING_MINUTES || '5', 10),
   }),
 
   // AI diagnosis (Gemini)

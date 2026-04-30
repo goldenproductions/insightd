@@ -35,6 +35,8 @@ interface AlertsConfig {
   containerCpuLimitPercent: number;
   certExpiry?: boolean;
   certExpiryWarnDays?: number;
+  podPending?: boolean;
+  podPendingMinutes?: number;
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
@@ -154,6 +156,11 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
   // endpoint name so cooldown/resolution flow through alert_state.
   if (alerts.certExpiry !== false) {
     triggered.push(...checkCertAlerts(db, alerts.certExpiryWarnDays || 14));
+  }
+
+  // Pods stuck Pending past threshold — cluster-scoped (leader-published).
+  if (alerts.podPending !== false) {
+    triggered.push(...checkPodPending(db, alerts.podPendingMinutes ?? 5));
   }
 
   // Check for resolutions of active alerts
@@ -549,6 +556,45 @@ function checkCertAlerts(db: Database.Database, warnDays: number): AlertItem[] {
   return out;
 }
 
+interface PendingPodRow {
+  cluster_id: string;
+  namespace: string;
+  pod_name: string;
+  reason: string | null;
+  message: string | null;
+  workload_kind: string | null;
+  workload_name: string | null;
+  age_minutes: number;
+}
+
+function checkPodPending(db: Database.Database, thresholdMinutes: number): AlertItem[] {
+  const rows = db.prepare(
+    "SELECT cluster_id, namespace, pod_name, reason, message, workload_kind, workload_name, " +
+    " CAST((strftime('%s','now') - strftime('%s', first_seen_at)) / 60 AS INTEGER) AS age_minutes " +
+    " FROM pending_pods " +
+    "WHERE first_seen_at < datetime('now', ?)"
+  ).all(`-${thresholdMinutes} minutes`) as PendingPodRow[];
+
+  return rows.map(r => {
+    // target uniquely identifies the pod within a cluster — alert_state
+    // dedupes on (host_id, alert_type, target), so cluster_id goes into
+    // host_id and ns/pod into target.
+    const owner = r.workload_kind && r.workload_name
+      ? ` (${r.workload_kind}/${r.workload_name})`
+      : '';
+    const reasonPart = r.reason ? r.reason : 'Pending';
+    const detail = r.message ? ` — ${r.message.slice(0, 200)}` : '';
+    return {
+      type: 'pod_pending',
+      hostId: r.cluster_id,
+      target: `${r.namespace}/${r.pod_name}`,
+      message: `Pod "${r.namespace}/${r.pod_name}"${owner} stuck ${reasonPart} for ${r.age_minutes}m${detail}`,
+      value: r.reason ?? 'Pending',
+      threshold: thresholdMinutes,
+    };
+  });
+}
+
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {
   const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
   const endpoints = (getEndpoints(db) as Array<{ id: number; name: string; url: string; enabled: number }>).filter(ep => ep.enabled);
@@ -750,6 +796,19 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
         `SELECT 1 FROM node_conditions WHERE host_id = ? AND type = 'Ready' AND status != 'True'`
       ).get(alert.host_id);
       isResolved = !row;
+    } else if (alert.alert_type === 'pod_pending') {
+      // Resolved when the pod is no longer in `pending_pods` (left Pending
+      // or no longer exists). target is "namespace/pod_name", host_id is
+      // the cluster_id — see checkPodPending.
+      const slash = alert.target.indexOf('/');
+      if (slash > 0) {
+        const ns = alert.target.slice(0, slash);
+        const pod = alert.target.slice(slash + 1);
+        const row = db.prepare(
+          'SELECT 1 FROM pending_pods WHERE cluster_id = ? AND namespace = ? AND pod_name = ?'
+        ).get(alert.host_id, ns, pod);
+        isResolved = !row;
+      }
     }
 
     if (isResolved) {
@@ -787,6 +846,7 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'cert_expired': return `Certificate for "${target}" is no longer expired`;
     case 'cert_expiring_soon': return `Certificate for "${target}" is no longer expiring soon`;
     case 'cert_invalid': return `Certificate for "${target}" is valid again`;
+    case 'pod_pending': return `Pod "${target}" is no longer Pending`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

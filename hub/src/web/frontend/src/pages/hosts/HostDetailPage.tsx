@@ -1,7 +1,7 @@
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, HostMetricsSnapshot, Host, TimelineEntry, Trends, EventItem, BaselineRow } from '@/types/api';
+import type { HostDetail, HostMetricsSnapshot, Host, TimelineResponse, Trends, EventItem, HostBaselinesResponse } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { NodeConditionBadges } from '@/components/NodeConditionBadges';
@@ -23,7 +23,11 @@ import { HostResourcesTab } from './HostResourcesTab';
 import { HostAlertsTab } from './HostAlertsTab';
 import { HostK8sEventsTab } from './HostK8sEventsTab';
 import { AnomaliesList } from '@/components/AnomaliesList';
-import { timeAgo } from '@/lib/formatters';
+import { BaselinesViewer } from '@/components/BaselinesViewer';
+import { ExploreDrawer } from '@/components/ExploreDrawer';
+import { HostUptimeHero } from '@/components/HostUptimeHero';
+import { TopologyLinkCard } from '@/components/TopologyLinkCard';
+import { getContainerNamespace } from '@/lib/containers';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
@@ -37,12 +41,16 @@ export function HostDetailPage() {
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['host', hostId, showInternal]], confirm);
 
   const { data } = useQuery({ queryKey: queryKeys.host(hostId, showInternal), queryFn: () => api<HostDetail>(`/hosts/${hid}${si}`), refetchInterval: 30_000 });
-  const { data: timeline } = useQuery({ queryKey: queryKeys.timeline(hostId), queryFn: () => api<TimelineEntry[]>(`/hosts/${hid}/timeline?days=7`).catch(() => []) });
+  const { data: timeline } = useQuery({ queryKey: queryKeys.timeline(hostId), queryFn: () => api<TimelineResponse>(`/hosts/${hid}/timeline?days=7`).catch(() => ({ host: null, containers: [] }) as TimelineResponse) });
   const { data: trends } = useQuery({ queryKey: queryKeys.trends(hostId), queryFn: () => api<Trends>(`/hosts/${hid}/trends`).catch(() => ({ containers: [], host: null })) });
   const { data: events } = useQuery({ queryKey: queryKeys.events(hostId), queryFn: () => api<EventItem[]>(`/hosts/${hid}/events?days=7`).catch(() => []) });
-  const { data: baselines, isFetched: baselinesReady } = useQuery({ queryKey: queryKeys.hostBaselines(hostId), queryFn: () => api<BaselineRow[]>(`/baselines/host/${hid}`).catch(() => []), refetchInterval: false });
   const { data: metricsHistory } = useQuery({ queryKey: queryKeys.hostMetricsHistory(hostId), queryFn: () => api<HostMetricsSnapshot[]>(`/hosts/${hid}/metrics?hours=24`).catch(() => []), refetchInterval: 60_000 });
   const { data: allHosts } = useQuery({ queryKey: queryKeys.hosts(), queryFn: () => api<Host[]>('/hosts'), staleTime: 30_000 });
+  const { data: baselines } = useQuery({
+    queryKey: queryKeys.hostBaselines(hostId),
+    queryFn: () => api<HostBaselinesResponse>(`/hosts/${hid}/baselines`).catch(() => ({ host_id: hostId!, metrics: [], computed_at: null }) as HostBaselinesResponse),
+    refetchInterval: 5 * 60_000,
+  });
 
   // Prev/next sibling navigation — alphabetical by host_id, matching the hosts page order.
   const hostIds = allHosts?.map(h => h.host_id) ?? [];
@@ -118,19 +126,20 @@ export function HostDetailPage() {
             <NodeConditionBadges conditions={data.nodeConditions} />
           )}
           <HostGroupEditor hostId={hostId!} group={data.host_group ?? null} override={data.host_group_override ?? null} />
+          {isK8s && (
+            <Link
+              to={`/clusters/${encodeURIComponent(data.host_group_override || data.host_group || `cluster-${hostId}`)}`}
+              className="rounded border border-info/40 bg-info/5 px-2 py-0.5 text-xs font-medium text-info hover:bg-info/10"
+              title="Open the cluster overview"
+            >
+              View cluster →
+            </Link>
+          )}
         </div>
         <RemoveHostButton hostId={hostId!} confirm={confirm} />
       </div>
 
-      {!data.is_online && (
-        <div className="rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-sm text-fg">
-          <div className="font-medium">Agent not reporting</div>
-          <div className="mt-0.5 text-xs text-muted">
-            Last contact {timeAgo(data.last_seen)}. Metrics and container state shown below are the
-            last values received — treat as stale until the agent reconnects.
-          </div>
-        </div>
-      )}
+      <HostUptimeHero data={data} timeline={timeline} />
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
@@ -141,13 +150,11 @@ export function HostDetailPage() {
           data={data}
           timeline={timeline}
           hostId={hostId!}
-          hid={hid}
           navigate={navigate}
           isAuthenticated={isAuthenticated}
           actionLoading={actionLoading}
           runAction={runAction}
           removeContainer={removeContainer}
-          baselines={baselinesReady ? baselines : undefined}
           metricsHistory={metricsHistory}
         />
       )}
@@ -164,9 +171,29 @@ export function HostDetailPage() {
         <HostK8sEventsTab hostId={hostId!} />
       )}
 
-      {/* v26 — historical S-H-ESD anomalies for this host. Always visible
-          (but the card hides itself when there's nothing to show). */}
-      <AnomaliesList anomalies={data.anomalies} scope="host" />
+      {(() => {
+        const k8sNamespaces = isK8s
+          ? Array.from(new Set(data.containers.map(c => getContainerNamespace(c.container_name)).filter((n): n is string => n != null))).sort()
+          : [];
+        const clusterId = isK8s ? (data.host_group_override || data.host_group || `cluster-${hostId}`) : null;
+        const showDrawer = (data.anomalies?.length ?? 0) > 0
+          || (baselines?.metrics?.length ?? 0) > 0
+          || k8sNamespaces.length > 0;
+        if (!showDrawer) return null;
+        return (
+          <ExploreDrawer description="Baselines, historical anomalies, and (k8s) cluster topology for this host.">
+            <BaselinesViewer data={baselines} />
+            {clusterId && k8sNamespaces.length > 0 && (
+              <TopologyLinkCard
+                clusterId={clusterId}
+                namespaces={k8sNamespaces}
+                description={`Namespaces with pods on this node (${k8sNamespaces.length}). Each link opens the topology graph.`}
+              />
+            )}
+            <AnomaliesList anomalies={data.anomalies} scope="host" />
+          </ExploreDrawer>
+        );
+      })()}
 
       <ConfirmDialog {...dialogProps} />
     </div>

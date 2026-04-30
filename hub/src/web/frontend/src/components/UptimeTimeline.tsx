@@ -8,6 +8,10 @@ interface Props {
   days?: number;
   /** Override the start of the first slot. Defaults to `days * 24h` ago. */
   startMs?: number;
+  /** Pixel height of each slot row. Defaults to 18; the host ribbon uses 22 to stand apart. */
+  rowHeight?: number;
+  /** Optional content rendered below each row (e.g. expanded details / actions). Lives outside the row's link wrapper so internal buttons aren't intercepted. */
+  renderRowExtras?: (entry: TimelineEntry) => React.ReactNode;
 }
 
 interface HoverState {
@@ -30,7 +34,7 @@ function slotLabel(slot: string): string {
   return 'No data';
 }
 
-export const UptimeTimeline = memo(function UptimeTimeline({ containers, hostId, days = 7, startMs: startMsProp }: Props) {
+export const UptimeTimeline = memo(function UptimeTimeline({ containers, hostId, days = 7, startMs: startMsProp, rowHeight = 18, renderRowExtras }: Props) {
   const [hover, setHover] = useState<HoverState | null>(null);
 
   // Fix `startMs` at mount so hover hints don't drift while the component
@@ -108,7 +112,7 @@ export const UptimeTimeline = memo(function UptimeTimeline({ containers, hostId,
                   ))}
                 </div>
                 {/* Slot row — slightly taller than before for better hit-testing. */}
-                <div className="relative flex h-[18px] gap-px">
+                <div className="relative flex gap-px" style={{ height: rowHeight }}>
                   {c.slots.map((slot, i) => {
                     const active = hover?.rowIndex === rowIndex && hover?.slotIndex === i;
                     const color = slot === 'up'
@@ -142,14 +146,17 @@ export const UptimeTimeline = memo(function UptimeTimeline({ containers, hostId,
             </div>
           );
 
-          if (hostId) {
-            return (
-              <Link key={c.name} to={`/hosts/${encodeURIComponent(hostId)}/containers/${encodeURIComponent(c.name)}`} className="block">
-                {rowBar}
-              </Link>
-            );
-          }
-          return <div key={c.name}>{rowBar}</div>;
+          const extras = renderRowExtras?.(c);
+          return (
+            <div key={c.name}>
+              {hostId ? (
+                <Link to={`/hosts/${encodeURIComponent(hostId)}/containers/${encodeURIComponent(c.name)}`} className="block">
+                  {rowBar}
+                </Link>
+              ) : rowBar}
+              {extras}
+            </div>
+          );
         })}
       </div>
 

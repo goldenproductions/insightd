@@ -282,10 +282,28 @@ export interface ContainerSnapshot {
   // State.OOMKilled or K8s terminated.reason==='OOMKilled'). Null if never
   // observed. Used to surface a "killed by OOM" chip on the detail page.
   last_oom_killed_at: string | null;
+  // v30 — container disk usage. rootfs = base image + writable layer in
+  // Docker; cAdvisor's container_fs_usage_bytes for k8s. rw = writable layer
+  // only. Both null when the runtime didn't report them.
+  size_rootfs_bytes: number | null;
+  size_rw_bytes: number | null;
+  // v42 — k8s pod-level identity + status. All null for Docker.
+  workload_kind: string | null;
+  pod_ip: string | null;
+  host_ip: string | null;
+  /** JSON-stringified PodCondition[] from the agent. Frontend parses on render. */
+  pod_conditions: string | null;
   collected_at: string;
   // 1 when the owning host hasn't reported within the offline threshold —
   // the snapshot is last-known state, not current truth.
   is_stale: number;
+}
+
+export interface PodCondition {
+  type: string;
+  status: 'True' | 'False' | 'Unknown' | string;
+  reason?: string | null;
+  message?: string | null;
 }
 
 export interface ContainerHistory {
@@ -339,6 +357,220 @@ export interface LogTemplate {
   last_seen: string;
 }
 
+// Baselines viewer (Explore drawer)
+export type BaselineMetricUnit = 'percent' | 'mb' | 'load' | 'celsius' | 'bytes_per_sec' | 'raw';
+export type BaselineCapacityKind = 'absolute' | 'capacity' | 'p95_plus' | 'none';
+export type BaselineTimeBucket =
+  | 'all' | 'weekday' | 'weekend'
+  | 'night' | 'early_morning' | 'morning'
+  | 'afternoon' | 'evening' | 'late_evening';
+
+export interface BaselineBucket {
+  time_bucket: BaselineTimeBucket;
+  p50: number | null;
+  p75: number | null;
+  p90: number | null;
+  p95: number | null;
+  p99: number | null;
+  min_val: number | null;
+  max_val: number | null;
+  mad: number | null;
+  mad_sample_count: number | null;
+  sample_count: number;
+  /** Server-computed robust z of the live value vs this bucket. Null when mad
+   *  is unknown/zero or when there is no live value. */
+  live_robust_z: number | null;
+  /** True for the bucket that matches "now" — current time-of-day period,
+   *  weekday/weekend membership, or the catch-all 'all' bucket. */
+  is_current: boolean;
+}
+
+export interface BaselineMetricView {
+  metric: string;
+  unit: BaselineMetricUnit;
+  /** Latest live value from the most recent snapshot. Null when stale/missing. */
+  live_value: number | null;
+  /** Floor a live value would have to clear before an alert fires. Null for
+   *  metrics that drive no alerts (network/disk i/o, gpu, temperature). */
+  capacity_floor: number | null;
+  capacity_floor_kind: BaselineCapacityKind;
+  buckets: BaselineBucket[];
+}
+
+export interface HostBaselinesResponse {
+  host_id: string;
+  metrics: BaselineMetricView[];
+  /** Newest computed_at across the bundle, or null if there are no rows. */
+  computed_at: string | null;
+}
+
+export interface ContainerBaselinesResponse {
+  host_id: string;
+  container_name: string;
+  metrics: BaselineMetricView[];
+  computed_at: string | null;
+}
+
+export interface RcaNeighbor {
+  /** "{host_id}/{container_name}" — entity key in rca_edges. */
+  entity: string;
+  hostId: string;
+  containerName: string;
+  /** Strongest edge weight in [0,1] across all edge types between this pair. */
+  score: number;
+  /** All edge types backing this neighbor: 'same_host' | 'same_compose' | 'metric_corr'. */
+  edgeTypes: string[];
+  healthStatus: string | null;
+  hasActiveAlert: boolean;
+  /** Container is removed from registry — link target may 404. */
+  isRemoved: boolean;
+}
+
+export interface RcaNeighborsResponse {
+  host_id: string;
+  container_name: string;
+  neighbors: RcaNeighbor[];
+}
+
+// Namespace topology — graph of workloads / pods / nodes / ingresses / pvcs
+export interface TopologyContainer {
+  container_name: string;
+  container: string;
+  status: string;
+  health_status: string | null;
+  has_active_alert: boolean;
+}
+export interface TopologyPod {
+  pod_uid: string;
+  host_id: string;
+  containers: TopologyContainer[];
+}
+export type TopologySeverity = 'critical' | 'error' | 'warning' | null;
+export interface TopologyAlert {
+  type: string;
+  container_name: string;
+  level: 'critical' | 'error' | 'warning' | 'info';
+  message: string | null;
+  triggered_at: string;
+}
+export interface TopologyFinding {
+  container_name: string;
+  category: string;
+  severity: string;
+  title: string;
+  message: string;
+  suggested_action: string | null;
+  confidence: string | null;
+}
+export interface TopologyRcaEdge {
+  from: string;
+  to: string;
+  weight: number;
+}
+export interface TopologyVolumeMount {
+  type: 'pvc' | 'configMap' | 'secret' | 'emptyDir' | 'hostPath' | 'projected' | 'other';
+  /** PVC name / ConfigMap name / Secret name / hostPath path. Null for
+   *  ambient types (emptyDir, projected). */
+  target_name: string | null;
+  volume_names: string[];
+}
+
+export interface TopologyWorkload {
+  kind: string | null;
+  name: string;
+  total_pods: number;
+  unhealthy_pods: number;
+  pods_by_node: Record<string, number>;
+  pods: TopologyPod[];
+  /** Highest severity across alerts + findings (null when calm). */
+  severity: TopologySeverity;
+  active_alerts: TopologyAlert[];
+  findings: TopologyFinding[];
+  volume_mounts: TopologyVolumeMount[];
+}
+export interface TopologyIngress {
+  id: number;
+  name: string;
+  hosts: string[];
+  service_targets: string[];
+}
+export interface TopologyPvc {
+  name: string;
+  phase: string;
+  capacity_bytes: number | null;
+  storage_class: string | null;
+}
+export interface TopologyNode {
+  host_id: string;
+  online: boolean;
+  pod_count: number;
+}
+export interface TopologyServicePort {
+  name: string | null;
+  port: number;
+  target_port: number | string | null;
+  protocol: string | null;
+  node_port: number | null;
+}
+export interface TopologyService {
+  name: string;
+  type: string;
+  cluster_ip: string | null;
+  external_name: string | null;
+  ports: TopologyServicePort[];
+  /** Workload keys this service routes to (`${kind ?? '_'}${name}`). */
+  workload_keys: string[];
+  /** No selector / empty selector — service has no pod backends. */
+  is_external: boolean;
+}
+export interface NamespaceTopology {
+  cluster_id: string;
+  namespace: string;
+  workloads: TopologyWorkload[];
+  services: TopologyService[];
+  ingresses: TopologyIngress[];
+  pvcs: TopologyPvc[];
+  nodes: TopologyNode[];
+  rca_edges: TopologyRcaEdge[];
+  /** ISO timestamp the response represents — null when live. */
+  at: string | null;
+}
+
+// Cluster overview — list of namespaces + cluster-level totals
+export interface ClusterNode {
+  host_id: string;
+  online: boolean;
+  pod_count: number;
+}
+export interface ClusterNamespaceSummary {
+  namespace: string;
+  workload_count: number;
+  pod_count: number;
+  unhealthy_pod_count: number;
+  ingress_count: number;
+  pvc_count: number;
+  pvc_pending_count: number;
+  active_alert_count: number;
+}
+export interface ClusterOverview {
+  cluster_id: string;
+  nodes: ClusterNode[];
+  namespaces: ClusterNamespaceSummary[];
+  totals: {
+    nodes_online: number;
+    nodes_offline: number;
+    namespaces: number;
+    workloads: number;
+    pods: number;
+    healthy_pods: number;
+    unhealthy_pods: number;
+    ingresses: number;
+    pvcs: number;
+    pvcs_pending: number;
+    active_alerts: number;
+  };
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
@@ -358,6 +590,12 @@ export interface ContainerDetail extends ContainerSnapshot {
   host_id: string;
   /** Runtime of the host this container lives on — drives UI gating of Docker-only actions. */
   runtime_type?: 'docker' | 'kubernetes' | string;
+  /** Latest image string from update_checks; null when the agent hasn't
+   *  reported one yet. */
+  image: string | null;
+  /** Cluster id for k8s containers — host_group_override > host_group >
+   *  "cluster-{hostId}". Null for Docker. */
+  cluster_id: string | null;
   health_diagnosis: string | null;
   findings: Finding[];
   history: ContainerHistory[];
@@ -369,6 +607,26 @@ export interface ContainerDetail extends ContainerSnapshot {
   // NOTE: per-finding PPR neighbors live on `Finding.neighbors` (camelCase).
   // The top-level `neighbors` field used to hold raw rca_edges rows, which
   // caused a shape clash — removed in fix/neighbor-type-mismatch.
+}
+
+export interface PodEvent {
+  event_uid: string;
+  cluster_id: string;
+  namespace: string | null;
+  involved_kind: string;
+  involved_name: string;
+  reason: string;
+  message: string | null;
+  type: string;
+  count: number;
+  first_seen_at: string;
+  last_seen_at: string;
+}
+
+export interface PodEventsResponse {
+  host_id: string;
+  container_name: string;
+  events: PodEvent[];
 }
 
 export interface HostDetail extends Host {
@@ -436,6 +694,11 @@ export interface TimelineEntry {
   name: string;
   slots: ('up' | 'down' | 'none')[];
   uptimePercent: number | null;
+}
+
+export interface TimelineResponse {
+  host: TimelineEntry | null;
+  containers: TimelineEntry[];
 }
 
 // Container Availability (explainable uptime)

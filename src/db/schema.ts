@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 40;
+const SCHEMA_VERSION = 44;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -43,6 +43,10 @@ function bootstrap(db: Database.Database): void {
       cpu_limit_percent REAL,
       memory_limit_mb REAL,
       last_oom_killed_at TEXT,
+      workload_kind   TEXT,
+      pod_ip          TEXT,
+      host_ip         TEXT,
+      pod_conditions  TEXT,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -221,6 +225,54 @@ function bootstrap(db: Database.Database): void {
       removed_at      TEXT,
       dismissed_at    TEXT,
       UNIQUE(cluster_id, namespace, name)
+    );
+
+    -- K8s Services (no-op on Docker standalone — see k8s_ingresses note).
+    CREATE TABLE IF NOT EXISTS k8s_services (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      cluster_id    TEXT NOT NULL,
+      namespace     TEXT NOT NULL,
+      name          TEXT NOT NULL,
+      type          TEXT NOT NULL,
+      cluster_ip    TEXT,
+      external_ips  TEXT,
+      external_name TEXT,
+      selector      TEXT,
+      ports         TEXT NOT NULL,
+      created_at    TEXT,
+      labels        TEXT,
+      observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      removed_at    TEXT,
+      UNIQUE(cluster_id, namespace, name)
+    );
+
+    -- Pod volumes (no-op on Docker standalone — see k8s_ingresses note).
+    CREATE TABLE IF NOT EXISTS pod_volumes (
+      cluster_id   TEXT NOT NULL,
+      namespace    TEXT NOT NULL,
+      pod_uid      TEXT NOT NULL,
+      pod_name     TEXT NOT NULL,
+      volume_name  TEXT NOT NULL,
+      volume_type  TEXT NOT NULL,
+      target_name  TEXT,
+      observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
+    );
+
+    -- Pending pods (no-op on Docker standalone — see k8s_ingresses note).
+    CREATE TABLE IF NOT EXISTS pending_pods (
+      cluster_id      TEXT NOT NULL,
+      namespace       TEXT NOT NULL,
+      pod_name        TEXT NOT NULL,
+      reason          TEXT,
+      message         TEXT,
+      pod_phase       TEXT NOT NULL,
+      pod_created_at  TEXT,
+      workload_kind   TEXT,
+      workload_name   TEXT,
+      first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_name)
     );
 
     CREATE TABLE IF NOT EXISTS update_checks (
@@ -890,6 +942,66 @@ function migrate(db: Database.Database, fromVersion: number): void {
   }
   if (fromVersion < 40) {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN last_oom_killed_at TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 41) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_pods (
+        cluster_id      TEXT NOT NULL,
+        namespace       TEXT NOT NULL,
+        pod_name        TEXT NOT NULL,
+        reason          TEXT,
+        message         TEXT,
+        pod_phase       TEXT NOT NULL,
+        pod_created_at  TEXT,
+        workload_kind   TEXT,
+        workload_name   TEXT,
+        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_name)
+      );
+    `);
+  }
+  if (fromVersion < 42) {
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN workload_kind TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN host_ip TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_conditions TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 43) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS k8s_services (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_id    TEXT NOT NULL,
+        namespace     TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        type          TEXT NOT NULL,
+        cluster_ip    TEXT,
+        external_ips  TEXT,
+        external_name TEXT,
+        selector      TEXT,
+        ports         TEXT NOT NULL,
+        created_at    TEXT,
+        labels        TEXT,
+        observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        removed_at    TEXT,
+        UNIQUE(cluster_id, namespace, name)
+      );
+    `);
+  }
+  if (fromVersion < 44) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pod_volumes (
+        cluster_id   TEXT NOT NULL,
+        namespace    TEXT NOT NULL,
+        pod_uid      TEXT NOT NULL,
+        pod_name     TEXT NOT NULL,
+        volume_name  TEXT NOT NULL,
+        volume_type  TEXT NOT NULL,
+        target_name  TEXT,
+        observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
+      );
+    `);
   }
 }
 

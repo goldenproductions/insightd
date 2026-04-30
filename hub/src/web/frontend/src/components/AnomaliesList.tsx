@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { RollupAnomaly } from '@/types/api';
 import { Card } from '@/components/Card';
+import { GlossaryHelp } from '@/components/GlossaryHelp';
 import { timeAgo } from '@/lib/formatters';
 
 interface Props {
@@ -50,7 +51,7 @@ export function AnomaliesList({ anomalies, scope }: Props) {
 
   return (
     <Card
-      title="Historical anomalies"
+      title={<>Historical anomalies<GlossaryHelp topic="anomaly-detection" /></>}
       actions={
         <button
           onClick={() => setExpanded((v) => !v)}
