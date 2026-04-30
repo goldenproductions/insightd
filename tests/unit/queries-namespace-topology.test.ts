@@ -263,4 +263,115 @@ describe('getNamespaceTopology', () => {
     const topo = getNamespaceTopology(db, 'prod', 'default', 15);
     assert.equal(topo.services.length, 0);
   });
+
+  function seedAlert(db: any, opts: { hostId: string; alertType: string; target: string; message?: string }) {
+    db.prepare(`
+      INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, message)
+      VALUES (?, ?, ?, datetime('now'), datetime('now'), 1, ?)
+    `).run(opts.hostId, opts.alertType, opts.target, opts.message ?? null);
+  }
+  function seedInsight(db: any, opts: {
+    entityId: string; severity: string; title?: string; suggestedAction?: string;
+  }) {
+    db.prepare(`
+      INSERT INTO insights (entity_type, entity_id, category, severity, title, message, suggested_action)
+      VALUES ('container', ?, 'performance', ?, ?, ?, ?)
+    `).run(opts.entityId, opts.severity, opts.title ?? 'Test finding', 'message', opts.suggestedAction ?? null);
+  }
+
+  it('attributes active alerts to the workload that owns the target container', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment', health: 'healthy',
+    });
+    seedAlert(db, { hostId: 'k3d-server', alertType: 'restart_loop', target: 'default/web/nginx', message: 'looping' });
+
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    const wl = topo.workloads[0];
+    assert.equal(wl.active_alerts.length, 1);
+    assert.equal(wl.active_alerts[0].type, 'restart_loop');
+    assert.equal(wl.active_alerts[0].level, 'error', 'restart_loop is mapped to error');
+    assert.equal(wl.severity, 'error', 'workload severity bubbles up');
+  });
+
+  it('picks the worst severity across mixed alert types on a workload', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedAlert(db, { hostId: 'k3d-server', alertType: 'high_cpu', target: 'default/web/nginx' });           // warning
+    seedAlert(db, { hostId: 'k3d-server', alertType: 'restart_loop', target: 'default/web/nginx' });      // error
+    seedAlert(db, { hostId: 'k3d-server', alertType: 'container_down', target: 'default/web/nginx' });    // critical
+
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.workloads[0].severity, 'critical', 'critical wins over error wins over warning');
+    assert.equal(topo.workloads[0].active_alerts.length, 3);
+  });
+
+  it('attaches insights findings to workloads', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedInsight(db, {
+      entityId: 'k3d-server/default/web/nginx', severity: 'warning',
+      title: 'CPU sustained high', suggestedAction: 'Investigate workload',
+    });
+
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    const wl = topo.workloads[0];
+    assert.equal(wl.findings.length, 1);
+    assert.equal(wl.findings[0].title, 'CPU sustained high');
+    assert.equal(wl.findings[0].suggested_action, 'Investigate workload');
+    assert.equal(wl.severity, 'warning');
+  });
+
+  it('info-level findings do not bubble up to the workload severity', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedInsight(db, { entityId: 'k3d-server/default/web/nginx', severity: 'info' });
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.workloads[0].severity, null, 'info findings are noise — workload stays calm');
+  });
+
+  it('returns intra-namespace metric_corr edges aggregated to workload pairs', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/db/postgres',
+      containerId: 'uid-2/db/postgres', workloadKind: 'StatefulSet',
+    });
+    db.prepare(`INSERT INTO rca_edges (from_entity, to_entity, edge_type, weight)
+                VALUES ('k3d-server/default/web/nginx', 'k3d-server/default/db/postgres', 'metric_corr', 0.85)`).run();
+    // Same-host should NOT show up — overlay is metric_corr only.
+    db.prepare(`INSERT INTO rca_edges (from_entity, to_entity, edge_type, weight)
+                VALUES ('k3d-server/default/web/nginx', 'k3d-server/default/db/postgres', 'same_host', 0.3)`).run();
+
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.rca_edges.length, 1, 'one edge between web and db, same_host excluded');
+    assert.equal(topo.rca_edges[0].weight, 0.85);
+    // Workload keys are wl:Kind:name, lex-sorted: 'wl:Deployment:web' < 'wl:StatefulSet:db'.
+    assert.equal(topo.rca_edges[0].from, 'wl:Deployment:web');
+    assert.equal(topo.rca_edges[0].to, 'wl:StatefulSet:db');
+  });
+
+  it('does not bleed metric_corr edges across namespaces', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'kube-system/coredns/coredns',
+      containerId: 'uid-9/coredns/coredns', workloadKind: 'Deployment',
+    });
+    db.prepare(`INSERT INTO rca_edges (from_entity, to_entity, edge_type, weight)
+                VALUES ('k3d-server/default/web/nginx', 'k3d-server/kube-system/coredns/coredns', 'metric_corr', 0.9)`).run();
+
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.rca_edges.length, 0, 'cross-namespace edge filtered out at the SQL level');
+  });
 });

@@ -445,6 +445,28 @@ export interface TopologyPod {
   host_id: string;
   containers: TopologyContainer[];
 }
+export type TopologySeverity = 'critical' | 'error' | 'warning' | null;
+export interface TopologyAlert {
+  type: string;
+  container_name: string;
+  level: 'critical' | 'error' | 'warning' | 'info';
+  message: string | null;
+  triggered_at: string;
+}
+export interface TopologyFinding {
+  container_name: string;
+  category: string;
+  severity: string;
+  title: string;
+  message: string;
+  suggested_action: string | null;
+  confidence: string | null;
+}
+export interface TopologyRcaEdge {
+  from: string;
+  to: string;
+  weight: number;
+}
 export interface TopologyWorkload {
   kind: string | null;
   name: string;
@@ -452,6 +474,10 @@ export interface TopologyWorkload {
   unhealthy_pods: number;
   pods_by_node: Record<string, number>;
   pods: TopologyPod[];
+  /** Highest severity across alerts + findings (null when calm). */
+  severity: TopologySeverity;
+  active_alerts: TopologyAlert[];
+  findings: TopologyFinding[];
 }
 export interface TopologyIngress {
   id: number;
@@ -496,6 +522,7 @@ export interface NamespaceTopology {
   ingresses: TopologyIngress[];
   pvcs: TopologyPvc[];
   nodes: TopologyNode[];
+  rca_edges: TopologyRcaEdge[];
 }
 
 // Cluster overview — list of namespaces + cluster-level totals
