@@ -693,6 +693,46 @@ function publishServices(clusterId: string, publisherHostId: string, services: S
   });
 }
 
+interface PodVolumePayloadItem {
+  namespace: string;
+  podUid: string;
+  podName: string;
+  volumeName: string;
+  volumeType: string;
+  targetName: string | null;
+}
+
+function publishPodVolumes(clusterId: string, publisherHostId: string, volumes: PodVolumePayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/pod-volumes`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: volumes.map(v => ({
+      namespace: v.namespace,
+      pod_uid: v.podUid,
+      pod_name: v.podName,
+      volume_name: v.volumeName,
+      volume_type: v.volumeType,
+      target_name: v.targetName,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${volumes.length} pod volumes for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -726,4 +766,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, disconnect, containerInfoToPayload };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, disconnect, containerInfoToPayload };

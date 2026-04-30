@@ -374,4 +374,70 @@ describe('getNamespaceTopology', () => {
     const topo = getNamespaceTopology(db, 'prod', 'default', 15);
     assert.equal(topo.rca_edges.length, 0, 'cross-namespace edge filtered out at the SQL level');
   });
+
+  function seedPodVolume(db: any, opts: {
+    namespace?: string; podUid: string; podName: string; volumeName: string;
+    volumeType: string; targetName?: string | null;
+  }) {
+    db.prepare(`
+      INSERT INTO pod_volumes (cluster_id, namespace, pod_uid, pod_name, volume_name, volume_type, target_name, observed_at)
+      VALUES ('prod', ?, ?, ?, ?, ?, ?, datetime('now'))
+    `).run(opts.namespace ?? 'default', opts.podUid, opts.podName, opts.volumeName, opts.volumeType, opts.targetName ?? null);
+  }
+
+  it('attributes pod volumes to the workload that owns the pod_uid', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedPodVolume(db, { podUid: 'uid-1', podName: 'web-7d-abc', volumeName: 'data', volumeType: 'pvc', targetName: 'web-data' });
+    seedPodVolume(db, { podUid: 'uid-1', podName: 'web-7d-abc', volumeName: 'cfg', volumeType: 'configMap', targetName: 'app-config' });
+
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    const wl = topo.workloads[0];
+    assert.equal(wl.volume_mounts.length, 2);
+    const pvc = wl.volume_mounts.find((v: any) => v.type === 'pvc')!;
+    assert.equal(pvc.target_name, 'web-data');
+    const cm = wl.volume_mounts.find((v: any) => v.type === 'configMap')!;
+    assert.equal(cm.target_name, 'app-config');
+  });
+
+  it('dedupes the same PVC across replicas of a workload', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedK8sContainer(db, {
+      hostId: 'k3d-worker', containerName: 'default/web/nginx',
+      containerId: 'uid-2/web/nginx', workloadKind: 'Deployment',
+    });
+    seedPodVolume(db, { podUid: 'uid-1', podName: 'web-1', volumeName: 'data', volumeType: 'pvc', targetName: 'web-data' });
+    seedPodVolume(db, { podUid: 'uid-2', podName: 'web-2', volumeName: 'data', volumeType: 'pvc', targetName: 'web-data' });
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.workloads[0].volume_mounts.length, 1);
+    assert.deepEqual(topo.workloads[0].volume_mounts[0].volume_names, ['data']);
+  });
+
+  it('does not attribute volumes from pods we have no container snapshot for', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedPodVolume(db, { podUid: 'uid-orphan', podName: 'ghost', volumeName: 'v', volumeType: 'pvc', targetName: 'orphan-data' });
+    const topo = getNamespaceTopology(db, 'prod', 'default', 15);
+    assert.equal(topo.workloads[0].volume_mounts.length, 0);
+  });
+
+  it('sorts volume_mounts pvc-first, then configMap, then secret, then ambient', () => {
+    seedK8sContainer(db, {
+      hostId: 'k3d-server', containerName: 'default/web/nginx',
+      containerId: 'uid-1/web/nginx', workloadKind: 'Deployment',
+    });
+    seedPodVolume(db, { podUid: 'uid-1', podName: 'p', volumeName: 'tmp', volumeType: 'emptyDir' });
+    seedPodVolume(db, { podUid: 'uid-1', podName: 'p', volumeName: 'tls', volumeType: 'secret', targetName: 'tls-cert' });
+    seedPodVolume(db, { podUid: 'uid-1', podName: 'p', volumeName: 'cfg', volumeType: 'configMap', targetName: 'app-cfg' });
+    seedPodVolume(db, { podUid: 'uid-1', podName: 'p', volumeName: 'data', volumeType: 'pvc', targetName: 'data-pvc' });
+    const types = (getNamespaceTopology(db, 'prod', 'default', 15) as any).workloads[0].volume_mounts.map((v: any) => v.type);
+    assert.deepEqual(types, ['pvc', 'configMap', 'secret', 'emptyDir']);
+  });
 });

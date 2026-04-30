@@ -52,9 +52,28 @@ export interface K8sPodCondition {
   message?: string;
 }
 
+export interface K8sPodVolume {
+  name: string;
+  // Volume sources we map to topology nodes. K8s allows ~25 volume types;
+  // we only need to identify the few that link to other graph nodes
+  // (PVCs, ConfigMaps, Secrets) and a small set of ambient types
+  // (emptyDir, hostPath, projected). Anything we don't model maps to
+  // 'other' downstream.
+  persistentVolumeClaim?: { claimName: string };
+  configMap?: { name?: string };
+  secret?: { secretName?: string };
+  emptyDir?: Record<string, unknown>;
+  hostPath?: { path?: string };
+  projected?: Record<string, unknown>;
+}
+
 export interface K8sPod {
   metadata?: K8sMeta;
-  spec?: { nodeName?: string; containers?: K8sPodContainer[] };
+  spec?: {
+    nodeName?: string;
+    containers?: K8sPodContainer[];
+    volumes?: K8sPodVolume[];
+  };
   status?: {
     phase?: string;
     containerStatuses?: K8sContainerStatus[];

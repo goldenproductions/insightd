@@ -592,6 +592,51 @@ function ingestPendingPods(db: Database.Database, clusterId: string, pods: Pendi
   logger.info('ingest', `Upserted ${pods.length} pending pods for cluster ${clusterId}`);
 }
 
+interface PodVolumeRecord {
+  namespace: string;
+  podUid: string;
+  podName: string;
+  volumeName: string;
+  volumeType: string;
+  targetName: string | null;
+}
+
+/**
+ * Current-state UPSERT for pod volumes. Same prune-by-batchAt pattern as
+ * pending_pods — when a pod or volume disappears from a later batch its
+ * row is dropped within one cycle. The topology view joins this against
+ * the existing `containers` registry to draw Workload→PVC edges.
+ */
+function ingestPodVolumes(db: Database.Database, clusterId: string, volumes: PodVolumeRecord[]): void {
+  const batchAt = new Date().toISOString();
+  const upsert = db.prepare(`
+    INSERT INTO pod_volumes
+      (cluster_id, namespace, pod_uid, pod_name, volume_name, volume_type, target_name, observed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(cluster_id, namespace, pod_uid, volume_name) DO UPDATE SET
+      pod_name    = excluded.pod_name,
+      volume_type = excluded.volume_type,
+      target_name = excluded.target_name,
+      observed_at = excluded.observed_at
+  `);
+  const prune = db.prepare(`
+    DELETE FROM pod_volumes
+     WHERE cluster_id = ? AND observed_at < ?
+  `);
+
+  const tx = db.transaction((items: PodVolumeRecord[]) => {
+    for (const v of items) {
+      upsert.run(
+        clusterId, v.namespace, v.podUid, v.podName,
+        v.volumeName, v.volumeType, v.targetName, batchAt,
+      );
+    }
+    prune.run(clusterId, batchAt);
+  });
+  tx(volumes);
+  logger.info('ingest', `Upserted ${volumes.length} pod volumes for cluster ${clusterId}`);
+}
+
 interface NodeConditionRecord {
   type: string;
   status: 'True' | 'False' | 'Unknown';
@@ -628,4 +673,4 @@ function ingestNodeConditions(db: Database.Database, hostId: string, conditions:
   upsertMany(conditions);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
