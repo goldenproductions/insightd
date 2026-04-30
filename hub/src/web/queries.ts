@@ -2148,6 +2148,11 @@ export interface TopologyWorkload {
   unhealthy_pods: number;
   pods_by_node: Record<string, number>;
   pods: TopologyPod[];
+  /** Highest severity across alerts + findings on this workload's containers.
+   *  null when nothing is wrong — drives the workload card tone. */
+  severity: TopologySeverity;
+  active_alerts: TopologyAlert[];
+  findings: TopologyFinding[];
 }
 
 export interface TopologyIngress {
@@ -2195,6 +2200,36 @@ export interface TopologyNode {
   pod_count: number;
 }
 
+export type TopologySeverity = 'critical' | 'error' | 'warning' | null;
+
+export interface TopologyAlert {
+  /** alert_type — e.g. container_unhealthy, restart_loop, pod_pending. */
+  type: string;
+  /** target — container_name within this workload (or pod target for k8s). */
+  container_name: string;
+  level: 'critical' | 'error' | 'warning' | 'info';
+  message: string | null;
+  triggered_at: string;
+}
+
+export interface TopologyFinding {
+  /** insights.entity_id — same as container_name. */
+  container_name: string;
+  category: string;
+  severity: string;
+  title: string;
+  message: string;
+  suggested_action: string | null;
+  confidence: string | null;
+}
+
+export interface TopologyRcaEdge {
+  /** Workload key (`wl:${kind ?? '_'}:${name}`); always lex-ordered from < to so the UI can dedupe. */
+  from: string;
+  to: string;
+  weight: number;
+}
+
 export interface NamespaceTopology {
   cluster_id: string;
   namespace: string;
@@ -2203,6 +2238,9 @@ export interface NamespaceTopology {
   ingresses: TopologyIngress[];
   pvcs: TopologyPvc[];
   nodes: TopologyNode[];
+  /** Cross-workload metric correlation edges within this namespace. UI
+   *  draws these dashed only when a workload with issues is selected. */
+  rca_edges: TopologyRcaEdge[];
 }
 
 interface ContainerLatestRow {
@@ -2286,6 +2324,9 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
         unhealthy_pods: 0,
         pods_by_node: {},
         pods: [],
+        severity: null,
+        active_alerts: [],
+        findings: [],
       };
       workloadMap.set(workloadKey, wl);
       workloadLabels.set(workloadKey, new Map());
@@ -2320,6 +2361,141 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
       }
     }
   }
+
+  // ── Diagnosis overlay: attribute alerts + findings to workloads ──────────
+  //
+  // Build a container_name → workloadKey map so alert/finding rows can be
+  // attributed to the workload they belong to. The container_name is the
+  // alert_state.target and the insights.entity_id, so a single map serves
+  // both joins.
+  const containerToWorkload = new Map<string, string>();
+  for (const [wlKey, wl] of workloadMap) {
+    for (const pod of wl.pods) {
+      for (const c of pod.containers) {
+        containerToWorkload.set(c.container_name, wlKey);
+      }
+    }
+  }
+
+  if (containerRows.length > 0) {
+    const placeholders = containerRows.map(() => '?').join(',');
+    const targets = containerRows.map(r => r.container_name);
+
+    // Active alerts on workloads in this namespace.
+    const activeAlerts = db.prepare(`
+      SELECT host_id, alert_type, target, message, triggered_at
+      FROM alert_state
+      WHERE resolved_at IS NULL AND target IN (${placeholders})
+      ORDER BY triggered_at DESC
+    `).all(...targets) as Array<{
+      host_id: string; alert_type: string; target: string;
+      message: string | null; triggered_at: string;
+    }>;
+
+    for (const a of activeAlerts) {
+      const wlKey = containerToWorkload.get(a.target);
+      if (!wlKey) continue;
+      const wl = workloadMap.get(wlKey);
+      if (!wl) continue;
+      const level = LEVEL_BY_ALERT_TYPE[a.alert_type] ?? 'info';
+      wl.active_alerts.push({
+        type: a.alert_type,
+        container_name: a.target,
+        level,
+        message: a.message,
+        triggered_at: a.triggered_at,
+      });
+      wl.severity = mergeSeverity(wl.severity, level);
+    }
+
+    // Diagnosis findings from the insights table. Container insights only —
+    // host insights aren't workload-attributable. The insights table uses
+    // entity_id = "host_id/container_name" (see detector.ts), so we match
+    // against the full entity-id form rather than just container_name.
+    const insightEntities = containerRows.map(r => `${r.host_id}/${r.container_name}`);
+    const entityToContainer = new Map(
+      containerRows.map(r => [`${r.host_id}/${r.container_name}`, r.container_name]),
+    );
+    const insightPlaceholders = insightEntities.map(() => '?').join(',');
+    const insightRows = db.prepare(`
+      SELECT entity_id, category, severity, title, message, suggested_action, confidence
+      FROM insights
+      WHERE entity_type = 'container' AND entity_id IN (${insightPlaceholders})
+    `).all(...insightEntities) as Array<{
+      entity_id: string; category: string; severity: string;
+      title: string; message: string;
+      suggested_action: string | null; confidence: string | null;
+    }>;
+
+    for (const f of insightRows) {
+      const containerName = entityToContainer.get(f.entity_id);
+      if (!containerName) continue;
+      const wlKey = containerToWorkload.get(containerName);
+      if (!wlKey) continue;
+      const wl = workloadMap.get(wlKey);
+      if (!wl) continue;
+      wl.findings.push({
+        container_name: containerName,
+        category: f.category,
+        severity: f.severity,
+        title: f.title,
+        message: f.message,
+        suggested_action: f.suggested_action,
+        confidence: f.confidence,
+      });
+      // insights.severity is 'critical' | 'warning' | 'info' (no 'error' tier).
+      // Use the level mapping that matches the alert ladder so rendering
+      // colors stay consistent.
+      const insightLevel: 'critical' | 'warning' | 'info' =
+        f.severity === 'critical' ? 'critical' :
+        f.severity === 'warning'  ? 'warning' : 'info';
+      wl.severity = mergeSeverity(wl.severity, insightLevel);
+    }
+  }
+
+  // ── RCA neighbor edges within this namespace ────────────────────────────
+  //
+  // metric_corr edges only — same_host / same_compose are too noisy for the
+  // overlay (every container in the namespace would touch every other).
+  // Aggregate per-container edges (entity_id = "host_id/container_name") to
+  // per-workload (workload key) edges, taking the max weight on collision.
+  // Both endpoints must be containers we already have in this namespace, so
+  // we don't bleed into other namespaces.
+  const containerEntities = new Set<string>(
+    containerRows.map(r => `${r.host_id}/${r.container_name}`),
+  );
+  const rcaEdgesMap = new Map<string, TopologyRcaEdge>();
+  if (containerEntities.size > 0) {
+    const ents = Array.from(containerEntities);
+    const placeholders = ents.map(() => '?').join(',');
+    const rcaRows = db.prepare(`
+      SELECT from_entity, to_entity, weight FROM rca_edges
+      WHERE edge_type = 'metric_corr'
+        AND from_entity IN (${placeholders}) AND to_entity IN (${placeholders})
+    `).all(...ents, ...ents) as Array<{ from_entity: string; to_entity: string; weight: number }>;
+
+    const entityToWorkload = (entity: string): string | null => {
+      const slash = entity.indexOf('/');
+      if (slash < 0) return null;
+      const containerName = entity.slice(slash + 1);
+      return containerToWorkload.get(containerName) ?? null;
+    };
+
+    for (const r of rcaRows) {
+      const fromKey = entityToWorkload(r.from_entity);
+      const toKey = entityToWorkload(r.to_entity);
+      if (!fromKey || !toKey || fromKey === toKey) continue;
+      const a = fromKey < toKey ? fromKey : toKey;
+      const b = fromKey < toKey ? toKey : fromKey;
+      const k = `${a}\n${b}`;
+      const existing = rcaEdgesMap.get(k);
+      if (!existing || r.weight > existing.weight) {
+        rcaEdgesMap.set(k, { from: a, to: b, weight: r.weight });
+      }
+    }
+  }
+  const rca_edges = Array.from(rcaEdgesMap.values())
+    .sort((x, y) => y.weight - x.weight);
 
   // Ingresses currently in this namespace.
   const ingressRows = db.prepare(`
@@ -2450,7 +2626,21 @@ function getNamespaceTopology(db: Database.Database, clusterId: string, namespac
     ingresses,
     pvcs,
     nodes,
+    rca_edges,
   };
+}
+
+/** Pick the higher of two severities for the diagnosis overlay. critical > error > warning > info > null. */
+function mergeSeverity(current: TopologySeverity, incoming: 'critical' | 'error' | 'warning' | 'info'): TopologySeverity {
+  const order: Record<string, number> = { info: 0, warning: 1, error: 2, critical: 3 };
+  const cur = current ? order[current] : -1;
+  const inc = order[incoming];
+  if (inc > cur) {
+    // info doesn't bubble up to a workload-level severity badge.
+    if (incoming === 'info') return current;
+    return incoming;
+  }
+  return current;
 }
 
 /** Parse a labels JSON column. Returns null on bad input — caller treats as no labels. */

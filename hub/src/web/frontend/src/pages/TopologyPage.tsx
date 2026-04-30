@@ -20,6 +20,9 @@ import type {
   TopologyPvc,
   TopologyPod,
   TopologyService,
+  TopologySeverity,
+  TopologyAlert,
+  TopologyFinding,
 } from '@/types/api';
 import { Card } from '@/components/Card';
 import { BackLink } from '@/components/BackLink';
@@ -61,6 +64,23 @@ function nodeKeyOf(n: { host_id: string }): string {
   return `node:${n.host_id}`;
 }
 
+const SEVERITY_RANK: Record<string, number> = { warning: 1, error: 2, critical: 3 };
+
+/** Highest severity across the given workload keys. null when none of the
+ *  backends has any active alerts/findings. Used to propagate tone from
+ *  Workload cards to the Service that fronts them. */
+function worstBackendSeverity(workloadKeys: string[], severityByKey: Map<string, TopologySeverity>): TopologySeverity {
+  let worst: TopologySeverity = null;
+  let worstRank = 0;
+  for (const k of workloadKeys) {
+    const sev = severityByKey.get(k) ?? null;
+    if (!sev) continue;
+    const rank = SEVERITY_RANK[sev] ?? 0;
+    if (rank > worstRank) { worstRank = rank; worst = sev; }
+  }
+  return worst;
+}
+
 /** Match Ingress→Service by exact serviceName lookup. Pre-computes a
  *  service-name index so each ingress costs O(N_targets). */
 function matchIngressesToServices(
@@ -91,18 +111,44 @@ interface WorkloadCardData {
   active: boolean;
 }
 
+/** Severity-tiered tone classes for the workload card. critical → red,
+ *  error → amber, warning → blue, calm (null) → green. */
+const WORKLOAD_TONE_BY_SEVERITY: Record<string, string> = {
+  critical: 'border-danger/60 bg-danger/5',
+  error: 'border-warning/60 bg-warning/5',
+  warning: 'border-info/40 bg-info/5',
+};
+
+const BADGE_TONE_BY_SEVERITY: Record<string, string> = {
+  critical: 'border-danger/40 bg-danger/10 text-danger',
+  error: 'border-warning/40 bg-warning/10 text-warning',
+  warning: 'border-info/40 bg-info/10 text-info',
+};
+
 function WorkloadCard({ data }: { data: WorkloadCardData }) {
   const { workload: wl, onClick, active } = data;
-  const tone = wl.unhealthy_pods > 0
-    ? 'border-warning/60 bg-warning/5'
+  const sev = wl.severity ?? null;
+  const tone = sev
+    ? WORKLOAD_TONE_BY_SEVERITY[sev]
     : 'border-success/40 bg-success/5';
+  const issueCount = wl.active_alerts.length + wl.findings.length;
   return (
     <button
       onClick={onClick}
       className={`flex min-w-[280px] flex-col items-start rounded-lg border p-3 text-left shadow-sm transition-colors ${tone} ${active ? 'ring-2 ring-info' : ''}`}
     >
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
-        {wl.kind ?? 'Standalone pod'}
+      <div className="flex w-full items-baseline justify-between gap-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+          {wl.kind ?? 'Standalone pod'}
+        </div>
+        {sev && issueCount > 0 && (
+          <span
+            className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${BADGE_TONE_BY_SEVERITY[sev]}`}
+            title={`${wl.active_alerts.length} alert${wl.active_alerts.length === 1 ? '' : 's'}, ${wl.findings.length} finding${wl.findings.length === 1 ? '' : 's'} — click to view`}
+          >
+            {sev === 'critical' ? '⛔' : sev === 'error' ? '⚠' : 'ℹ'} {issueCount}
+          </span>
+        )}
       </div>
       <div className="mt-0.5 truncate font-mono text-sm font-bold text-fg" title={wl.name}>
         {wl.name}
@@ -169,20 +215,28 @@ interface ServiceCardData {
   service: TopologyService;
   onClick: () => void;
   active: boolean;
+  /** Worst severity of any backing workload — propagates tone up the graph
+   *  when all of a service's pods are unhealthy. null when calm. */
+  backendSeverity: TopologySeverity;
 }
 
 function ServiceCard({ data }: { data: ServiceCardData }) {
-  const { service: s, onClick, active } = data;
-  // Service tone: warning for type=ExternalName + leaf services with no
-  // pod backends (selector matched nothing → operator probably wants to
-  // see this); otherwise calm purple to distinguish from Workloads.
+  const { service: s, onClick, active, backendSeverity } = data;
+  // Service tone:
+  //   - warning if type=ExternalName + leaf services with no pod backends
+  //     (selector matched nothing → operator probably wants to see this)
+  //   - if backing workloads are sick, tint the service to match the worst
+  //     backend severity (red/amber/blue)
+  //   - otherwise calm purple to distinguish from Workloads.
   const noBackends = s.is_external || s.workload_keys.length === 0;
   const isExternalName = s.type === 'ExternalName';
   const tone = isExternalName
     ? 'border-info/40 bg-info/5'
     : noBackends
       ? 'border-warning/40 bg-warning/5'
-      : 'border-purple-400/40 bg-purple-500/5';
+      : backendSeverity
+        ? WORKLOAD_TONE_BY_SEVERITY[backendSeverity]
+        : 'border-purple-400/40 bg-purple-500/5';
   const portSummary = s.ports.length === 0
     ? '—'
     : s.ports.slice(0, 2).map(p => `${p.port}${p.target_port != null && String(p.target_port) !== String(p.port) ? `→${p.target_port}` : ''}`).join(', ')
@@ -238,14 +292,22 @@ function buildGraph(
     });
   });
 
+  // Index workload severities so service tones can propagate from their
+  // backing workloads. A service inherits the worst severity across its
+  // backends.
+  const workloadSeverityByKey = new Map<string, TopologySeverity>(
+    topo.workloads.map(w => [workloadKeyOf(w), w.severity]),
+  );
   topo.services.forEach((s, i) => {
     const key = serviceKeyOf(s);
+    const backendSeverity = worstBackendSeverity(s.workload_keys, workloadSeverityByKey);
     nodes.push({
       id: key,
       type: 'service',
       position: { x: COL_X.service, y: Y_TOP + i * Y_STEP },
       data: {
         service: s,
+        backendSeverity,
         onClick: () => setSelected(selected === key ? null : key),
         active: selected === key,
       },
@@ -326,6 +388,33 @@ function buildGraph(
     }
   }
 
+  // RCA neighbor overlay — only when the selected workload has issues. Draws
+  // intra-namespace metric_corr edges (computed server-side) as dashed lines
+  // anchored to the right side of each workload node so they don't overlap
+  // with the Service→Workload edges incoming from the left.
+  const selectedWl = selected && topo.workloads.find(w => workloadKeyOf(w) === selected);
+  if (selectedWl && selectedWl.severity) {
+    for (const e of topo.rca_edges) {
+      if (e.from !== selected && e.to !== selected) continue;
+      edges.push({
+        id: `rca:${e.from}->${e.to}`,
+        source: e.from,
+        target: e.to,
+        sourceHandle: undefined,
+        animated: false,
+        style: {
+          stroke: 'var(--color-warning)',
+          strokeWidth: Math.max(1, e.weight * 2),
+          strokeDasharray: '5 4',
+          opacity: 0.7,
+        },
+        label: `corr ${e.weight.toFixed(2)}`,
+        labelStyle: { fontSize: 9, fill: 'var(--color-warning)' },
+        labelBgStyle: { fill: 'var(--color-bg)' },
+      });
+    }
+  }
+
   return { nodes, edges };
 }
 
@@ -381,10 +470,113 @@ function SidePanel({
         </button>
       }
     >
-      <ul className="space-y-2 text-sm">
+      {(workload!.active_alerts.length > 0 || workload!.findings.length > 0) && (
+        <DiagnosisSection workload={workload!} hostId={pickHostFromWorkload(workload!)} />
+      )}
+      <h4 className="mt-3 text-[10px] font-semibold uppercase tracking-wider text-muted">Pods</h4>
+      <ul className="mt-1 space-y-2 text-sm">
         {workload!.pods.map(pod => <PodRow key={pod.pod_uid} pod={pod} navigate={navigate} />)}
       </ul>
     </Card>
+  );
+}
+
+function pickHostFromWorkload(wl: TopologyWorkload): string | null {
+  return wl.pods[0]?.host_id ?? null;
+}
+
+const ALERT_TONE: Record<string, string> = {
+  critical: 'border-danger/40 bg-danger/5 text-danger',
+  error: 'border-warning/40 bg-warning/5 text-warning',
+  warning: 'border-info/40 bg-info/5 text-info',
+  info: 'border-border bg-bg-secondary/40 text-muted',
+};
+
+function DiagnosisSection({ workload, hostId }: { workload: TopologyWorkload; hostId: string | null }) {
+  return (
+    <div className="space-y-2">
+      <h4 className="text-[10px] font-semibold uppercase tracking-wider text-muted">
+        Diagnosis ({workload.active_alerts.length + workload.findings.length})
+      </h4>
+      {workload.active_alerts.length > 0 && (
+        <div className="space-y-1.5">
+          {workload.active_alerts.slice(0, 6).map(a => (
+            <AlertRow key={`${a.type}/${a.container_name}`} alert={a} hostId={hostId} />
+          ))}
+          {workload.active_alerts.length > 6 && (
+            <Link
+              to={`/alerts?q=${encodeURIComponent(workload.name)}`}
+              className="block text-[11px] text-info hover:underline"
+            >
+              +{workload.active_alerts.length - 6} more on the alerts page →
+            </Link>
+          )}
+        </div>
+      )}
+      {workload.findings.length > 0 && (
+        <div className="space-y-1.5">
+          {workload.findings.slice(0, 4).map((f, i) => (
+            <FindingRow key={`${f.container_name}-${i}`} finding={f} hostId={hostId} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AlertRow({ alert, hostId }: { alert: TopologyAlert; hostId: string | null }) {
+  const tone = ALERT_TONE[alert.level] ?? ALERT_TONE.info;
+  // The container detail page is the actionable destination — link to it
+  // when we know which host owns the container. (Cluster-scoped alert types
+  // like pod_pending have host_id=cluster_id, not a host — fall back to the
+  // alerts page for those.)
+  const canLink = !!hostId && !alert.type.startsWith('pod_pending');
+  const containerHref = canLink
+    ? `/hosts/${encodeURIComponent(hostId!)}/containers/${encodeURIComponent(alert.container_name)}`
+    : `/alerts?q=${encodeURIComponent(alert.container_name)}`;
+  return (
+    <Link
+      to={containerHref}
+      className="block rounded border border-border bg-bg-secondary/40 p-1.5 text-xs hover:border-info/40 hover:bg-info/5"
+    >
+      <div className="flex items-center gap-2">
+        <span className={`shrink-0 rounded border px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider ${tone}`}>
+          {alert.level}
+        </span>
+        <span className="truncate font-mono text-fg">{alert.type}</span>
+        <span className="ml-auto truncate text-[10px] text-muted">{alert.container_name.split('/').pop()}</span>
+      </div>
+      {alert.message && (
+        <div className="mt-0.5 line-clamp-2 break-words text-[11px] text-secondary">
+          {alert.message}
+        </div>
+      )}
+    </Link>
+  );
+}
+
+function FindingRow({ finding, hostId }: { finding: TopologyFinding; hostId: string | null }) {
+  const tone = ALERT_TONE[finding.severity] ?? ALERT_TONE.info;
+  const href = hostId
+    ? `/hosts/${encodeURIComponent(hostId)}/containers/${encodeURIComponent(finding.container_name)}`
+    : '#';
+  return (
+    <Link
+      to={href}
+      className="block rounded border border-border bg-bg-secondary/40 p-1.5 text-xs hover:border-info/40 hover:bg-info/5"
+    >
+      <div className="flex items-center gap-2">
+        <span className={`shrink-0 rounded border px-1 py-0.5 text-[9px] font-medium uppercase tracking-wider ${tone}`}>
+          {finding.severity}
+        </span>
+        <span className="truncate text-fg">{finding.title}</span>
+      </div>
+      {finding.suggested_action && (
+        <div className="mt-0.5 text-[11px] text-secondary">
+          → {finding.suggested_action}
+        </div>
+      )}
+    </Link>
   );
 }
 
