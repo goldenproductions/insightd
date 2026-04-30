@@ -32,6 +32,9 @@ export const queryKeys = {
   // Namespace topology graph (cluster → namespace overview)
   namespaceTopology: (clusterId?: string, namespace?: string) => ['namespace-topology', clusterId, namespace] as const,
 
+  // Cluster landing page (lists namespaces + totals)
+  clusterOverview: (clusterId?: string) => ['cluster-overview', clusterId] as const,
+
   // Alerts & Insights
   alerts: () => ['alerts'] as const,
   insights: () => ['insights'] as const,

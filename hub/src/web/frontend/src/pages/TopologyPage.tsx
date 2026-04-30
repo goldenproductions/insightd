@@ -384,7 +384,10 @@ export function TopologyPage() {
   return (
     <div className="animate-fade-in space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <BackLink to={`/hosts`} label="Back to Hosts" />
+        <BackLink
+          to={`/clusters/${encodeURIComponent(data.cluster_id)}`}
+          label={`Back to cluster ${data.cluster_id}`}
+        />
       </div>
       <PageTitle subtitle="Namespace topology">
         <span className="flex items-center gap-2">
