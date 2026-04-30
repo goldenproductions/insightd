@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 42;
+const SCHEMA_VERSION = 43;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -241,6 +241,30 @@ function bootstrap(db: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_k8s_ingresses_cluster
       ON k8s_ingresses (cluster_id, observed_at DESC);
+
+    -- v43: Kubernetes Service inventory (cluster-scoped, leader-published).
+    -- Registry-style upsert by (cluster_id, namespace, name); selector + ports
+    -- are JSON to keep the row count bounded. The topology view joins
+    -- services to workloads by intersecting selector with pod labels.
+    CREATE TABLE IF NOT EXISTS k8s_services (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      cluster_id    TEXT NOT NULL,
+      namespace     TEXT NOT NULL,
+      name          TEXT NOT NULL,
+      type          TEXT NOT NULL,        -- ClusterIP / NodePort / LoadBalancer / ExternalName / Headless
+      cluster_ip    TEXT,                 -- "None" for Headless services
+      external_ips  TEXT,                 -- JSON string[]
+      external_name TEXT,                 -- only set for type=ExternalName
+      selector      TEXT,                 -- JSON Record<string,string>; null means no pod backends
+      ports         TEXT NOT NULL,        -- JSON [{port, targetPort, protocol, name?}]
+      created_at    TEXT,
+      labels        TEXT,
+      observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      removed_at    TEXT,
+      UNIQUE(cluster_id, namespace, name)
+    );
+    CREATE INDEX IF NOT EXISTS idx_k8s_services_cluster
+      ON k8s_services (cluster_id, observed_at DESC);
 
     -- Pods stuck in Pending phase (cluster-scoped, leader-published).
     -- Current-state UPSERT model — same row keyed by (cluster_id, namespace,
@@ -993,6 +1017,31 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_ip TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN host_ip TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN pod_conditions TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 43) {
+    // K8s Service inventory. The topology view replaces its heuristic
+    // ingress→workload matching with real Service-mediated edges.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS k8s_services (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        cluster_id    TEXT NOT NULL,
+        namespace     TEXT NOT NULL,
+        name          TEXT NOT NULL,
+        type          TEXT NOT NULL,
+        cluster_ip    TEXT,
+        external_ips  TEXT,
+        external_name TEXT,
+        selector      TEXT,
+        ports         TEXT NOT NULL,
+        created_at    TEXT,
+        labels        TEXT,
+        observed_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        removed_at    TEXT,
+        UNIQUE(cluster_id, namespace, name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_k8s_services_cluster
+        ON k8s_services (cluster_id, observed_at DESC);
+    `);
   }
 }
 

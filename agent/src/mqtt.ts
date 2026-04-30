@@ -639,6 +639,60 @@ function publishPendingPods(clusterId: string, publisherHostId: string, pods: Pe
   });
 }
 
+interface ServicePayloadItem {
+  namespace: string;
+  name: string;
+  type: string;
+  clusterIp: string | null;
+  externalIps: string[];
+  externalName: string | null;
+  selector: Record<string, string> | null;
+  ports: Array<{
+    name: string | null;
+    port: number;
+    targetPort: number | string | null;
+    protocol: string | null;
+    nodePort: number | null;
+  }>;
+  createdAt: string | null;
+  labels: Record<string, string>;
+}
+
+function publishServices(clusterId: string, publisherHostId: string, services: ServicePayloadItem[]): Promise<void> {
+  const topic = `insightd/_cluster_${clusterId}/services`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    cluster_id: clusterId,
+    publisher_host_id: publisherHostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: services.map(s => ({
+      namespace: s.namespace,
+      name: s.name,
+      type: s.type,
+      cluster_ip: s.clusterIp,
+      external_ips: JSON.stringify(s.externalIps),
+      external_name: s.externalName,
+      selector: s.selector ? JSON.stringify(s.selector) : null,
+      ports: JSON.stringify(s.ports),
+      created_at: s.createdAt,
+      labels: JSON.stringify(s.labels || {}),
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${services.length} services for cluster ${clusterId} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -672,4 +726,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, disconnect, containerInfoToPayload };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, disconnect, containerInfoToPayload };

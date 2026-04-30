@@ -470,10 +470,29 @@ export interface TopologyNode {
   online: boolean;
   pod_count: number;
 }
+export interface TopologyServicePort {
+  name: string | null;
+  port: number;
+  target_port: number | string | null;
+  protocol: string | null;
+  node_port: number | null;
+}
+export interface TopologyService {
+  name: string;
+  type: string;
+  cluster_ip: string | null;
+  external_name: string | null;
+  ports: TopologyServicePort[];
+  /** Workload keys this service routes to (`${kind ?? '_'}${name}`). */
+  workload_keys: string[];
+  /** No selector / empty selector — service has no pod backends. */
+  is_external: boolean;
+}
 export interface NamespaceTopology {
   cluster_id: string;
   namespace: string;
   workloads: TopologyWorkload[];
+  services: TopologyService[];
   ingresses: TopologyIngress[];
   pvcs: TopologyPvc[];
   nodes: TopologyNode[];
