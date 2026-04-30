@@ -445,6 +445,36 @@ export interface TopologyPod {
   host_id: string;
   containers: TopologyContainer[];
 }
+export type TopologySeverity = 'critical' | 'error' | 'warning' | null;
+export interface TopologyAlert {
+  type: string;
+  container_name: string;
+  level: 'critical' | 'error' | 'warning' | 'info';
+  message: string | null;
+  triggered_at: string;
+}
+export interface TopologyFinding {
+  container_name: string;
+  category: string;
+  severity: string;
+  title: string;
+  message: string;
+  suggested_action: string | null;
+  confidence: string | null;
+}
+export interface TopologyRcaEdge {
+  from: string;
+  to: string;
+  weight: number;
+}
+export interface TopologyVolumeMount {
+  type: 'pvc' | 'configMap' | 'secret' | 'emptyDir' | 'hostPath' | 'projected' | 'other';
+  /** PVC name / ConfigMap name / Secret name / hostPath path. Null for
+   *  ambient types (emptyDir, projected). */
+  target_name: string | null;
+  volume_names: string[];
+}
+
 export interface TopologyWorkload {
   kind: string | null;
   name: string;
@@ -452,6 +482,11 @@ export interface TopologyWorkload {
   unhealthy_pods: number;
   pods_by_node: Record<string, number>;
   pods: TopologyPod[];
+  /** Highest severity across alerts + findings (null when calm). */
+  severity: TopologySeverity;
+  active_alerts: TopologyAlert[];
+  findings: TopologyFinding[];
+  volume_mounts: TopologyVolumeMount[];
 }
 export interface TopologyIngress {
   id: number;
@@ -470,13 +505,70 @@ export interface TopologyNode {
   online: boolean;
   pod_count: number;
 }
+export interface TopologyServicePort {
+  name: string | null;
+  port: number;
+  target_port: number | string | null;
+  protocol: string | null;
+  node_port: number | null;
+}
+export interface TopologyService {
+  name: string;
+  type: string;
+  cluster_ip: string | null;
+  external_name: string | null;
+  ports: TopologyServicePort[];
+  /** Workload keys this service routes to (`${kind ?? '_'}${name}`). */
+  workload_keys: string[];
+  /** No selector / empty selector — service has no pod backends. */
+  is_external: boolean;
+}
 export interface NamespaceTopology {
   cluster_id: string;
   namespace: string;
   workloads: TopologyWorkload[];
+  services: TopologyService[];
   ingresses: TopologyIngress[];
   pvcs: TopologyPvc[];
   nodes: TopologyNode[];
+  rca_edges: TopologyRcaEdge[];
+  /** ISO timestamp the response represents — null when live. */
+  at: string | null;
+}
+
+// Cluster overview — list of namespaces + cluster-level totals
+export interface ClusterNode {
+  host_id: string;
+  online: boolean;
+  pod_count: number;
+}
+export interface ClusterNamespaceSummary {
+  namespace: string;
+  workload_count: number;
+  pod_count: number;
+  unhealthy_pod_count: number;
+  ingress_count: number;
+  pvc_count: number;
+  pvc_pending_count: number;
+  active_alert_count: number;
+}
+export interface ClusterOverview {
+  cluster_id: string;
+  nodes: ClusterNode[];
+  namespaces: ClusterNamespaceSummary[];
+  totals: {
+    nodes_online: number;
+    nodes_offline: number;
+    namespaces: number;
+    workloads: number;
+    pods: number;
+    healthy_pods: number;
+    unhealthy_pods: number;
+    ingresses: number;
+    pvcs: number;
+    pvcs_pending: number;
+    active_alerts: number;
+  };
 }
 
 export interface Finding {

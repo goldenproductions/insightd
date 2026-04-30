@@ -1,5 +1,5 @@
 import { parseQuantity } from '../runtime/kubernetes';
-import type { K8sClient, K8sPv, K8sPvc, K8sEvent, K8sIngress, K8sPod } from '../runtime/kubernetes';
+import type { K8sClient, K8sPv, K8sPvc, K8sEvent, K8sIngress, K8sPod, K8sService } from '../runtime/kubernetes';
 
 export interface PvInfo {
   name: string;
@@ -316,4 +316,144 @@ export async function collectPendingPods(client: K8sClient): Promise<PendingPodI
   // included — those are the ones the per-node collectors miss entirely.
   const list = await client.listPods();
   return (list.items || []).map(mapPendingPod).filter((x): x is PendingPodInfo => x !== null);
+}
+
+// ---- Services ---------------------------------------------------------------
+//
+// We capture enough to draw real Ingress→Service→Workload edges in the
+// namespace topology view: the selector (which decides which pods back the
+// Service) and the ports (what the Service exposes). External-only Services
+// (type=ExternalName, or empty selector) are still captured — they're often
+// misconfigured and the user wants to see them as leaf nodes.
+
+export interface ServicePort {
+  name: string | null;
+  port: number;
+  /** Container port the Service forwards to. K8s allows string (named) or
+   *  number (numeric). We preserve the original shape for display. */
+  targetPort: number | string | null;
+  protocol: string | null;
+  nodePort: number | null;
+}
+
+export interface ServiceInfo {
+  namespace: string;
+  name: string;
+  /** ClusterIP / NodePort / LoadBalancer / ExternalName. We default missing
+   *  values to "ClusterIP" — that's what kubectl shows for the omitted-type
+   *  case. */
+  type: string;
+  /** "None" for Headless services. Null means truly unset (rare — almost
+   *  always populated by the API server). */
+  clusterIp: string | null;
+  externalIps: string[];
+  /** Only set when type === "ExternalName". */
+  externalName: string | null;
+  /** Empty object means "no selector — Endpoints managed manually" (a
+   *  pattern used to point at external resources). Distinct from null which
+   *  means the Service spec didn't include a selector field at all. The
+   *  topology join treats both equivalently (no pod backends found). */
+  selector: Record<string, string> | null;
+  ports: ServicePort[];
+  createdAt: string | null;
+  labels: Record<string, string>;
+}
+
+export function mapService(svc: K8sService): ServiceInfo | null {
+  const namespace = svc.metadata?.namespace;
+  const name = svc.metadata?.name;
+  if (!namespace || !name) return null;
+
+  const type = svc.spec?.type ?? 'ClusterIP';
+  const ports: ServicePort[] = (svc.spec?.ports ?? []).map(p => ({
+    name: p.name ?? null,
+    port: p.port,
+    targetPort: p.targetPort ?? null,
+    protocol: p.protocol ?? null,
+    nodePort: p.nodePort ?? null,
+  }));
+
+  return {
+    namespace,
+    name,
+    type,
+    clusterIp: svc.spec?.clusterIP ?? null,
+    externalIps: svc.spec?.externalIPs ?? [],
+    externalName: svc.spec?.externalName ?? null,
+    selector: svc.spec?.selector ?? null,
+    ports,
+    createdAt: svc.metadata?.creationTimestamp ?? null,
+    labels: svc.metadata?.labels ?? {},
+  };
+}
+
+export async function collectServices(client: K8sClient): Promise<ServiceInfo[]> {
+  const list = await client.listServices();
+  return (list.items || []).map(mapService).filter((x): x is ServiceInfo => x !== null);
+}
+
+// ---- Pod volumes ------------------------------------------------------------
+//
+// Per-volume rows derived from pod.spec.volumes[]. The topology view joins
+// these against the existing PVC inventory to draw Workload→PVC edges and
+// renders ConfigMap/Secret references as chips on the workload card.
+
+export type VolumeType = 'pvc' | 'configMap' | 'secret' | 'emptyDir' | 'hostPath' | 'projected' | 'other';
+
+export interface PodVolumeInfo {
+  namespace: string;
+  podUid: string;
+  podName: string;
+  volumeName: string;
+  volumeType: VolumeType;
+  /** Referenced object name for pvc/configMap/secret; the path for hostPath;
+   *  null for ambient types (emptyDir / projected / other) where there's
+   *  nothing to link to. */
+  targetName: string | null;
+}
+
+/** Extract one row per volume in the pod spec. Returns [] for pods without
+ *  a podUid or namespace, since they can't be keyed in the registry. */
+export function mapPodVolumes(pod: K8sPod): PodVolumeInfo[] {
+  const namespace = pod.metadata?.namespace;
+  const podName = pod.metadata?.name;
+  const podUid = pod.metadata?.uid;
+  if (!namespace || !podName || !podUid) return [];
+  const out: PodVolumeInfo[] = [];
+  for (const v of pod.spec?.volumes ?? []) {
+    if (!v.name) continue;
+    let volumeType: VolumeType = 'other';
+    let targetName: string | null = null;
+    if (v.persistentVolumeClaim?.claimName) {
+      volumeType = 'pvc';
+      targetName = v.persistentVolumeClaim.claimName;
+    } else if (v.configMap) {
+      volumeType = 'configMap';
+      targetName = v.configMap.name ?? null;
+    } else if (v.secret) {
+      volumeType = 'secret';
+      targetName = v.secret.secretName ?? null;
+    } else if (v.emptyDir !== undefined) {
+      volumeType = 'emptyDir';
+    } else if (v.hostPath !== undefined) {
+      volumeType = 'hostPath';
+      targetName = v.hostPath.path ?? null;
+    } else if (v.projected !== undefined) {
+      volumeType = 'projected';
+    }
+    out.push({ namespace, podName, podUid, volumeName: v.name, volumeType, targetName });
+  }
+  return out;
+}
+
+export async function collectPodVolumes(client: K8sClient): Promise<PodVolumeInfo[]> {
+  // Cluster-wide pod list (no nodeName filter) so unscheduled pods are also
+  // captured — same rationale as collectPendingPods.
+  const list = await client.listPods();
+  const out: PodVolumeInfo[] = [];
+  for (const pod of list.items || []) {
+    if (pod.status?.phase === 'Succeeded') continue;
+    out.push(...mapPodVolumes(pod));
+  }
+  return out;
 }

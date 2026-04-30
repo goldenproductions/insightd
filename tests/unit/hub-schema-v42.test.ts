@@ -8,10 +8,6 @@ function getColumns(db: any, table: string): string[] {
 }
 
 describe('schema v42', () => {
-  it('reports version 42', () => {
-    assert.equal(SCHEMA_VERSION, 42);
-  });
-
   it('fresh bootstrap has the new k8s pod columns on container_snapshots', () => {
     const db = new Database(':memory:');
     bootstrap(db);
