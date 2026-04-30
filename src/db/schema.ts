@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 40;
+const SCHEMA_VERSION = 41;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -221,6 +221,22 @@ function bootstrap(db: Database.Database): void {
       removed_at      TEXT,
       dismissed_at    TEXT,
       UNIQUE(cluster_id, namespace, name)
+    );
+
+    -- Pending pods (no-op on Docker standalone — see k8s_ingresses note).
+    CREATE TABLE IF NOT EXISTS pending_pods (
+      cluster_id      TEXT NOT NULL,
+      namespace       TEXT NOT NULL,
+      pod_name        TEXT NOT NULL,
+      reason          TEXT,
+      message         TEXT,
+      pod_phase       TEXT NOT NULL,
+      pod_created_at  TEXT,
+      workload_kind   TEXT,
+      workload_name   TEXT,
+      first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, namespace, pod_name)
     );
 
     CREATE TABLE IF NOT EXISTS update_checks (
@@ -890,6 +906,24 @@ function migrate(db: Database.Database, fromVersion: number): void {
   }
   if (fromVersion < 40) {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN last_oom_killed_at TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 41) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_pods (
+        cluster_id      TEXT NOT NULL,
+        namespace       TEXT NOT NULL,
+        pod_name        TEXT NOT NULL,
+        reason          TEXT,
+        message         TEXT,
+        pod_phase       TEXT NOT NULL,
+        pod_created_at  TEXT,
+        workload_kind   TEXT,
+        workload_name   TEXT,
+        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, namespace, pod_name)
+      );
+    `);
   }
 }
 

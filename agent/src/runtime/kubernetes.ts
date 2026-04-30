@@ -45,12 +45,20 @@ interface K8sPodContainer {
   };
 }
 
-interface K8sPod {
+export interface K8sPodCondition {
+  type: string;
+  status: string;
+  reason?: string;
+  message?: string;
+}
+
+export interface K8sPod {
   metadata?: K8sMeta;
   spec?: { nodeName?: string; containers?: K8sPodContainer[] };
   status?: {
     phase?: string;
     containerStatuses?: K8sContainerStatus[];
+    conditions?: K8sPodCondition[];
   };
 }
 

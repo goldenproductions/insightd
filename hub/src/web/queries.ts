@@ -425,6 +425,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   node_pressure: 'error',
   container_memory_saturation: 'error',
   cert_invalid: 'error',
+  pod_pending: 'error',
   high_cpu: 'warning',
   high_memory: 'warning',
   high_host_cpu: 'warning',
@@ -448,6 +449,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'node_pressure' THEN 'error'
     WHEN 'container_memory_saturation' THEN 'error'
     WHEN 'cert_invalid' THEN 'error'
+    WHEN 'pod_pending' THEN 'error'
     WHEN 'high_cpu' THEN 'warning'
     WHEN 'high_memory' THEN 'warning'
     WHEN 'high_host_cpu' THEN 'warning'

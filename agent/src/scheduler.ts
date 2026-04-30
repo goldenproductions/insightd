@@ -4,13 +4,14 @@ import logger = require('../../shared/utils/logger');
 import type { ContainerRuntime } from './runtime/types';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
-const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses } = require('./mqtt') as {
+const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods } = require('./mqtt') as {
   publishCollection: (hostId: string, data: any) => Promise<void>;
   publishUpdates: (hostId: string, updates: any[]) => Promise<void>;
   publishPvs: (clusterId: string, publisherHostId: string, pvs: any[]) => Promise<void>;
   publishPvcs: (clusterId: string, publisherHostId: string, pvcs: any[]) => Promise<void>;
   publishEvents: (clusterId: string, publisherHostId: string, events: any[]) => Promise<void>;
   publishIngresses: (clusterId: string, publisherHostId: string, ingresses: any[]) => Promise<void>;
+  publishPendingPods: (clusterId: string, publisherHostId: string, pods: any[]) => Promise<void>;
 };
 
 interface SchedulerConfig {
@@ -106,28 +107,32 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
       ? (await safeCollect('volumes', () => runtime.listVolumes!())) ?? []
       : [];
 
-    // K8s cluster-scoped inventory (PVs, PVCs, Events) — only the elected
-    // leader publishes so we don't duplicate streams from every node-agent.
+    // K8s cluster-scoped inventory (PVs, PVCs, Events, Ingresses, Pending pods)
+    // — only the elected leader publishes so we don't duplicate streams from
+    // every node-agent.
     if (clusterPublisher && clusterPublisher.leader.isLeader()) {
-      const { collectPvs, collectPvcs, collectEvents, collectIngresses } = require('./collectors/k8s-cluster') as {
+      const { collectPvs, collectPvcs, collectEvents, collectIngresses, collectPendingPods } = require('./collectors/k8s-cluster') as {
         collectPvs: (c: any) => Promise<any[]>;
         collectPvcs: (c: any) => Promise<any[]>;
         collectEvents: (c: any) => Promise<any[]>;
         collectIngresses: (c: any) => Promise<any[]>;
+        collectPendingPods: (c: any) => Promise<any[]>;
       };
       const pvs = await safeCollect('pvs', () => collectPvs(clusterPublisher!.client));
       const pvcs = await safeCollect('pvcs', () => collectPvcs(clusterPublisher!.client));
       const events = await safeCollect('events', () => collectEvents(clusterPublisher!.client));
       const ingresses = await safeCollect('ingresses', () => collectIngresses(clusterPublisher!.client));
+      const pendingPods = await safeCollect('pending-pods', () => collectPendingPods(clusterPublisher!.client));
       if (pvs) await safeCollect('mqtt-pvs', () => publishPvs(clusterPublisher!.clusterId, config.hostId, pvs));
       if (pvcs) await safeCollect('mqtt-pvcs', () => publishPvcs(clusterPublisher!.clusterId, config.hostId, pvcs));
       if (events && events.length > 0) {
         await safeCollect('mqtt-events', () => publishEvents(clusterPublisher!.clusterId, config.hostId, events));
       }
-      // Publish ingresses on every leader cycle (including empty arrays) so
-      // the hub can stamp removed_at on rows that disappeared since last
-      // batch — same registry pattern as `containers`.
+      // Publish ingresses + pending pods on every leader cycle (including
+      // empty arrays) so the hub can prune rows that disappeared since the
+      // last batch — same registry pattern as `containers`.
       if (ingresses) await safeCollect('mqtt-ingresses', () => publishIngresses(clusterPublisher!.clusterId, config.hostId, ingresses));
+      if (pendingPods) await safeCollect('mqtt-pending-pods', () => publishPendingPods(clusterPublisher!.clusterId, config.hostId, pendingPods));
     }
 
     logger.info('scheduler', 'Collection cycle complete');
