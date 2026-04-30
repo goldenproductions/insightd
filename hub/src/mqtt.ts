@@ -214,6 +214,11 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         else logger.info('mqtt', 'Subscribed to insightd/+/pod-volumes');
       });
 
+      client!.subscribe('insightd/+/workload-rollouts', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to workload-rollouts topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/workload-rollouts');
+      });
+
       client!.subscribe('insightd/+/logs/response', { qos: 1 }, (err) => {
         if (err) logger.error('mqtt', 'Failed to subscribe to logs response topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/logs/response');
