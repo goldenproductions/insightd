@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mapPv, mapPvc, mapEvent, mapPendingPod, summarizePendingPod, podWorkload } from '../../agent/src/collectors/k8s-cluster';
-import type { K8sPv, K8sPvc, K8sEvent, K8sPod } from '../../agent/src/runtime/kubernetes';
+import { mapPv, mapPvc, mapEvent, mapPendingPod, summarizePendingPod, podWorkload, mapDeployment, mapStatefulSet, mapDaemonSet } from '../../agent/src/collectors/k8s-cluster';
+import type { K8sPv, K8sPvc, K8sEvent, K8sPod, K8sDeployment, K8sStatefulSet, K8sDaemonSet } from '../../agent/src/runtime/kubernetes';
 
 describe('mapPv', () => {
   it('maps a bound PV with claimRef', () => {
@@ -307,5 +307,143 @@ describe('mapPendingPod', () => {
     assert.equal(out!.podCreatedAt, '2026-04-30T10:00:00Z');
     assert.equal(out!.workloadKind, 'ReplicaSet');
     assert.equal(out!.workloadName, 'web-7d');
+  });
+});
+
+describe('mapDeployment', () => {
+  it('maps a healthy Deployment with all replicas Ready', () => {
+    const d: K8sDeployment = {
+      metadata: { namespace: 'default', name: 'api', generation: 5 },
+      spec: { replicas: 3 },
+      status: { replicas: 3, readyReplicas: 3, updatedReplicas: 3, observedGeneration: 5 },
+    };
+    const out = mapDeployment(d);
+    assert.ok(out);
+    assert.equal(out!.kind, 'Deployment');
+    assert.equal(out!.namespace, 'default');
+    assert.equal(out!.name, 'api');
+    assert.equal(out!.desired, 3);
+    assert.equal(out!.ready, 3);
+    assert.equal(out!.updated, 3);
+    assert.equal(out!.progressDeadlineExceeded, false);
+  });
+
+  it('maps a Deployment with 0 ready (unavailable)', () => {
+    const out = mapDeployment({
+      metadata: { namespace: 'default', name: 'api' },
+      spec: { replicas: 3 },
+      status: { replicas: 3, readyReplicas: 0, updatedReplicas: 3 },
+    });
+    assert.ok(out);
+    assert.equal(out!.ready, 0);
+    assert.equal(out!.desired, 3);
+  });
+
+  it('flags ProgressDeadlineExceeded from conditions', () => {
+    const out = mapDeployment({
+      metadata: { namespace: 'default', name: 'api' },
+      spec: { replicas: 3 },
+      status: {
+        readyReplicas: 1,
+        conditions: [
+          { type: 'Available', status: 'False' },
+          { type: 'Progressing', status: 'False', reason: 'ProgressDeadlineExceeded' },
+        ],
+      },
+    });
+    assert.ok(out);
+    assert.equal(out!.progressDeadlineExceeded, true);
+  });
+
+  it('does not flag ProgressDeadlineExceeded when Progressing=True', () => {
+    const out = mapDeployment({
+      metadata: { namespace: 'default', name: 'api' },
+      spec: { replicas: 3 },
+      status: {
+        readyReplicas: 3,
+        conditions: [{ type: 'Progressing', status: 'True', reason: 'NewReplicaSetAvailable' }],
+      },
+    });
+    assert.ok(out);
+    assert.equal(out!.progressDeadlineExceeded, false);
+  });
+
+  it('skips Deployments with desired=0 (paused/scaled to zero)', () => {
+    const out = mapDeployment({
+      metadata: { namespace: 'default', name: 'idle' },
+      spec: { replicas: 0 },
+      status: {},
+    });
+    assert.equal(out, null);
+  });
+
+  it('returns null without metadata', () => {
+    assert.equal(mapDeployment({}), null);
+    assert.equal(mapDeployment({ metadata: { name: 'no-ns' }, spec: { replicas: 1 } }), null);
+  });
+});
+
+describe('mapStatefulSet', () => {
+  it('maps a healthy StatefulSet', () => {
+    const s: K8sStatefulSet = {
+      metadata: { namespace: 'default', name: 'db' },
+      spec: { replicas: 3 },
+      status: { readyReplicas: 3, updatedReplicas: 3 },
+    };
+    const out = mapStatefulSet(s);
+    assert.ok(out);
+    assert.equal(out!.kind, 'StatefulSet');
+    assert.equal(out!.desired, 3);
+    assert.equal(out!.ready, 3);
+  });
+
+  it('maps a partially-ready StatefulSet with mid-rollout updated count', () => {
+    const out = mapStatefulSet({
+      metadata: { namespace: 'default', name: 'db' },
+      spec: { replicas: 3 },
+      status: { readyReplicas: 3, updatedReplicas: 1 },
+    });
+    assert.ok(out);
+    assert.equal(out!.ready, 3);
+    assert.equal(out!.updated, 1);
+    // STS doesn't carry ProgressDeadlineExceeded — always false here.
+    assert.equal(out!.progressDeadlineExceeded, false);
+  });
+
+  it('skips desired=0', () => {
+    assert.equal(mapStatefulSet({ metadata: { namespace: 'default', name: 'idle' }, spec: { replicas: 0 } }), null);
+  });
+});
+
+describe('mapDaemonSet', () => {
+  it('maps a healthy DaemonSet', () => {
+    const d: K8sDaemonSet = {
+      metadata: { namespace: 'kube-system', name: 'kube-proxy' },
+      status: { desiredNumberScheduled: 5, numberReady: 5, updatedNumberScheduled: 5 },
+    };
+    const out = mapDaemonSet(d);
+    assert.ok(out);
+    assert.equal(out!.kind, 'DaemonSet');
+    assert.equal(out!.desired, 5);
+    assert.equal(out!.ready, 5);
+    assert.equal(out!.updated, 5);
+  });
+
+  it('skips taint-only DaemonSet (desiredNumberScheduled=0, no nodes match)', () => {
+    const out = mapDaemonSet({
+      metadata: { namespace: 'kube-system', name: 'gpu-driver' },
+      status: { desiredNumberScheduled: 0 },
+    });
+    assert.equal(out, null);
+  });
+
+  it('maps a DaemonSet that is mid-rollout (updated < desired)', () => {
+    const out = mapDaemonSet({
+      metadata: { namespace: 'kube-system', name: 'kube-proxy' },
+      status: { desiredNumberScheduled: 5, numberReady: 5, updatedNumberScheduled: 2 },
+    });
+    assert.ok(out);
+    assert.equal(out!.desired, 5);
+    assert.equal(out!.updated, 2);
   });
 });

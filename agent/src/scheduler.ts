@@ -4,7 +4,7 @@ import logger = require('../../shared/utils/logger');
 import type { ContainerRuntime } from './runtime/types';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
-const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes } = require('./mqtt') as {
+const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts } = require('./mqtt') as {
   publishCollection: (hostId: string, data: any) => Promise<void>;
   publishUpdates: (hostId: string, updates: any[]) => Promise<void>;
   publishPvs: (clusterId: string, publisherHostId: string, pvs: any[]) => Promise<void>;
@@ -14,6 +14,7 @@ const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvent
   publishPendingPods: (clusterId: string, publisherHostId: string, pods: any[]) => Promise<void>;
   publishServices: (clusterId: string, publisherHostId: string, services: any[]) => Promise<void>;
   publishPodVolumes: (clusterId: string, publisherHostId: string, volumes: any[]) => Promise<void>;
+  publishWorkloadRollouts: (clusterId: string, publisherHostId: string, rollouts: any[]) => Promise<void>;
 };
 
 interface SchedulerConfig {
@@ -113,7 +114,7 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     // Services) — only the elected leader publishes so we don't duplicate
     // streams from every node-agent.
     if (clusterPublisher && clusterPublisher.leader.isLeader()) {
-      const { collectPvs, collectPvcs, collectEvents, collectIngresses, collectPendingPods, collectServices, collectPodVolumes } = require('./collectors/k8s-cluster') as {
+      const { collectPvs, collectPvcs, collectEvents, collectIngresses, collectPendingPods, collectServices, collectPodVolumes, collectWorkloadRollouts } = require('./collectors/k8s-cluster') as {
         collectPvs: (c: any) => Promise<any[]>;
         collectPvcs: (c: any) => Promise<any[]>;
         collectEvents: (c: any) => Promise<any[]>;
@@ -121,6 +122,7 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
         collectPendingPods: (c: any) => Promise<any[]>;
         collectServices: (c: any) => Promise<any[]>;
         collectPodVolumes: (c: any) => Promise<any[]>;
+        collectWorkloadRollouts: (c: any) => Promise<any[]>;
       };
       const pvs = await safeCollect('pvs', () => collectPvs(clusterPublisher!.client));
       const pvcs = await safeCollect('pvcs', () => collectPvcs(clusterPublisher!.client));
@@ -129,18 +131,20 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
       const pendingPods = await safeCollect('pending-pods', () => collectPendingPods(clusterPublisher!.client));
       const services = await safeCollect('services', () => collectServices(clusterPublisher!.client));
       const podVolumes = await safeCollect('pod-volumes', () => collectPodVolumes(clusterPublisher!.client));
+      const workloadRollouts = await safeCollect('workload-rollouts', () => collectWorkloadRollouts(clusterPublisher!.client));
       if (pvs) await safeCollect('mqtt-pvs', () => publishPvs(clusterPublisher!.clusterId, config.hostId, pvs));
       if (pvcs) await safeCollect('mqtt-pvcs', () => publishPvcs(clusterPublisher!.clusterId, config.hostId, pvcs));
       if (events && events.length > 0) {
         await safeCollect('mqtt-events', () => publishEvents(clusterPublisher!.clusterId, config.hostId, events));
       }
-      // Publish ingresses, pending pods, services on every leader cycle
-      // (including empty arrays) so the hub can prune rows that disappeared
-      // since the last batch — same registry pattern as `containers`.
+      // Publish ingresses, pending pods, services, workload rollouts on every
+      // leader cycle (including empty arrays) so the hub can prune rows that
+      // disappeared since the last batch — same registry pattern as `containers`.
       if (ingresses) await safeCollect('mqtt-ingresses', () => publishIngresses(clusterPublisher!.clusterId, config.hostId, ingresses));
       if (pendingPods) await safeCollect('mqtt-pending-pods', () => publishPendingPods(clusterPublisher!.clusterId, config.hostId, pendingPods));
       if (services) await safeCollect('mqtt-services', () => publishServices(clusterPublisher!.clusterId, config.hostId, services));
       if (podVolumes) await safeCollect('mqtt-pod-volumes', () => publishPodVolumes(clusterPublisher!.clusterId, config.hostId, podVolumes));
+      if (workloadRollouts) await safeCollect('mqtt-workload-rollouts', () => publishWorkloadRollouts(clusterPublisher!.clusterId, config.hostId, workloadRollouts));
     }
 
     logger.info('scheduler', 'Collection cycle complete');

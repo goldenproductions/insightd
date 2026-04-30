@@ -229,6 +229,63 @@ export interface K8sService {
   status?: { loadBalancer?: { ingress?: K8sIngressLoadBalancerEntry[] } };
 }
 
+// ---- Workload rollouts (apps/v1) -------------------------------------------
+//
+// Captured by the leader-elected publisher to feed `workload_unavailable`,
+// `workload_degraded`, and `workload_rollout_stuck` alerts. We model only
+// the status fields the rollout collector reads — full Deployment/StatefulSet/
+// DaemonSet schemas are huge and the rest is not used.
+
+export interface K8sWorkloadCondition {
+  type?: string;
+  status?: string;
+  reason?: string;
+  message?: string;
+  lastTransitionTime?: string;
+}
+
+export interface K8sDeployment {
+  metadata?: K8sMeta & { generation?: number };
+  spec?: { replicas?: number };
+  status?: {
+    replicas?: number;
+    readyReplicas?: number;
+    availableReplicas?: number;
+    updatedReplicas?: number;
+    unavailableReplicas?: number;
+    observedGeneration?: number;
+    conditions?: K8sWorkloadCondition[];
+  };
+}
+
+export interface K8sStatefulSet {
+  metadata?: K8sMeta & { generation?: number };
+  spec?: { replicas?: number };
+  status?: {
+    replicas?: number;
+    readyReplicas?: number;
+    availableReplicas?: number;
+    updatedReplicas?: number;
+    currentReplicas?: number;
+    currentRevision?: string;
+    updateRevision?: string;
+    observedGeneration?: number;
+  };
+}
+
+export interface K8sDaemonSet {
+  metadata?: K8sMeta & { generation?: number };
+  status?: {
+    desiredNumberScheduled?: number;
+    currentNumberScheduled?: number;
+    numberReady?: number;
+    numberAvailable?: number;
+    numberUnavailable?: number;
+    updatedNumberScheduled?: number;
+    observedGeneration?: number;
+  };
+}
+
 export interface K8sLeaseSpec {
   holderIdentity?: string | null;
   leaseDurationSeconds?: number;
@@ -421,6 +478,21 @@ export class K8sClient {
   /** List cluster-wide Services. Same leader-elected publisher cadence. */
   async listServices(): Promise<K8sList<K8sService>> {
     return this.get<K8sList<K8sService>>('/api/v1/services');
+  }
+
+  /** List cluster-wide Deployments. Leader-elected, fed to the rollout collector. */
+  async listDeployments(): Promise<K8sList<K8sDeployment>> {
+    return this.get<K8sList<K8sDeployment>>('/apis/apps/v1/deployments');
+  }
+
+  /** List cluster-wide StatefulSets. */
+  async listStatefulSets(): Promise<K8sList<K8sStatefulSet>> {
+    return this.get<K8sList<K8sStatefulSet>>('/apis/apps/v1/statefulsets');
+  }
+
+  /** List cluster-wide DaemonSets. */
+  async listDaemonSets(): Promise<K8sList<K8sDaemonSet>> {
+    return this.get<K8sList<K8sDaemonSet>>('/apis/apps/v1/daemonsets');
   }
 
   /** Returns null on 404 (lease doesn't exist yet). */

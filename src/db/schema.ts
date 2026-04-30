@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 44;
+const SCHEMA_VERSION = 45;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -273,6 +273,23 @@ function bootstrap(db: Database.Database): void {
       first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
       last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
       PRIMARY KEY (cluster_id, namespace, pod_name)
+    );
+
+    -- Workload rollouts (no-op on Docker standalone — k8s only).
+    CREATE TABLE IF NOT EXISTS workload_rollouts (
+      cluster_id                  TEXT NOT NULL,
+      kind                        TEXT NOT NULL,
+      namespace                   TEXT NOT NULL,
+      name                        TEXT NOT NULL,
+      desired                     INTEGER NOT NULL,
+      ready                       INTEGER NOT NULL,
+      updated                     INTEGER NOT NULL,
+      generation                  INTEGER NOT NULL,
+      observed_generation         INTEGER NOT NULL,
+      progress_deadline_exceeded  INTEGER NOT NULL DEFAULT 0,
+      first_seen_at               TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at                TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (cluster_id, kind, namespace, name)
     );
 
     CREATE TABLE IF NOT EXISTS update_checks (
@@ -1000,6 +1017,25 @@ function migrate(db: Database.Database, fromVersion: number): void {
         target_name  TEXT,
         observed_at  TEXT NOT NULL DEFAULT (datetime('now')),
         PRIMARY KEY (cluster_id, namespace, pod_uid, volume_name)
+      );
+    `);
+  }
+  if (fromVersion < 45) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS workload_rollouts (
+        cluster_id                  TEXT NOT NULL,
+        kind                        TEXT NOT NULL,
+        namespace                   TEXT NOT NULL,
+        name                        TEXT NOT NULL,
+        desired                     INTEGER NOT NULL,
+        ready                       INTEGER NOT NULL,
+        updated                     INTEGER NOT NULL,
+        generation                  INTEGER NOT NULL,
+        observed_generation         INTEGER NOT NULL,
+        progress_deadline_exceeded  INTEGER NOT NULL DEFAULT 0,
+        first_seen_at               TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at                TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (cluster_id, kind, namespace, name)
       );
     `);
   }

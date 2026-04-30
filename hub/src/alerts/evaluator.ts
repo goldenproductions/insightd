@@ -37,6 +37,12 @@ interface AlertsConfig {
   certExpiryWarnDays?: number;
   podPending?: boolean;
   podPendingMinutes?: number;
+  workloadUnavailable?: boolean;
+  workloadUnavailableMinutes?: number;
+  workloadDegraded?: boolean;
+  workloadDegradedMinutes?: number;
+  workloadRolloutStuck?: boolean;
+  workloadRolloutStuckMinutes?: number;
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
@@ -161,6 +167,21 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
   // Pods stuck Pending past threshold — cluster-scoped (leader-published).
   if (alerts.podPending !== false) {
     triggered.push(...checkPodPending(db, alerts.podPendingMinutes ?? 5));
+  }
+
+  // Workload rollout health — cluster-scoped (leader-published). Three
+  // distinct conditions, each with its own threshold and severity:
+  //   - workload_unavailable    (ready=0,         critical, default 10min)
+  //   - workload_degraded       (partial,         error,    default 10min)
+  //   - workload_rollout_stuck  (updates pending, warning,  default 10min)
+  if (alerts.workloadUnavailable !== false) {
+    triggered.push(...checkWorkloadUnavailable(db, alerts.workloadUnavailableMinutes ?? 10));
+  }
+  if (alerts.workloadDegraded !== false) {
+    triggered.push(...checkWorkloadDegraded(db, alerts.workloadDegradedMinutes ?? 10));
+  }
+  if (alerts.workloadRolloutStuck !== false) {
+    triggered.push(...checkWorkloadRolloutStuck(db, alerts.workloadRolloutStuckMinutes ?? 10));
   }
 
   // Check for resolutions of active alerts
@@ -595,6 +616,132 @@ function checkPodPending(db: Database.Database, thresholdMinutes: number): Alert
   });
 }
 
+interface WorkloadRolloutRow {
+  cluster_id: string;
+  kind: string;
+  namespace: string;
+  name: string;
+  desired: number;
+  ready: number;
+  updated: number;
+  generation: number;
+  observed_generation: number;
+  progress_deadline_exceeded: number;
+  age_minutes: number;
+}
+
+/**
+ * Build a (cluster_id-scoped) target string for workload alerts. Format
+ * mirrors `Kind/namespace/name`, matching the K8sIdentityStrip's display
+ * format and giving the UI router a parseable key. The whole string also
+ * keeps `target` unique across kinds — two different StatefulSets vs
+ * Deployments with the same namespace+name can both fire independently.
+ */
+function workloadTarget(kind: string, namespace: string, name: string): string {
+  return `${kind}/${namespace}/${name}`;
+}
+
+/**
+ * Fire `workload_unavailable` (critical) when a workload has been at zero
+ * Ready replicas with at least one desired replica for at least
+ * `thresholdMinutes`. This is the workload-scoped equivalent of
+ * `container_down` — every pod is dead, the service is offline.
+ *
+ * Threshold is gated by `first_seen_at` rather than tracking the time the
+ * row entered the unavailable state. Practically the difference is small:
+ * a fresh workload with ready=0 is either rolling out (will go ready
+ * within a minute or two) or genuinely broken (will still be ready=0 ten
+ * minutes later). False positives during initial rollout are absorbed by
+ * the threshold itself.
+ */
+function checkWorkloadUnavailable(db: Database.Database, thresholdMinutes: number): AlertItem[] {
+  const rows = db.prepare(
+    "SELECT cluster_id, kind, namespace, name, desired, ready, updated, " +
+    " generation, observed_generation, progress_deadline_exceeded, " +
+    " CAST((strftime('%s','now') - strftime('%s', first_seen_at)) / 60 AS INTEGER) AS age_minutes " +
+    " FROM workload_rollouts " +
+    "WHERE ready = 0 AND desired > 0 AND first_seen_at < datetime('now', ?)"
+  ).all(`-${thresholdMinutes} minutes`) as WorkloadRolloutRow[];
+
+  return rows.map(r => ({
+    type: 'workload_unavailable',
+    hostId: r.cluster_id,
+    target: workloadTarget(r.kind, r.namespace, r.name),
+    message: `${r.kind} "${r.namespace}/${r.name}" is unavailable — 0/${r.desired} replicas Ready for ${r.age_minutes}m`,
+    value: r.ready,
+    threshold: r.desired,
+  }));
+}
+
+/**
+ * Fire `workload_degraded` (error) when a workload has been partially
+ * unavailable (ready < desired but ready > 0) for at least
+ * `thresholdMinutes`. Distinct from `workload_unavailable` so the user can
+ * mute "degraded" while keeping the louder "unavailable" pages on.
+ *
+ * The two conditions are mutually exclusive on a row — when ready drops
+ * to zero the row trips unavailable instead, and degraded resolves.
+ */
+function checkWorkloadDegraded(db: Database.Database, thresholdMinutes: number): AlertItem[] {
+  const rows = db.prepare(
+    "SELECT cluster_id, kind, namespace, name, desired, ready, updated, " +
+    " generation, observed_generation, progress_deadline_exceeded, " +
+    " CAST((strftime('%s','now') - strftime('%s', first_seen_at)) / 60 AS INTEGER) AS age_minutes " +
+    " FROM workload_rollouts " +
+    "WHERE ready > 0 AND ready < desired AND first_seen_at < datetime('now', ?)"
+  ).all(`-${thresholdMinutes} minutes`) as WorkloadRolloutRow[];
+
+  return rows.map(r => ({
+    type: 'workload_degraded',
+    hostId: r.cluster_id,
+    target: workloadTarget(r.kind, r.namespace, r.name),
+    message: `${r.kind} "${r.namespace}/${r.name}" is degraded — ${r.ready}/${r.desired} replicas Ready for ${r.age_minutes}m`,
+    value: r.ready,
+    threshold: r.desired,
+  }));
+}
+
+/**
+ * Fire `workload_rollout_stuck` (warning) when a rollout isn't progressing.
+ * Two signals, OR'd:
+ *   1. Deployment with Progressing=False, reason=ProgressDeadlineExceeded
+ *      (the controller has explicitly given up). Fires immediately —
+ *      ProgressDeadline is K8s-level and already much longer than our
+ *      threshold (default 600s upstream).
+ *   2. updated < desired sustained for `thresholdMinutes` — covers
+ *      StatefulSets and DaemonSets that don't have ProgressDeadline,
+ *      and also Deployments where the rollout is still wedged but
+ *      hasn't yet hit the K8s deadline.
+ *
+ * We don't fire if ready=0 (that's already workload_unavailable, louder).
+ */
+function checkWorkloadRolloutStuck(db: Database.Database, thresholdMinutes: number): AlertItem[] {
+  const rows = db.prepare(
+    "SELECT cluster_id, kind, namespace, name, desired, ready, updated, " +
+    " generation, observed_generation, progress_deadline_exceeded, " +
+    " CAST((strftime('%s','now') - strftime('%s', first_seen_at)) / 60 AS INTEGER) AS age_minutes " +
+    " FROM workload_rollouts " +
+    "WHERE ready > 0 AND (" +
+    "  progress_deadline_exceeded = 1 " +
+    "  OR (updated < desired AND first_seen_at < datetime('now', ?))" +
+    ")"
+  ).all(`-${thresholdMinutes} minutes`) as WorkloadRolloutRow[];
+
+  return rows.map(r => {
+    const reason = r.progress_deadline_exceeded === 1
+      ? 'ProgressDeadlineExceeded'
+      : `${r.updated}/${r.desired} updated`;
+    return {
+      type: 'workload_rollout_stuck',
+      hostId: r.cluster_id,
+      target: workloadTarget(r.kind, r.namespace, r.name),
+      message: `${r.kind} "${r.namespace}/${r.name}" rollout is stuck (${reason})`,
+      value: r.updated,
+      threshold: r.desired,
+    };
+  });
+}
+
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {
   const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
   const endpoints = (getEndpoints(db) as Array<{ id: number; name: string; url: string; enabled: number }>).filter(ep => ep.enabled);
@@ -809,6 +956,34 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
         ).get(alert.host_id, ns, pod);
         isResolved = !row;
       }
+    } else if (alert.alert_type === 'workload_unavailable'
+            || alert.alert_type === 'workload_degraded'
+            || alert.alert_type === 'workload_rollout_stuck') {
+      // target = "Kind/namespace/name", host_id = cluster_id. Resolved when
+      // the row is gone OR the specific condition has cleared. The three
+      // alerts are mutually-exclusive: ready=0 → unavailable, partial →
+      // degraded, full but updates pending → stuck. So when ready transitions
+      // up, unavailable resolves and degraded may trip; when ready hits
+      // desired, both unavailable and degraded resolve.
+      const parts = alert.target.split('/');
+      if (parts.length === 3) {
+        const [kind, ns, name] = parts;
+        const row = db.prepare(
+          'SELECT desired, ready, updated, progress_deadline_exceeded ' +
+          'FROM workload_rollouts ' +
+          'WHERE cluster_id = ? AND kind = ? AND namespace = ? AND name = ?'
+        ).get(alert.host_id, kind, ns, name) as
+          { desired: number; ready: number; updated: number; progress_deadline_exceeded: number } | undefined;
+        if (!row) {
+          isResolved = true;
+        } else if (alert.alert_type === 'workload_unavailable') {
+          isResolved = row.ready > 0;
+        } else if (alert.alert_type === 'workload_degraded') {
+          isResolved = row.ready === 0 || row.ready >= row.desired;
+        } else /* workload_rollout_stuck */ {
+          isResolved = row.progress_deadline_exceeded !== 1 && row.updated >= row.desired;
+        }
+      }
     }
 
     if (isResolved) {
@@ -847,6 +1022,9 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'cert_expiring_soon': return `Certificate for "${target}" is no longer expiring soon`;
     case 'cert_invalid': return `Certificate for "${target}" is valid again`;
     case 'pod_pending': return `Pod "${target}" is no longer Pending`;
+    case 'workload_unavailable': return `Workload "${target}" has Ready replicas again`;
+    case 'workload_degraded': return `Workload "${target}" is fully Ready`;
+    case 'workload_rollout_stuck': return `Workload "${target}" rollout is progressing`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

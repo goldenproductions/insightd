@@ -7,28 +7,31 @@ function getColumns(db: any, table: string): string[] {
   return (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map(r => r.name);
 }
 
-describe('schema v44', () => {
-  it('fresh bootstrap creates pod_volumes with the expected columns', () => {
+describe('schema v45', () => {
+  it('fresh bootstrap creates workload_rollouts with the expected columns', () => {
     const db = new Database(':memory:');
     bootstrap(db);
-    const cols = getColumns(db, 'pod_volumes');
+    const cols = getColumns(db, 'workload_rollouts');
     for (const expected of [
-      'cluster_id', 'namespace', 'pod_uid', 'pod_name',
-      'volume_name', 'volume_type', 'target_name', 'observed_at',
+      'cluster_id', 'kind', 'namespace', 'name',
+      'desired', 'ready', 'updated',
+      'generation', 'observed_generation',
+      'progress_deadline_exceeded',
+      'first_seen_at', 'last_seen_at',
     ]) {
-      assert.ok(cols.includes(expected), `pod_volumes has ${expected}`);
+      assert.ok(cols.includes(expected), `workload_rollouts has ${expected}`);
     }
     db.close();
   });
 
-  it('migrating from v43 adds pod_volumes', () => {
+  it('migrating from v44 adds workload_rollouts', () => {
     const db = new Database(':memory:');
     bootstrap(db);
-    db.exec('DROP TABLE pod_volumes');
-    db.prepare("UPDATE meta SET value = '43' WHERE key = 'schema_version'").run();
+    db.exec('DROP TABLE workload_rollouts');
+    db.prepare("UPDATE meta SET value = '44' WHERE key = 'schema_version'").run();
     bootstrap(db);
-    const cols = getColumns(db, 'pod_volumes');
-    assert.ok(cols.includes('volume_type'));
+    const cols = getColumns(db, 'workload_rollouts');
+    assert.ok(cols.includes('progress_deadline_exceeded'));
     const v = (db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get() as { value: string }).value;
     assert.equal(parseInt(v, 10), SCHEMA_VERSION);
     db.close();

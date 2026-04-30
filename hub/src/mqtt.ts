@@ -4,7 +4,7 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
@@ -15,6 +15,7 @@ const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, inge
   ingestServices: (db: Database.Database, clusterId: string, services: any[]) => void;
   ingestPodVolumes: (db: Database.Database, clusterId: string, volumes: any[]) => void;
   ingestPendingPods: (db: Database.Database, clusterId: string, pods: any[]) => void;
+  ingestWorkloadRollouts: (db: Database.Database, clusterId: string, rollouts: any[]) => void;
   ingestNodeConditions: (db: Database.Database, hostId: string, conditions: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
   upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
@@ -254,6 +255,7 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
           if (type === 'pending-pods')  { handlePendingPods(db, clusterId, payload); return; }
           if (type === 'services')      { handleServices(db, clusterId, payload); return; }
           if (type === 'pod-volumes')   { handlePodVolumes(db, clusterId, payload); return; }
+          if (type === 'workload-rollouts') { handleWorkloadRollouts(db, clusterId, payload); return; }
         }
 
         if (type === 'collection') {
@@ -630,6 +632,36 @@ function handlePodVolumes(db: Database.Database, clusterId: string, payload: Pod
   }));
   ingestPodVolumes(db, clusterId, volumes);
   logger.info('mqtt', `Ingested ${volumes.length} pod volumes for cluster ${clusterId}`);
+}
+
+interface WorkloadRolloutsPayload {
+  items?: Array<{
+    kind: string;
+    namespace: string;
+    name: string;
+    desired: number;
+    ready: number;
+    updated: number;
+    generation: number;
+    observed_generation: number;
+    progress_deadline_exceeded: boolean;
+  }>;
+}
+
+function handleWorkloadRollouts(db: Database.Database, clusterId: string, payload: WorkloadRolloutsPayload): void {
+  const rollouts = (payload.items || []).map(r => ({
+    kind: r.kind,
+    namespace: r.namespace,
+    name: r.name,
+    desired: r.desired,
+    ready: r.ready,
+    updated: r.updated,
+    generation: r.generation,
+    observedGeneration: r.observed_generation,
+    progressDeadlineExceeded: !!r.progress_deadline_exceeded,
+  }));
+  ingestWorkloadRollouts(db, clusterId, rollouts);
+  logger.info('mqtt', `Ingested ${rollouts.length} workload rollouts for cluster ${clusterId}`);
 }
 
 function handleEvents(db: Database.Database, clusterId: string, payload: EventsPayload): void {

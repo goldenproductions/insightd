@@ -87,6 +87,12 @@ const config = Object.freeze({
     certCheckIntervalHours: parseInt(process.env.INSIGHTD_CERT_CHECK_INTERVAL_HOURS || '6', 10),
     podPending: process.env.INSIGHTD_ALERT_POD_PENDING !== 'false',
     podPendingMinutes: parseInt(process.env.INSIGHTD_ALERT_POD_PENDING_MINUTES || '5', 10),
+    workloadUnavailable: process.env.INSIGHTD_ALERT_WORKLOAD_UNAVAILABLE !== 'false',
+    workloadUnavailableMinutes: parseInt(process.env.INSIGHTD_ALERT_WORKLOAD_UNAVAILABLE_MINUTES || '10', 10),
+    workloadDegraded: process.env.INSIGHTD_ALERT_WORKLOAD_DEGRADED !== 'false',
+    workloadDegradedMinutes: parseInt(process.env.INSIGHTD_ALERT_WORKLOAD_DEGRADED_MINUTES || '10', 10),
+    workloadRolloutStuck: process.env.INSIGHTD_ALERT_WORKLOAD_ROLLOUT_STUCK !== 'false',
+    workloadRolloutStuckMinutes: parseInt(process.env.INSIGHTD_ALERT_WORKLOAD_ROLLOUT_STUCK_MINUTES || '10', 10),
   }),
 
   // AI diagnosis (Gemini)
