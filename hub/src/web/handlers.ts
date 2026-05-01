@@ -763,14 +763,44 @@ function handleGetBaselines(req: HandlerReq, res: ServerResponse, db: Database.D
 // will actually fire an alert.
 
 const { getTimePeriod } = require('../insights/baselines');
-const { robustZ } = require('../insights/stats');
+const { robustZ, median } = require('../insights/stats');
 import {
   HOST_CPU_PREDICTION_SATURATION_PCT,
   HOST_LOAD_PREDICTION_SATURATION,
   HOST_MEMORY_PREDICTION_SATURATION_FRACTION,
   CONTAINER_CPU_WARN_PCT,
   CONTAINER_MEMORY_OVER_P95_MB,
+  ROBUST_NOISE_FLOOR,
 } from '../insights/thresholds';
+
+// Number of recent snapshots to median-smooth the live value over before
+// comparing it against the baseline. A single snapshot is too noisy: the same
+// entity can flip between z=0 and z=30 across consecutive page refreshes
+// purely from ordinary cycle-to-cycle fluctuation. At the default 5-min
+// agent cadence this is ~25 min of context, which is well inside the
+// shortest baseline bucket (6 h) so we don't blur regime boundaries.
+const LIVE_SMOOTH_SAMPLES = 5;
+
+/**
+ * Median-aggregate the per-metric values across a list of recent snapshot
+ * rows. For each metric column, picks all non-null values from the rows and
+ * returns their median, or null if every sample was null.
+ */
+function smoothLiveValues(rows: Array<Record<string, number | null>>): Record<string, number | null> {
+  if (rows.length === 0) return {};
+  const out: Record<string, number | null> = {};
+  const metrics = new Set<string>();
+  for (const r of rows) for (const k of Object.keys(r)) metrics.add(k);
+  for (const m of metrics) {
+    const vals: number[] = [];
+    for (const r of rows) {
+      const v = r[m];
+      if (typeof v === 'number' && Number.isFinite(v)) vals.push(v);
+    }
+    out[m] = vals.length === 0 ? null : median(vals);
+  }
+  return out;
+}
 
 interface CapacityFloor {
   /** Threshold in the metric's native unit. Null when the metric drives no
@@ -867,13 +897,22 @@ function buildMetricViews(
     const allBucket = buckets.find(b => b.time_bucket === 'all');
     const floor = floorFor(metric, allBucket?.p95 ?? null);
 
+    const noiseFloor = ROBUST_NOISE_FLOOR[metric] ?? 0;
+
     const bucketViews = buckets.map(b => {
       const isCurrent =
         b.time_bucket === 'all' ||
         b.time_bucket === period ||
         (b.time_bucket === 'weekday' && !isWeekend) ||
         (b.time_bucket === 'weekend' && isWeekend);
-      const z = (live != null && b.p50 != null) ? robustZ(live, b.p50, b.mad) : null;
+      // Suppress the z-pill when the absolute deviation from p50 is below the
+      // metric's noise floor — without this, idle entities with a tiny MAD
+      // produce huge z-values from ordinary flicker (an AdGuard CPU at 5.5%
+      // vs a p50 of 5.05% with MAD 0.04 would otherwise show z=11).
+      const dev = (live != null && b.p50 != null) ? Math.abs(live - b.p50) : null;
+      const z = (live != null && b.p50 != null && dev != null && dev >= noiseFloor)
+        ? robustZ(live, b.p50, b.mad)
+        : null;
       return {
         time_bucket: b.time_bucket,
         p50: b.p50,
@@ -915,13 +954,17 @@ function handleGetHostBaselinesView(req: HandlerReq, res: ServerResponse, db: Da
   const hostId = decodeURIComponent(params.hostId);
   const rows = insightQueries.getBaselinesWithMad(db, 'host', hostId) as RawBaseline[];
 
-  const latest = db.prepare(
-    'SELECT cpu_percent, memory_used_mb, memory_total_mb, load_1, load_5, swap_used_mb, gpu_utilization_percent, cpu_temperature_celsius, gpu_temperature_celsius, disk_read_bytes_per_sec, disk_write_bytes_per_sec, net_rx_bytes_per_sec, net_tx_bytes_per_sec FROM host_snapshots WHERE host_id = ? ORDER BY collected_at DESC LIMIT 1'
-  ).get(hostId) as Record<string, number | null> | undefined;
+  // Pull the last N snapshots and median-smooth the live value (see
+  // LIVE_SMOOTH_SAMPLES). memory_total_mb is taken from the most recent row
+  // only — it's a static capacity number, not a metric to smooth.
+  const recent = db.prepare(
+    'SELECT cpu_percent, memory_used_mb, memory_total_mb, load_1, load_5, swap_used_mb, gpu_utilization_percent, cpu_temperature_celsius, gpu_temperature_celsius, disk_read_bytes_per_sec, disk_write_bytes_per_sec, net_rx_bytes_per_sec, net_tx_bytes_per_sec FROM host_snapshots WHERE host_id = ? ORDER BY collected_at DESC LIMIT ?'
+  ).all(hostId, LIVE_SMOOTH_SAMPLES) as Array<Record<string, number | null>>;
 
-  const memoryTotalMb = latest?.memory_total_mb ?? null;
-  const liveValues: Record<string, number | null> = latest
-    ? { ...latest, load_15: null }   // baselines don't track load_15, harmless
+  const memoryTotalMb = recent[0]?.memory_total_mb ?? null;
+  const smoothed = smoothLiveValues(recent);
+  const liveValues: Record<string, number | null> = recent.length > 0
+    ? { ...smoothed, load_15: null }   // baselines don't track load_15, harmless
     : {};
 
   return {
@@ -937,11 +980,11 @@ function handleGetContainerBaselinesView(req: HandlerReq, res: ServerResponse, d
   const entityId = `${hostId}/${containerName}`;
   const rows = insightQueries.getBaselinesWithMad(db, 'container', entityId) as RawBaseline[];
 
-  const latest = db.prepare(
-    'SELECT cpu_percent, memory_mb FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1'
-  ).get(hostId, containerName) as Record<string, number | null> | undefined;
+  const recent = db.prepare(
+    'SELECT cpu_percent, memory_mb FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT ?'
+  ).all(hostId, containerName, LIVE_SMOOTH_SAMPLES) as Array<Record<string, number | null>>;
 
-  const liveValues: Record<string, number | null> = latest ?? {};
+  const liveValues: Record<string, number | null> = smoothLiveValues(recent);
 
   return {
     host_id: hostId,

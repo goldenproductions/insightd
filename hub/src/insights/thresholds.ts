@@ -69,3 +69,32 @@ export const CONTAINER_CPU_WARN_PCT = 50;
  *  Absolute floor on top of the relative-to-P95 check, so a container whose
  *  P95 is 50 MB doesn't alert for routine 60 MB blips. */
 export const CONTAINER_MEMORY_OVER_P95_MB = 500;
+
+// ── Robust z-score noise floors ─────────────────────────────────────────────
+//
+// Per-metric absolute deviation floor for robust-z comparisons. Below this
+// |value − p50|, the deviation is treated as noise regardless of how the
+// MAD-derived z works out. Without this, an entity whose baseline is naturally
+// low-variance (idle CPU, quiet network, small heap) produces a tiny MAD —
+// and any normal flicker turns into a "z=20" alarm.
+//
+// Imported by:
+//   - hub/src/insights/diagnosis/context.ts — gates the rateAgainstBaseline
+//     classification used by diagnosers.
+//   - hub/src/web/handlers.ts (BaselinesViewer) — gates the live z-pill so
+//     it stops flickering on entities with tiny MAD relative to p50.
+export const ROBUST_NOISE_FLOOR: Record<string, number> = {
+  cpu_percent: 10,
+  memory_mb: 50,
+  memory_used_mb: 100,
+  swap_used_mb: 50,
+  load_1: 1,
+  load_5: 1,
+  net_rx_bytes_per_sec: 102_400,    // 100 KB/s
+  net_tx_bytes_per_sec: 102_400,
+  disk_read_bytes_per_sec: 1_048_576,  // 1 MB/s
+  disk_write_bytes_per_sec: 1_048_576,
+  cpu_temperature_celsius: 5,
+  gpu_temperature_celsius: 5,
+  gpu_utilization_percent: 10,
+};

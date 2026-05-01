@@ -11,20 +11,10 @@ import type {
   TrendDirection, BaselineComparison, DiagnosisLogs,
 } from './types';
 import { robustZ as computeRobustZ } from '../stats';
+import { ROBUST_NOISE_FLOOR } from '../thresholds';
 
 const { getBaselines } = require('../detector') as {
   getBaselines: (db: Database.Database, entityType: string, entityId: string, hour?: number) => Record<string, BaselineRow>;
-};
-
-// Noise floor per metric: below this absolute deviation from the median we
-// short-circuit to 'normal' regardless of robust-z. Prevents idle containers
-// (0.3% CPU with a MAD of 0.05) from looking "critical" on tiny fluctuations.
-// Mirrors the MIN_ABSOLUTE_DEVIATION constants in detector.ts.
-const ROBUST_NOISE_FLOOR: Record<string, number> = {
-  cpu_percent: 10,
-  memory_mb: 50,
-  memory_used_mb: 100,
-  load_5: 1,
 };
 
 interface LatestContainerRow {

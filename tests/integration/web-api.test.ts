@@ -710,6 +710,85 @@ describe('Web API integration', () => {
     assert.ok(mem.live_value < mem.capacity_floor);
   });
 
+  it('GET /api/hosts/:hostId/baselines smooths live value across last 5 snapshots', async () => {
+    // Snapshots have a noisy single-sample value (90) but the surrounding samples
+    // are calm. The displayed live_value should be the median, not the latest.
+    seedHost(db, 'h1', recent);
+    const t = (offsetSec: number) => ts(new Date(NOW - offsetSec * 1000));
+    seedHostSnapshots(db, [
+      { hostId: 'h1', cpu: 32, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: t(60 * 25) },
+      { hostId: 'h1', cpu: 31, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: t(60 * 20) },
+      { hostId: 'h1', cpu: 33, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: t(60 * 15) },
+      { hostId: 'h1', cpu: 30, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: t(60 * 10) },
+      { hostId: 'h1', cpu: 90, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: t(60 * 5) },
+    ]);
+    seedBaselines(db, [
+      { entityType: 'host', entityId: 'h1', metric: 'cpu_percent', timeBucket: 'all', p50: 30, p75: 35, p90: 38, p95: 40, p99: 45, min: 5, max: 70, mad: 5, madSampleCount: 500, sampleCount: 500 },
+    ]);
+
+    const res = await fetch(port, '/api/hosts/h1/baselines');
+    assert.equal(res.status, 200);
+    const cpu = res.json().metrics.find((m: any) => m.metric === 'cpu_percent');
+    // Median of [32, 31, 33, 30, 90] is 32 — the noisy 90 is rejected by the smoothing.
+    assert.equal(cpu.live_value, 32, 'live_value uses median of last 5 snapshots, not latest');
+  });
+
+  it('GET /api/hosts/:hostId/baselines suppresses z-pill below noise floor', async () => {
+    // CPU live=33, p50=30 → |dev|=3, well below the 10-percent noise floor for cpu_percent.
+    // A pathologically tiny MAD would otherwise produce z=30 and flicker red.
+    seedHost(db, 'h1', recent);
+    seedHostSnapshots(db, [{ hostId: 'h1', cpu: 33, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: recent }]);
+    seedBaselines(db, [
+      { entityType: 'host', entityId: 'h1', metric: 'cpu_percent', timeBucket: 'all', p50: 30, p75: 31, p90: 32, p95: 33, p99: 35, min: 28, max: 36, mad: 0.1, madSampleCount: 500, sampleCount: 500 },
+    ]);
+
+    const res = await fetch(port, '/api/hosts/h1/baselines');
+    assert.equal(res.status, 200);
+    const cpu = res.json().metrics.find((m: any) => m.metric === 'cpu_percent');
+    const allBucket = cpu.buckets.find((b: any) => b.time_bucket === 'all');
+    assert.equal(allBucket.live_robust_z, null, 'z suppressed when |live - p50| < noise floor');
+  });
+
+  it('GET /api/hosts/:hostId/baselines computes z-pill above noise floor', async () => {
+    // Same baseline as the suppression test but live=80 — well above the noise floor.
+    seedHost(db, 'h1', recent);
+    seedHostSnapshots(db, [{ hostId: 'h1', cpu: 80, memTotal: 8000, memUsed: 4000, memAvail: 4000, load1: 0.5, load5: 0.5, at: recent }]);
+    seedBaselines(db, [
+      { entityType: 'host', entityId: 'h1', metric: 'cpu_percent', timeBucket: 'all', p50: 30, p75: 31, p90: 32, p95: 33, p99: 35, min: 28, max: 36, mad: 5, madSampleCount: 500, sampleCount: 500 },
+    ]);
+
+    const res = await fetch(port, '/api/hosts/h1/baselines');
+    assert.equal(res.status, 200);
+    const cpu = res.json().metrics.find((m: any) => m.metric === 'cpu_percent');
+    const allBucket = cpu.buckets.find((b: any) => b.time_bucket === 'all');
+    assert.ok(allBucket.live_robust_z != null && allBucket.live_robust_z > 5, 'z computed when |live - p50| ≥ noise floor');
+  });
+
+  it('GET /api/hosts/:hostId/containers/:name/baselines smooths container live value', async () => {
+    // Bursty single-sample CPU spike washes out under median-of-5.
+    seedHost(db, 'h1', recent);
+    const t = (offsetSec: number) => ts(new Date(NOW - offsetSec * 1000));
+    seedContainerSnapshots(db, [
+      { hostId: 'h1', name: 'nginx', cpu: 0.2, mem: 200, at: t(60 * 25) },
+      { hostId: 'h1', name: 'nginx', cpu: 0.3, mem: 205, at: t(60 * 20) },
+      { hostId: 'h1', name: 'nginx', cpu: 0.2, mem: 210, at: t(60 * 15) },
+      { hostId: 'h1', name: 'nginx', cpu: 0.25, mem: 215, at: t(60 * 10) },
+      { hostId: 'h1', name: 'nginx', cpu: 5.0, mem: 220, at: t(60 * 5) },
+    ]);
+    seedBaselines(db, [
+      { entityType: 'container', entityId: 'h1/nginx', metric: 'cpu_percent', timeBucket: 'all', p50: 0.2, p75: 0.3, p90: 0.4, p95: 0.5, p99: 0.7, min: 0.1, max: 1.0, mad: 0.05, madSampleCount: 300, sampleCount: 300 },
+    ]);
+
+    const res = await fetch(port, '/api/hosts/h1/containers/nginx/baselines');
+    assert.equal(res.status, 200);
+    const cpu = res.json().metrics.find((m: any) => m.metric === 'cpu_percent');
+    // Median of [0.2, 0.3, 0.2, 0.25, 5.0] = 0.25 (the 5.0 spike doesn't dominate).
+    assert.equal(cpu.live_value, 0.25, 'container live_value smoothed across 5 samples');
+    // |0.25 - 0.2| = 0.05, well below the 10-pct cpu_percent noise floor → z suppressed.
+    const allBucket = cpu.buckets.find((b: any) => b.time_bucket === 'all');
+    assert.equal(allBucket.live_robust_z, null, 'tiny deviation suppressed even though MAD is small');
+  });
+
   it('GET /api/health-scores returns all scores', async () => {
     seedHealthScores(db, [{ entityType: 'host', entityId: 'h1', score: 95 }]);
     const res = await fetch(port, '/api/health-scores');
