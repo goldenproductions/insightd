@@ -105,6 +105,24 @@ describe('HTTP Monitor API', () => {
     assert.equal(res.status, 404);
   });
 
+  it('GET /api/endpoints/:id/checks?at=<iso> pins the window end', async () => {
+    const queries = require('../../hub/src/http-monitor/queries');
+    const { id } = queries.createEndpoint(db, { name: 'Pinned', url: 'https://t.com' });
+    const { seedHttpChecks } = require('../helpers/db');
+    const fmt = (d: Date) => d.toISOString().replace('T', ' ').slice(0, 19);
+    const now = Date.now();
+    seedHttpChecks(db, [
+      { endpointId: id, statusCode: 200, responseTimeMs: 11, isUp: true, at: fmt(new Date(now - 30 * 3600 * 1000)) },
+      { endpointId: id, statusCode: 200, responseTimeMs: 22, isUp: true, at: fmt(new Date(now - 1 * 3600 * 1000)) },
+    ]);
+    const at = new Date(now - 24 * 3600 * 1000).toISOString();
+    const res = await fetch(port, `/api/endpoints/${id}/checks?hours=12&at=${encodeURIComponent(at)}`);
+    assert.equal(res.status, 200);
+    const rows = res.json();
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].response_time_ms, 11);
+  });
+
   it('DELETE /api/endpoints/:id without auth and no password set allows access', async () => {
     const res = await fetch(port, '/api/endpoints/1', { method: 'DELETE' });
     // No INSIGHTD_ADMIN_PASSWORD set = auth disabled = access allowed

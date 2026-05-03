@@ -45,7 +45,7 @@ export const queryKeys = {
   // Endpoints
   endpoints: () => ['endpoints'] as const,
   endpoint: (endpointId?: string) => ['endpoint', endpointId] as const,
-  endpointChecks: (endpointId?: string) => ['endpoint-checks', endpointId] as const,
+  endpointChecks: (endpointId?: string, hours?: number, at?: string | null) => ['endpoint-checks', endpointId, hours ?? 24, at ?? null] as const,
   ingresses: () => ['ingresses', 'discovered'] as const,
 
   // Containers (container listing keyed by host)

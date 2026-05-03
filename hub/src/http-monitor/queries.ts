@@ -132,12 +132,22 @@ function deleteEndpoint(db: Database.Database, id: number): { deleted: boolean }
   return { deleted: result.changes > 0 };
 }
 
-function getChecks(db: Database.Database, endpointId: number, hours: number): HttpCheck[] {
-  const cutoff = `datetime('now', '-${Math.floor(hours)} hours')`;
+function getChecks(db: Database.Database, endpointId: number, hours: number, endIso?: string): HttpCheck[] {
+  const h = Math.floor(hours);
+  if (endIso) {
+    return db.prepare(`
+      SELECT id, status_code, response_time_ms, is_up, error, checked_at
+      FROM http_checks
+      WHERE endpoint_id = ?
+        AND datetime(checked_at) >= datetime(?, '-${h} hours')
+        AND datetime(checked_at) <= datetime(?)
+      ORDER BY checked_at DESC
+    `).all(endpointId, endIso, endIso) as HttpCheck[];
+  }
   return db.prepare(`
     SELECT id, status_code, response_time_ms, is_up, error, checked_at
     FROM http_checks
-    WHERE endpoint_id = ? AND checked_at >= ${cutoff}
+    WHERE endpoint_id = ? AND datetime(checked_at) >= datetime('now', '-${h} hours')
     ORDER BY checked_at DESC
   `).all(endpointId) as HttpCheck[];
 }
