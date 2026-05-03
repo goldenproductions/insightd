@@ -36,7 +36,11 @@ function stopScheduler(): void {
  * Hub scheduler — runs digest and alert jobs.
  * In hub mode: only digest + alerts (data comes via MQTT).
  */
-function startHubScheduler(db: Database.Database, config: HubConfig): void {
+interface HubSchedulerContext {
+  requestLogs?: (hostId: string, containerId: string, options: { lines: number; stream: string }) => Promise<any[]>;
+}
+
+function startHubScheduler(db: Database.Database, config: HubConfig, ctx?: HubSchedulerContext): void {
   const { buildDigest } = require('./digest/builder');
   const { sendDigest } = require('./digest/sender');
 
@@ -100,6 +104,16 @@ function startHubScheduler(db: Database.Database, config: HubConfig): void {
     await safeCollect('rca-graph', () => buildGraph(db));
     await safeCollect('insights', () => generateInsights(db, baselineCache));
     await safeCollect('anomaly-detection', () => runAnomalyDetection(db));
+    // Drain template mining over every live container, so healthy containers
+    // also accrue baselines and the `template_burst_events` table fills
+    // outside of incident-only paths. Skipped when no MQTT log helper is
+    // wired (e.g. tests).
+    if (ctx?.requestLogs) {
+      const { runPeriodicMine } = require('./insights/diagnosis/periodicMine') as {
+        runPeriodicMine: (db: Database.Database, requestLogs: any) => number;
+      };
+      await safeCollect('periodic-mine', () => runPeriodicMine(db, ctx.requestLogs!));
+    }
   }, { timezone: config.timezone }));
   logger.info('scheduler', 'Insights engine scheduled: every 15 minutes');
 

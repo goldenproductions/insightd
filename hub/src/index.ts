@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     };
     const { startSubscriber, disconnect } = mqttModule;
     const { startHubScheduler, stopScheduler } = require('./scheduler') as {
-      startHubScheduler: (db: Database.Database, config: any) => void;
+      startHubScheduler: (db: Database.Database, config: any, ctx?: { requestLogs?: any }) => void;
       stopScheduler: () => void;
     };
 
@@ -51,7 +51,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    startHubScheduler(db, config);
+    startHubScheduler(db, config, { requestLogs: mqttModule.requestContainerLogs });
 
     let webServer: Server | undefined;
     if (config.web.enabled) {
