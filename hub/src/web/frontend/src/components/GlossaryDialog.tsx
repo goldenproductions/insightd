@@ -42,7 +42,7 @@ export function GlossaryDialog({ open, topic, onClose }: Props) {
       <div className="flex h-[min(80vh,640px)] min-h-[420px] flex-col">
         <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
           <div className="flex items-center gap-2">
-            <span className="rounded bg-info/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-info">Glossary</span>
+            <span className="rounded bg-info/10 px-1.5 py-0.5 text-[11px] font-semibold text-info">Glossary</span>
             <h3 className="text-sm font-semibold text-fg">Insightd terminology</h3>
           </div>
           <button
@@ -59,7 +59,7 @@ export function GlossaryDialog({ open, topic, onClose }: Props) {
           <nav aria-label="Glossary topics" className="w-56 shrink-0 overflow-y-auto border-r border-border bg-bg-secondary/40 p-3">
             {GLOSSARY_BY_CATEGORY.map(group => (
               <div key={group.category} className="mb-3">
-                <div className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted">{group.category}</div>
+                <div className="mb-1 px-2 text-xs font-semibold text-secondary">{group.category}</div>
                 <ul className="space-y-0.5">
                   {group.entries.map(e => {
                     const isActive = e.id === active;
@@ -104,7 +104,7 @@ function RelatedTopics({ ids, onJump }: { ids: string[]; onJump: (id: string) =>
   if (valid.length === 0) return null;
   return (
     <div className="mt-6 border-t border-border pt-4">
-      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted">See also</div>
+      <div className="mb-2 text-xs font-semibold text-secondary">See also</div>
       <div className="flex flex-wrap gap-2">
         {valid.map(e => (
           <button
