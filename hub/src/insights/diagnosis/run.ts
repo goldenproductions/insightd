@@ -88,6 +88,19 @@ function persistFindings(
   `);
 
   for (const finding of findings) {
+    // Evidence is persisted as JSON. Two on-disk shapes are tolerated by the
+    // UI parser:
+    //   1. Legacy: `string[]` — what the diagnoser used to emit.
+    //   2. Rich:   `{ lines: string[], log_bursts: LogBurstRef[] }` — emitted
+    //      whenever the finding has structured log-burst evidence so the
+    //      InsightsPage can render a "Co-occurring logs" subsection.
+    // The rich shape is only used when there's something to put in it; an
+    // unchanged finding without bursts still serialises as a plain array
+    // for forwards-compat with any external consumer of the column.
+    const evidenceJson = (finding.logBursts && finding.logBursts.length > 0)
+      ? JSON.stringify({ lines: finding.evidence, log_bursts: finding.logBursts })
+      : JSON.stringify(finding.evidence);
+
     insert.run(
       'container',
       entityId,
@@ -97,7 +110,7 @@ function persistFindings(
       // message: keep a condensed version for backward compat with old UI
       finding.suggestedAction,
       null, null, null,
-      JSON.stringify(finding.evidence),
+      evidenceJson,
       finding.suggestedAction,
       finding.confidence,
     );

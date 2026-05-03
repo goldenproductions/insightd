@@ -24,7 +24,7 @@
  */
 
 import type Database from 'better-sqlite3';
-import type { DiagnosisContext, Finding, FindingSignal, Neighbor } from '../types';
+import type { DiagnosisContext, Finding, FindingSignal, LogBurstRef, Neighbor } from '../types';
 import { bucket, formatDuration } from '../signals/formatters';
 import { labelForTag } from '../templateClassifier';
 import { rankEvidence } from '../rank';
@@ -75,6 +75,12 @@ export function diagnoseUnified(
   const { containerName } = ctx.entity;
   const baseEvidence = buildBaseEvidence(ctx);
 
+  // 2a. Recent burst events from `template_burst_events` — structured
+  // evidence that survives past the in-memory log cache window so the
+  // persisted insight on InsightsPage can render a "Co-occurring logs"
+  // subsection. Best-effort; never throws.
+  const logBursts = loadRecentLogBursts(options, ctx.entity);
+
   // 2. PPR neighbors (best-effort — never throws).
   const neighbors = runPPR(options, ctx.entity);
   const neighborEvidence = neighbors.length > 0
@@ -123,6 +129,7 @@ export function diagnoseUnified(
       suggestedAction: `Nothing obvious stands out in metrics or logs. Check the full container logs for application errors. If the issue persists after a restart, investigate config or upstream dependencies.`,
       signals: fallbackSignals,
       evidenceRanked: rankEvidence(fallbackSignals),
+      logBursts: logBursts.length > 0 ? logBursts : undefined,
     }];
   }
 
@@ -166,7 +173,48 @@ export function diagnoseUnified(
     signals,
     evidenceRanked: rankEvidence(signals),
     neighbors: neighbors.length > 0 ? neighbors : undefined,
+    logBursts: logBursts.length > 0 ? logBursts : undefined,
   }];
+}
+
+function loadRecentLogBursts(
+  options: UnifiedDiagnoserOptions,
+  entity: DiagnosisContext['entity'],
+): LogBurstRef[] {
+  if (!options.db) return [];
+  try {
+    const { getRecentLogBurstsForEntity } = require('../logCache') as {
+      getRecentLogBurstsForEntity: (
+        db: Database.Database,
+        hostId: string,
+        containerName: string,
+        lookbackMs?: number,
+        limit?: number,
+      ) => Array<{
+        id: number;
+        template_id: number;
+        template: string;
+        semantic_tag: string | null;
+        ts: string;
+        batch_count: number;
+        baseline_rate: number;
+        intensity: number;
+      }>;
+    };
+    const rows = getRecentLogBurstsForEntity(options.db, entity.hostId, entity.containerName);
+    return rows.map((r) => ({
+      id: r.id,
+      template_id: r.template_id,
+      template: r.template,
+      semantic_tag: r.semantic_tag,
+      ts: r.ts,
+      batch_count: r.batch_count,
+      baseline_rate: r.baseline_rate,
+      intensity: r.intensity,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**

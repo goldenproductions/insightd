@@ -217,6 +217,24 @@ export interface RankedEvidence {
   score: number;
 }
 
+/**
+ * Reference to a `template_burst_events` row attached to a finding as
+ * structured evidence. The diagnoser fills these in from the recent-bursts
+ * lookup; the persisted insights row carries them through to the UI so the
+ * InsightCard can render a "Co-occurring logs" subsection without having to
+ * re-derive the data from log lines.
+ */
+export interface LogBurstRef {
+  id: number;
+  template_id: number;
+  template: string;
+  semantic_tag: string | null;
+  ts: string;
+  batch_count: number;
+  baseline_rate: number;
+  intensity: number;
+}
+
 export interface Finding {
   diagnoser: string;
   severity: 'critical' | 'warning' | 'info';
@@ -224,6 +242,13 @@ export interface Finding {
   conclusion: string;
   evidence: string[];
   suggestedAction: string;
+  /**
+   * Structured references to recent log bursts on the entity. Populated by
+   * the unified diagnoser from `template_burst_events`. Empty when no recent
+   * bursts; persisted alongside `evidence` in `insights.evidence` JSON so
+   * the InsightCard can render them as a "Co-occurring logs" subsection.
+   */
+  logBursts?: LogBurstRef[];
   /**
    * ISO timestamp for when this conclusion was first reached. Populated by
    * the sticky-findings layer in `run.ts` — while the conclusion + severity

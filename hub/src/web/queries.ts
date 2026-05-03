@@ -3142,6 +3142,65 @@ function getClusterOverview(db: Database.Database, clusterId: string, offlineThr
 }
 
 /**
+ * Image-wide Drain template catalog for a container, overlaid with this
+ * specific container's recent spike summary (last hour). Templates that
+ * fired abnormally on this container come first, sorted by max intensity;
+ * everything else is ordered by lifetime occurrence count. The spike
+ * fields are nullable — calm templates have all four set to null.
+ *
+ * Drives the unified <LogPatternsList /> in the container-detail Explore
+ * drawer (replaces the previous separate "patterns" + "bursts" cards).
+ */
+function getLogPatternsForContainer(
+  db: Database.Database,
+  hostId: string,
+  containerName: string,
+  imageKey: string,
+  limit: number = 20,
+): Array<{
+  template_hash: string;
+  template: string;
+  occurrence_count: number;
+  semantic_tag: string | null;
+  first_seen: string;
+  last_seen: string;
+  spike_count: number | null;
+  max_intensity: number | null;
+  latest_spike_ts: string | null;
+  latest_batch_count: number | null;
+}> {
+  return db.prepare(`
+    SELECT lt.template_hash, lt.template, lt.occurrence_count,
+           lt.semantic_tag, lt.first_seen, lt.last_seen,
+           spk.spike_count, spk.max_intensity, spk.latest_spike_ts,
+           spk.latest_batch_count
+    FROM log_templates lt
+    LEFT JOIN (
+      SELECT template_id,
+             COUNT(*) AS spike_count,
+             MAX(intensity) AS max_intensity,
+             MAX(ts) AS latest_spike_ts,
+             (
+               SELECT batch_count FROM template_burst_events b2
+               WHERE b2.template_id = b.template_id
+                 AND b2.host_id = ? AND b2.container_name = ?
+                 AND b2.ts >= datetime('now', '-1 hour')
+               ORDER BY b2.ts DESC LIMIT 1
+             ) AS latest_batch_count
+      FROM template_burst_events b
+      WHERE host_id = ? AND container_name = ?
+        AND ts >= datetime('now', '-1 hour')
+      GROUP BY template_id
+    ) spk ON spk.template_id = lt.id
+    WHERE lt.image = ?
+    ORDER BY (spk.max_intensity IS NULL),
+             spk.max_intensity DESC,
+             lt.occurrence_count DESC
+    LIMIT ?
+  `).all(hostId, containerName, hostId, containerName, imageKey, limit) as any[];
+}
+
+/**
  * Per-container Drain template burst events within a window centered on
  * `centerIso`. Joins `template_burst_events` to `log_templates` so callers get
  * the template text + semantic tag without a second round-trip. Newest first.
@@ -3186,4 +3245,4 @@ function getLogBursts(
   `).all(hostId, containerName, fromIso, toIso, limit) as any[];
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview, getLogBursts };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview, getLogBursts, getLogPatternsForContainer };
