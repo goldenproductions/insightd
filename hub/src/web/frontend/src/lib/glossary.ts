@@ -16,7 +16,7 @@ export interface GlossaryEntry {
 const Para = (...children: ReactNode[]) => h('p', { className: 'text-sm text-fg leading-relaxed' }, ...children);
 const Code = (text: string) => h('code', { className: 'rounded bg-bg-secondary px-1 py-0.5 font-mono text-[12px] text-fg' }, text);
 const Strong = (text: string) => h('strong', { className: 'font-semibold text-fg' }, text);
-const H = (text: string) => h('h4', { className: 'mt-4 mb-1.5 text-xs font-semibold uppercase tracking-wider text-muted' }, text);
+const H = (text: string) => h('h4', { className: 'mt-4 mb-1 text-sm font-semibold text-fg' }, text);
 const List = (items: ReactNode[]) =>
   h('ul', { className: 'space-y-1 pl-4 list-disc text-sm text-fg' },
     ...items.map((it, i) => h('li', { key: i, className: 'leading-relaxed' }, it)));
@@ -227,6 +227,60 @@ const ENTRIES: GlossaryEntry[] = [
       Para(
         'Live alerts are about "what should I do right now?". Historical anomalies are about "what should I be aware of?". ',
         'A spike that already passed doesn\'t need an immediate response, but knowing it happened helps you understand whether your service is stable.',
+      ),
+    ),
+  },
+  {
+    id: 'log-patterns',
+    title: 'Log patterns',
+    category: 'Detectors',
+    blurb: 'Drain-mined log templates with per-container spike overlay',
+    related: ['anomaly-detection', 'baselines'],
+    body: Group(
+      Para(
+        'A ', Strong('log pattern'), ' is the structural template behind a family of log lines. ',
+        'insightd runs every container\'s logs through ', Strong('Drain3'),
+        ', which masks variable tokens (numbers, IPs, UUIDs, timestamps) so concrete lines like ',
+        Code('Connected client abc-123 in 8 ms'),
+        ' and ',
+        Code('Connected client xyz-9 in 14 ms'),
+        ' collapse into a single pattern: ',
+        Code('Connected client <*> in <*> ms'), '.',
+      ),
+      H('Image-scoped catalog'),
+      Para(
+        'Patterns are stored per ', Strong('image'),
+        ', not per container — every nginx instance contributes to the same set of nginx patterns, because the application emits the same shape of log lines regardless of which host it runs on. ',
+        'The lifetime occurrence count (', Code('×N'), ') is the total times that template has been seen across every container running this image.',
+      ),
+      H('"Spiking" annotation'),
+      Para(
+        'When a template fires noticeably above its historical rate on ', Strong('this specific container'),
+        ' in the last hour, the row is highlighted: warning-tinted left border, a ',
+        Code('Spiking'), ' badge, and an alternate meta line showing the latest spike\'s age + batch count + intensity multiplier (',
+        Code('max 26× baseline'), ' = the spike fired 26× more than the historical average).',
+      ),
+      H('When a spike qualifies'),
+      List([
+        Group(Strong('Rate-based'),
+          ': the template\'s batch count is ', Code('≥ 2.5×'),
+          ' its historical 15-min baseline rate (lifetime occurrences ÷ age of the template, scaled to 15-minute buckets).'),
+        Group(Strong('New + frequent'),
+          ': the template was first seen in this batch ', Strong('and'),
+          ' fired ≥ 3 times, or the template carries a semantic tag (', Code('oom'), ', ',
+          Code('conn_refused'), ', etc.) and fired ≥ 3 times.'),
+      ]),
+      H('Where rows come from'),
+      Para(
+        'Rows are sourced from two tables: ',
+        Code('log_templates'), ' (the image-wide lifetime catalog) ',
+        'is left-joined onto ', Code('template_burst_events'),
+        ' (per-container spike events with a 15-day TTL). Templates with active spikes float to the top of the list, sorted by max intensity; everything else falls below in lifetime-occurrence order.',
+      ),
+      H('When mining runs'),
+      Para(
+        'A periodic ', Code('*/15'), ' cron fetches recent log lines for every live container and feeds them through Drain. ',
+        'Unhealthy-transition events also pre-warm the cache off-cycle, so spikes around an incident are captured immediately rather than waiting for the next tick.',
       ),
     ),
   },
