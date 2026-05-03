@@ -437,6 +437,50 @@ export function _clearCache(): void {
   pendingFetches.clear();
 }
 
+export interface RecentBurstRef {
+  id: number;
+  template_id: number;
+  template: string;
+  template_hash: string;
+  semantic_tag: string | null;
+  ts: string;
+  batch_count: number;
+  baseline_rate: number;
+  intensity: number;
+}
+
+/**
+ * Recent burst events for a container, joined with the template text + tag.
+ * Used by the diagnoser to attach structured "co-occurring logs" evidence to
+ * findings, so the InsightsPage can render them with stable template ids and
+ * intensity scores instead of re-deriving the data from log lines on render.
+ *
+ * Returns at most `limit` rows, newest first then by intensity, within the
+ * lookback window.
+ */
+export function getRecentLogBurstsForEntity(
+  db: Database.Database,
+  hostId: string,
+  containerName: string,
+  lookbackMs: number = 60 * 60 * 1000,
+  limit: number = 5,
+): RecentBurstRef[] {
+  const sinceIso = new Date(Date.now() - Math.max(60_000, lookbackMs))
+    .toISOString().slice(0, 19).replace('T', ' ');
+  return db.prepare(`
+    SELECT b.id, b.template_id, b.semantic_tag, b.ts,
+           b.batch_count, b.baseline_rate, b.intensity,
+           lt.template AS template,
+           lt.template_hash AS template_hash
+    FROM template_burst_events b
+    INNER JOIN log_templates lt ON lt.id = b.template_id
+    WHERE b.host_id = ? AND b.container_name = ?
+      AND b.ts >= ?
+    ORDER BY b.ts DESC, b.intensity DESC
+    LIMIT ?
+  `).all(hostId, containerName, sinceIso, limit) as RecentBurstRef[];
+}
+
 /**
  * Best-effort image-key lookup for callers that don't have the image at hand
  * (e.g. the container detail HTTP path). Checks `update_checks` for the most
@@ -471,5 +515,6 @@ module.exports = {
   fetchLogsBackground,
   invalidateLogs,
   resolveImageKey,
+  getRecentLogBurstsForEntity,
   _clearCache,
 };

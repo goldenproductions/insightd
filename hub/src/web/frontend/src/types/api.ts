@@ -997,6 +997,21 @@ export interface BaselineRow {
 }
 
 // Insights
+/**
+ * Persisted log-burst reference embedded in `InsightRow.evidence` JSON.
+ * Mirrors the backend `LogBurstRef` shape (hub/src/insights/diagnosis/types.ts).
+ */
+export interface InsightLogBurst {
+  id: number;
+  template_id: number;
+  template: string;
+  semantic_tag: string | null;
+  ts: string;
+  batch_count: number;
+  baseline_rate: number;
+  intensity: number;
+}
+
 export interface InsightRow {
   id: number;
   entity_type: string;
@@ -1008,7 +1023,12 @@ export interface InsightRow {
   metric: string | null;
   current_value: number | null;
   baseline_value: number | null;
-  /** JSON-encoded array of evidence strings (schema v20+). */
+  /**
+   * Persisted evidence JSON. Two on-disk shapes are tolerated:
+   *   - `string[]` (legacy v20+ array of evidence lines).
+   *   - `{ lines: string[]; log_bursts: InsightLogBurst[] }` (rich, emitted
+   *     when the finding had structured log-burst references).
+   */
   evidence?: string | null;
   /** Long-form suggested action text (schema v20+). */
   suggested_action?: string | null;
