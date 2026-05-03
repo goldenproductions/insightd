@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 46;
+const SCHEMA_VERSION = 47;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -522,6 +522,32 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_log_templates_image
       ON log_templates (image, last_seen);
+
+    -- v47: per-container burst events from Drain template mining. Each row
+    -- captures a moment when a template's batch count exceeded the historical
+    -- baseline rate for that container, so we can ask "what was logging
+    -- abnormally on this container around time T". 15-day TTL — pruned in
+    -- pruneOldData. Templates themselves stay image-scoped in log_templates;
+    -- bursts are container-scoped because the same image can spike on one
+    -- container without spiking on another.
+    CREATE TABLE IF NOT EXISTS template_burst_events (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      template_id     INTEGER NOT NULL,
+      host_id         TEXT NOT NULL,
+      container_name  TEXT NOT NULL,
+      image           TEXT NOT NULL,
+      ts              TEXT NOT NULL DEFAULT (datetime('now')),
+      batch_count     INTEGER NOT NULL,
+      baseline_rate   REAL NOT NULL,
+      intensity       REAL NOT NULL,
+      semantic_tag    TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_template_burst_events_container_ts
+      ON template_burst_events (host_id, container_name, ts);
+
+    CREATE INDEX IF NOT EXISTS idx_template_burst_events_ts
+      ON template_burst_events (ts);
 
     CREATE TABLE IF NOT EXISTS webhooks (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1143,6 +1169,28 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN cpu_request_cores REAL'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN memory_request_mb REAL'); } catch { /* already exists */ }
   }
+  if (fromVersion < 47) {
+    // Per-container Drain-template burst events. Created via CREATE TABLE
+    // IF NOT EXISTS in bootstrap — this block is here for the version bump.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS template_burst_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        template_id     INTEGER NOT NULL,
+        host_id         TEXT NOT NULL,
+        container_name  TEXT NOT NULL,
+        image           TEXT NOT NULL,
+        ts              TEXT NOT NULL DEFAULT (datetime('now')),
+        batch_count     INTEGER NOT NULL,
+        baseline_rate   REAL NOT NULL,
+        intensity       REAL NOT NULL,
+        semantic_tag    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_template_burst_events_container_ts
+        ON template_burst_events (host_id, container_name, ts);
+      CREATE INDEX IF NOT EXISTS idx_template_burst_events_ts
+        ON template_burst_events (ts);
+    `);
+  }
 }
 
 /**
@@ -1177,6 +1225,10 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const rNc = db.prepare(`DELETE FROM node_conditions WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
   )`).run();
+  // Template burst events have their own 15-day TTL — short enough to keep
+  // the table small but long enough that diagnoser evidence still resolves
+  // for findings up to two weeks old.
+  const rTb = db.prepare(`DELETE FROM template_burst_events WHERE ts < datetime('now', '-15 days')`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
     UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
@@ -1191,7 +1243,8 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
-    + rEv.changes + rIng.changes + rNc.changes + r9.changes + r10.changes + r11.changes + r12.changes;
+    + rEv.changes + rIng.changes + rNc.changes + rTb.changes
+    + r9.changes + r10.changes + r11.changes + r12.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);

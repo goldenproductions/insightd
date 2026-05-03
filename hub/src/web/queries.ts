@@ -3141,4 +3141,49 @@ function getClusterOverview(db: Database.Database, clusterId: string, offlineThr
   };
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview };
+/**
+ * Per-container Drain template burst events within a window centered on
+ * `centerIso`. Joins `template_burst_events` to `log_templates` so callers get
+ * the template text + semantic tag without a second round-trip. Newest first.
+ *
+ * @param windowMs — total window size around `centerIso`, half on either side
+ */
+function getLogBursts(
+  db: Database.Database,
+  hostId: string,
+  containerName: string,
+  centerIso: string,
+  windowMs: number,
+  limit: number = 50,
+): Array<{
+  id: number;
+  template_id: number;
+  template: string;
+  template_hash: string;
+  semantic_tag: string | null;
+  ts: string;
+  batch_count: number;
+  baseline_rate: number;
+  intensity: number;
+}> {
+  const halfMs = Math.max(60_000, Math.floor(windowMs / 2));
+  const center = new Date(centerIso);
+  if (Number.isNaN(center.getTime())) return [];
+  const fromIso = new Date(center.getTime() - halfMs).toISOString().slice(0, 19).replace('T', ' ');
+  const toIso = new Date(center.getTime() + halfMs).toISOString().slice(0, 19).replace('T', ' ');
+  return db.prepare(`
+    SELECT b.id, b.template_id,
+           lt.template AS template,
+           lt.template_hash AS template_hash,
+           b.semantic_tag,
+           b.ts, b.batch_count, b.baseline_rate, b.intensity
+    FROM template_burst_events b
+    INNER JOIN log_templates lt ON lt.id = b.template_id
+    WHERE b.host_id = ? AND b.container_name = ?
+      AND b.ts >= ? AND b.ts <= ?
+    ORDER BY b.ts DESC, b.intensity DESC
+    LIMIT ?
+  `).all(hostId, containerName, fromIso, toIso, limit) as any[];
+}
+
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview, getLogBursts };

@@ -1035,6 +1035,39 @@ function handleGetContainerRcaNeighbors(req: HandlerReq, res: ServerResponse, db
   };
 }
 
+const LOG_BURSTS_DEFAULT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const LOG_BURSTS_MAX_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function parseWindowMs(raw: string | undefined): number {
+  if (!raw) return LOG_BURSTS_DEFAULT_WINDOW_MS;
+  // Accept either "15m"/"6h"/"1d" or a raw ms number.
+  const m = /^(\d+)\s*(s|m|h|d)?$/.exec(raw.trim());
+  if (!m) return LOG_BURSTS_DEFAULT_WINDOW_MS;
+  const n = parseInt(m[1], 10);
+  const unit = m[2] || 'ms';
+  const ms = unit === 's' ? n * 1000
+           : unit === 'm' ? n * 60_000
+           : unit === 'h' ? n * 3_600_000
+           : unit === 'd' ? n * 86_400_000
+           : n;
+  return Math.min(LOG_BURSTS_MAX_WINDOW_MS, Math.max(60_000, ms));
+}
+
+function handleGetContainerLogBursts(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
+  const hostId = decodeURIComponent(params.hostId);
+  const containerName = decodeURIComponent(params.containerName);
+  const url = new URL(req.url || '', 'http://localhost');
+  const at = url.searchParams.get('at') || new Date().toISOString();
+  const windowMs = parseWindowMs(url.searchParams.get('window') || undefined);
+  return {
+    host_id: hostId,
+    container_name: containerName,
+    at,
+    window_ms: windowMs,
+    bursts: queries.getLogBursts(db, hostId, containerName, at, windowMs),
+  };
+}
+
 function handleGetAllHealthScores(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return insightQueries.getAllHealthScores(db);
 }
@@ -1526,7 +1559,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerPodEvents, handleContainerLogs, handleGetNamespaceTopology, handleGetClusterOverview, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerPodEvents, handleContainerLogs, handleGetNamespaceTopology, handleGetClusterOverview, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetContainerLogBursts, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return getApiKeys(db);

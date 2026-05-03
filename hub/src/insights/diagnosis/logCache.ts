@@ -33,6 +33,14 @@ const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_LINES_PER_CACHE_ENTRY = 100;
 const BURST_MIN_COUNT = 3;
 
+// Persistence criteria for `template_burst_events`. We keep two paths so the
+// table captures both the diagnoser's classic "new or error template firing 3+
+// times" definition AND broader rate-based spikes (e.g. an old, untagged
+// template that suddenly fires 10x its historical hourly rate). The 15-min
+// baseline window matches the periodic mine cron cadence.
+const BURST_INTENSITY_THRESHOLD = 2.5; // batch count / 15-min baseline
+const BURST_INTENSITY_MIN_COUNT = 2;   // floor so a single line can't qualify
+
 interface CacheEntry {
   lines: DiagnosisLogEntry[];
   fetchedAt: number;
@@ -109,12 +117,16 @@ interface TemplateMiningResult {
 /**
  * Run Drain over a batch of log lines scoped to a given image key. Persists
  * new and updated templates in `log_templates` and returns the per-batch
- * summary for the cache entry.
+ * summary for the cache entry. When `scope` (hostId + containerName) is
+ * provided, also writes one row per qualifying burst into
+ * `template_burst_events` so the drawer / diagnoser can ask "what was logging
+ * abnormally on this container around time T".
  */
 function mineTemplates(
   db: Database.Database,
   imageKey: string,
   lines: DiagnosisLogEntry[],
+  scope?: { hostId: string; containerName: string },
 ): TemplateMiningResult {
   const seedTemplates = loadTemplates(db, imageKey);
   const priorById = new Map(seedTemplates.map((t) => [t.templateHash, t] as const));
@@ -197,12 +209,120 @@ function mineTemplates(
       semanticTag: h.semanticTag,
     }));
 
+  // Persist per-container burst events when scope is provided. Skipped for
+  // unit-test fixtures and the AI-diagnose path that mines for in-memory use
+  // only.
+  if (scope && hitsArray.length > 0) {
+    try {
+      persistBurstEvents(db, imageKey, scope, hitsArray, now);
+    } catch {
+      // Best-effort — never let burst persistence break log mining itself.
+    }
+  }
+
   return {
     templates: hitsArray.sort((a, b) => b.count - a.count),
     errorPatterns,
     unseenTemplates,
     templateBursts,
   };
+}
+
+/**
+ * Write per-container burst events for templates that exceed either the
+ * legacy "≥3 + new/tagged" diagnoser threshold or a rate-based "intensity"
+ * threshold (batch count / 15-min historical baseline).
+ *
+ * `baseline_rate` is stored as hits per 15-minute window and excludes the
+ * current batch from its own denominator (otherwise a brand-new template's
+ * baseline would equal its first batch and never qualify).
+ */
+function persistBurstEvents(
+  db: Database.Database,
+  imageKey: string,
+  scope: { hostId: string; containerName: string },
+  hits: TemplateHit[],
+  ts: string,
+): void {
+  // Look up template ids + lifetime stats post-upsert. Single batched query
+  // so we don't pay one round-trip per template.
+  const placeholders = hits.map(() => '?').join(',');
+  const rows = db.prepare(
+    `SELECT id, template_hash, occurrence_count, first_seen
+     FROM log_templates
+     WHERE image = ? AND template_hash IN (${placeholders})`,
+  ).all(imageKey, ...hits.map((h) => h.templateHash)) as Array<{
+    id: number;
+    template_hash: string;
+    occurrence_count: number;
+    first_seen: string;
+  }>;
+  const meta = new Map(rows.map((r) => [r.template_hash, r] as const));
+
+  const nowMs = Date.now();
+  const persistRows: Array<{
+    templateId: number;
+    batchCount: number;
+    baselineRate: number;
+    intensity: number;
+    semanticTag: string | null;
+  }> = [];
+
+  for (const hit of hits) {
+    const m = meta.get(hit.templateHash);
+    if (!m) continue;
+
+    // Subtract this batch from the lifetime count so the baseline reflects
+    // history *before* the spike. Floor age at 30 minutes to avoid wild
+    // intensities for templates first seen seconds ago.
+    const histCount = Math.max(0, m.occurrence_count - hit.count);
+    const firstSeenMs = new Date(m.first_seen.replace(' ', 'T') + 'Z').getTime();
+    const ageHrs = Math.max(0.5, (nowMs - firstSeenMs) / 3600000);
+    const fifteenMinBuckets = ageHrs * 4;
+    const baselineRate = fifteenMinBuckets > 0 ? histCount / fifteenMinBuckets : 0;
+
+    const intensity = baselineRate > 0
+      ? hit.count / baselineRate
+      : hit.count;
+
+    const isClassicBurst = hit.count >= BURST_MIN_COUNT && (hit.isNew || !!hit.semanticTag);
+    const isRateSpike = hit.count >= BURST_INTENSITY_MIN_COUNT
+      && intensity >= BURST_INTENSITY_THRESHOLD;
+
+    if (isClassicBurst || isRateSpike) {
+      persistRows.push({
+        templateId: m.id,
+        batchCount: hit.count,
+        baselineRate,
+        intensity,
+        semanticTag: hit.semanticTag,
+      });
+    }
+  }
+
+  if (persistRows.length === 0) return;
+
+  const insert = db.prepare(`
+    INSERT INTO template_burst_events
+      (template_id, host_id, container_name, image, ts, batch_count, baseline_rate, intensity, semantic_tag)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const tx = db.transaction((rows: typeof persistRows) => {
+    for (const r of rows) {
+      insert.run(
+        r.templateId,
+        scope.hostId,
+        scope.containerName,
+        imageKey,
+        ts,
+        r.batchCount,
+        r.baselineRate,
+        r.intensity,
+        r.semanticTag,
+      );
+    }
+  });
+  tx(persistRows);
 }
 
 const EMPTY_MINING: TemplateMiningResult = {
@@ -257,7 +377,7 @@ export function setCachedLogs(
   if (ctx && ctx.db) {
     const imageKey = ctx.image && ctx.image.length > 0 ? ctx.image : containerName;
     try {
-      mining = mineTemplates(ctx.db, imageKey, trimmed);
+      mining = mineTemplates(ctx.db, imageKey, trimmed, { hostId, containerName });
     } catch {
       mining = EMPTY_MINING;
     }

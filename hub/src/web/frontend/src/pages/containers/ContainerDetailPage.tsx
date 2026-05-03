@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse, PodEventsResponse } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse, PodEventsResponse, LogBurstsResponse } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -28,6 +28,7 @@ import { BaselinesViewer } from '@/components/BaselinesViewer';
 import { RcaNeighborsList } from '@/components/RcaNeighborsList';
 import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { LogTemplatesList } from '@/components/LogTemplatesList';
+import { LogBurstsList } from '@/components/LogBurstsList';
 import { K8sIdentityStrip } from '@/components/K8sIdentityStrip';
 import { PodEventsCard } from '@/components/PodEventsCard';
 import { PodConditionsBadges } from '@/components/PodConditionsBadges';
@@ -166,6 +167,13 @@ export function ContainerDetailPage() {
   const { data: rcaNeighbors } = useQuery({
     queryKey: queryKeys.containerRcaNeighbors(hostId, containerName),
     queryFn: () => api<RcaNeighborsResponse>(`/hosts/${hid}/containers/${cname}/rca-neighbors`).catch(() => ({ host_id: hostId!, container_name: containerName!, neighbors: [] }) as RcaNeighborsResponse),
+    refetchInterval: 5 * 60_000,
+  });
+
+  const { data: logBursts } = useQuery({
+    queryKey: queryKeys.containerLogBursts(hostId, containerName),
+    queryFn: () => api<LogBurstsResponse>(`/hosts/${hid}/containers/${cname}/log-bursts?window=1h`)
+      .catch(() => ({ host_id: hostId!, container_name: containerName!, at: new Date().toISOString(), window_ms: 3600000, bursts: [] }) as LogBurstsResponse),
     refetchInterval: 5 * 60_000,
   });
 
@@ -502,7 +510,8 @@ export function ContainerDetailPage() {
         const hasOther = (data.anomalies?.length ?? 0) > 0
           || (data.logTemplates?.length ?? 0) > 0
           || (baselines?.metrics?.length ?? 0) > 0
-          || (rcaNeighbors?.neighbors?.length ?? 0) > 0;
+          || (rcaNeighbors?.neighbors?.length ?? 0) > 0
+          || (logBursts?.bursts?.length ?? 0) > 0;
         if (!hasOther && !showTopology) return null;
         return (
           <ExploreDrawer description="Baselines, RCA neighbors, historical anomalies, mined log patterns, and (k8s) cluster topology for this container.">
@@ -516,6 +525,7 @@ export function ContainerDetailPage() {
               />
             )}
             <AnomaliesList anomalies={data.anomalies} scope="container" />
+            <LogBurstsList data={logBursts} />
             <LogTemplatesList templates={data.logTemplates} />
           </ExploreDrawer>
         );

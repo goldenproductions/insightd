@@ -26,6 +26,9 @@ export const queryKeys = {
   // RCA neighbors (Explore drawer on container detail)
   containerRcaNeighbors: (hostId?: string, containerName?: string) => ['rca-neighbors', hostId, containerName] as const,
 
+  // Log template burst events (Explore drawer on container detail)
+  containerLogBursts: (hostId?: string, containerName?: string) => ['log-bursts', hostId, containerName] as const,
+
   // K8s events filtered to a specific pod (container detail)
   containerPodEvents: (hostId?: string, containerName?: string) => ['pod-events', hostId, containerName] as const,
 
