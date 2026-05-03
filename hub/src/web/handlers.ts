@@ -667,7 +667,13 @@ function handleEndpointChecks(req: HandlerReq, res: ServerResponse, db: Database
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
   const hours = Math.max(1, Math.min(720, parseInt(url.searchParams.get('hours') || '24', 10) || 24));
-  return endpointQueries.getChecks(db, id, hours);
+  const atRaw = url.searchParams.get('at');
+  let at: string | undefined;
+  if (atRaw) {
+    const t = Date.parse(atRaw);
+    if (!Number.isNaN(t)) at = new Date(t).toISOString();
+  }
+  return endpointQueries.getChecks(db, id, hours, at);
 }
 
 // --- Webhooks ---

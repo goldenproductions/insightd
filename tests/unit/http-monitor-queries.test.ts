@@ -101,6 +101,30 @@ describe('http-monitor queries', () => {
       assert.equal(checks[1].is_up, 1);
       assert.equal(checks[1].response_time_ms, 42);
     });
+
+    it('should restrict to a window ending at endIso', () => {
+      const { id } = queries.createEndpoint(db, { name: 'Test', url: 'https://test.com' });
+      const fmt = (d: Date) => d.toISOString().replace('T', ' ').slice(0, 19);
+      const now = Date.now();
+      seedHttpChecks(db, [
+        { endpointId: id, statusCode: 200, responseTimeMs: 10, isUp: true, at: fmt(new Date(now - 72 * 3600 * 1000)) },  // 3 days ago
+        { endpointId: id, statusCode: 200, responseTimeMs: 20, isUp: true, at: fmt(new Date(now - 48 * 3600 * 1000)) },  // 2 days ago
+        { endpointId: id, statusCode: 500, responseTimeMs: 30, isUp: false, at: fmt(new Date(now - 30 * 3600 * 1000)) }, // 30h ago
+        { endpointId: id, statusCode: 200, responseTimeMs: 40, isUp: true, at: fmt(new Date(now - 1 * 3600 * 1000)) },   // 1h ago
+      ]);
+
+      // Pin window to 36h ending 24h ago — should include the 30h-ago check and the 48h-ago check, exclude others.
+      const endIso = new Date(now - 24 * 3600 * 1000).toISOString();
+      const pinned = queries.getChecks(db, id, 36, endIso);
+      assert.equal(pinned.length, 2);
+      assert.equal(pinned[0].is_up, 0);                  // 30h-ago, newest first
+      assert.equal(pinned[1].response_time_ms, 20);       // 48h-ago
+
+      // Without endIso, last 24h includes only the most recent.
+      const live = queries.getChecks(db, id, 24);
+      assert.equal(live.length, 1);
+      assert.equal(live[0].response_time_ms, 40);
+    });
   });
 
   describe('getEndpointSummary', () => {
