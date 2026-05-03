@@ -259,9 +259,10 @@ function truncate(s: string, n: number): string {
   return s.length <= n ? s : s.slice(0, n - 1) + '…';
 }
 
-// Same labels/colors as LogBurstsList — duplicated rather than shared since
-// the two surfaces have slightly different render shapes (drawer card vs.
-// inline subsection) and a shared chip component would be overkill.
+// Tag labels/colors mirror LogPatternsList so the spike chip on the drawer
+// card and the row in this subsection use the same vocabulary. Duplicated
+// rather than shared because the two surfaces have slightly different
+// shapes and a shared chip component would be overkill.
 const BURST_TAG_LABELS: Record<string, string> = {
   oom: 'Out of memory', panic: 'Panic', segfault: 'Segfault', fatal: 'Fatal',
   conn_refused: 'Conn refused', conn_reset: 'Conn reset', conn_timeout: 'Conn timeout',

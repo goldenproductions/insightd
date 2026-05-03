@@ -357,12 +357,7 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
       resolveImageKey: (db: Database.Database, hostId: string, containerName: string) => string;
     };
     const imageKey = resolveImageKey(db, params.hostId, params.containerName);
-    logTemplates = db.prepare(
-      `SELECT template_hash, template, occurrence_count, semantic_tag, first_seen, last_seen
-       FROM log_templates
-       WHERE image = ?
-       ORDER BY occurrence_count DESC LIMIT 20`,
-    ).all(imageKey);
+    logTemplates = queries.getLogPatternsForContainer(db, params.hostId, params.containerName, imageKey);
   } catch {
     // Swallow — degraded rendering is better than a 500.
   }

@@ -355,6 +355,17 @@ export interface LogTemplate {
   semantic_tag: string | null;
   first_seen: string;
   last_seen: string;
+  /**
+   * Recent-spike overlay from `template_burst_events`, scoped to this
+   * specific container in the last hour. Null/undefined when this template
+   * has not spiked recently. Drives the "Spiking" annotation in
+   * <LogPatternsList /> — abnormal templates pop visually without needing
+   * a separate card.
+   */
+  spike_count?: number | null;
+  max_intensity?: number | null;
+  latest_spike_ts?: string | null;
+  latest_batch_count?: number | null;
 }
 
 // Baselines viewer (Explore drawer)
@@ -432,30 +443,6 @@ export interface RcaNeighborsResponse {
   neighbors: RcaNeighbor[];
 }
 
-export interface LogBurstEvent {
-  id: number;
-  template_id: number;
-  template: string;
-  template_hash: string;
-  semantic_tag: string | null;
-  ts: string;
-  /** Number of times this template fired in the burst's mining batch. */
-  batch_count: number;
-  /** Historical hits per 15-minute window (lifetime, excluding the burst itself). */
-  baseline_rate: number;
-  /** batch_count divided by baseline_rate, or batch_count for new templates. */
-  intensity: number;
-}
-
-export interface LogBurstsResponse {
-  host_id: string;
-  container_name: string;
-  /** ISO timestamp the window is centered on. */
-  at: string;
-  /** Total window size in milliseconds (half on each side of `at`). */
-  window_ms: number;
-  bursts: LogBurstEvent[];
-}
 
 // Namespace topology — graph of workloads / pods / nodes / ingresses / pvcs
 export interface TopologyContainer {
