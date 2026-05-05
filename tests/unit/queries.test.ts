@@ -268,6 +268,23 @@ describe('queries', () => {
       assert.equal(dash.diskWarnings, 1);
     });
 
+    it('classifies clean exit-0 one-shots as completed, not down', () => {
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', at: recent },
+        // Successful init container — exited 0. Not a failure.
+        { hostId: 'h1', name: 'insightd-bootstrap', status: 'exited', exitCode: 0, at: recent },
+        // Crashed container — exited non-zero. Real failure.
+        { hostId: 'h1', name: 'broken-app', status: 'exited', exitCode: 137, at: recent },
+      ]);
+
+      const dash = getDashboard(db, 10);
+      assert.equal(dash.totalContainers, 3);
+      assert.equal(dash.containersRunning, 1);
+      assert.equal(dash.containersCompleted, 1, 'bootstrap should be classified as completed');
+      assert.equal(dash.containersDown, 1, 'only the non-zero exit counts as down');
+    });
+
     it('patches stale alerts factor with live count in systemHealthScore', () => {
       // Seed a host with a stale health_scores row claiming 2 active alerts
       // (alerts.value=2, alerts.score=60) and only 1 live active alert in
@@ -531,6 +548,32 @@ describe('queries', () => {
       assert.equal(result.timeline.slots.length, 168); // 7 * 24
       assert.equal(typeof result.timeline.slotStartTime, 'number');
       assert.ok(result.timeline.slotStartTime > 0);
+    });
+
+    it('marks clean exit-0 hours as completed (not down) and excludes them from uptime%', () => {
+      // Single snapshot of a one-shot init container that exited cleanly.
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'insightd-bootstrap', status: 'exited', exitCode: 0, at: recent },
+      ]);
+
+      const result = getContainerDowntime(db, 'h1', 'insightd-bootstrap', 7);
+      assert.ok(result.timeline.slots.includes('completed'), 'should produce a completed slot');
+      assert.ok(!result.timeline.slots.includes('down'), 'should not paint a down slot for a clean exit');
+      assert.equal(result.summary.downHours, 0);
+      assert.equal(result.summary.completedHours, 1);
+      assert.equal(result.incidents.length, 0, 'a clean exit is not an incident');
+      // No actual uptime data → null %, not "0% downtime".
+      assert.equal(result.summary.uptimePercent, null);
+    });
+
+    it('non-zero exits stay classified as down', () => {
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'broken', status: 'exited', exitCode: 137, at: recent },
+      ]);
+      const result = getContainerDowntime(db, 'h1', 'broken', 7);
+      assert.ok(result.timeline.slots.includes('down'));
+      assert.ok(!result.timeline.slots.includes('completed'));
+      assert.equal(result.summary.completedHours, 0);
     });
   });
 });

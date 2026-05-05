@@ -31,6 +31,7 @@ function fmtRange(start: Date, end: Date): string {
 function slotLabel(slot: string): string {
   if (slot === 'up') return 'Running';
   if (slot === 'down') return 'Stopped';
+  if (slot === 'completed') return 'Completed';
   return 'No data';
 }
 
@@ -120,7 +121,9 @@ export const UptimeTimeline = memo(function UptimeTimeline({ containers, hostId,
                       : slot === 'down'
                       ? 'bg-[var(--color-danger)]'
                       : 'bg-[var(--color-border)]';
-                    const opacity = slot === 'none' ? 'opacity-40' : '';
+                    // 'none' = no data (faint); 'completed' = clean one-shot
+                    // exit (visible but muted, not red).
+                    const opacity = slot === 'none' ? 'opacity-40' : slot === 'completed' ? 'opacity-70' : '';
                     return (
                       <div
                         key={i}
@@ -194,6 +197,7 @@ export const UptimeTimeline = memo(function UptimeTimeline({ containers, hostId,
                 background:
                   hoveredSlot.slot === 'up' ? 'var(--color-success)'
                   : hoveredSlot.slot === 'down' ? 'var(--color-danger)'
+                  : hoveredSlot.slot === 'completed' ? 'var(--color-border)'
                   : 'var(--color-muted)',
               }}
               aria-hidden="true"
