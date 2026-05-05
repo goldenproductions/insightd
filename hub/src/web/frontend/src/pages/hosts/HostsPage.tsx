@@ -5,7 +5,6 @@ import { api, apiAuth } from '@/lib/api';
 import type { Host, ContainerSnapshot, DashboardData } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { timeAgo } from '@/lib/formatters';
-import { useShowInternal } from '@/hooks/useShowInternal';
 import { useAuth } from '@/context/AuthContext';
 import { PageTitle } from '@/components/PageTitle';
 import { LoadingState } from '@/components/LoadingState';
@@ -34,7 +33,6 @@ function effectiveGroup(h: Host): string | null {
 
 export function HostsPage() {
   const navigate = useNavigate();
-  const { showInternal } = useShowInternal();
   const { isAuthenticated, token } = useAuth();
   const queryClient = useQueryClient();
 
@@ -44,8 +42,8 @@ export function HostsPage() {
     refetchInterval: 30_000,
   });
   const { data: dash } = useQuery({
-    queryKey: queryKeys.dashboard(showInternal),
-    queryFn: () => api<DashboardData>(`/dashboard${showInternal ? '?showInternal=true' : ''}`),
+    queryKey: queryKeys.dashboard(),
+    queryFn: () => api<DashboardData>('/dashboard'),
     refetchInterval: 30_000,
   });
 
@@ -180,7 +178,6 @@ export function HostsPage() {
                 members={members}
                 hovered={hovered === id}
                 dragActive={drag !== null}
-                showInternal={showInternal}
                 onHostDragStart={(hostId) => setDrag({ hostId })}
                 onHostDragEnd={() => { setDrag(null); setHovered(null); }}
                 onDragOver={(e) => { e.preventDefault(); setHovered(id); }}
@@ -252,7 +249,6 @@ interface GroupColumnProps {
   members: Host[];
   hovered: boolean;
   dragActive: boolean;
-  showInternal: boolean;
   onHostDragStart: (hostId: string) => void;
   onHostDragEnd: () => void;
   onDragOver: (e: React.DragEvent) => void;
@@ -264,7 +260,7 @@ interface GroupColumnProps {
   authed: boolean;
 }
 
-function GroupColumn({ label, editable, members, hovered, dragActive, showInternal, onHostDragStart, onHostDragEnd, onDragOver, onDragLeave, onDrop, onHostClick, onRename, onDelete, authed }: GroupColumnProps) {
+function GroupColumn({ label, editable, members, hovered, dragActive, onHostDragStart, onHostDragEnd, onDragOver, onDragLeave, onDrop, onHostClick, onRename, onDelete, authed }: GroupColumnProps) {
   const tone = members.length === 0 ? 'bg-muted' : members.every(h => h.is_online) ? 'bg-success' : 'bg-warning';
   const ringClass = hovered ? 'border-info bg-info/5' : 'border-border bg-bg-secondary';
 
@@ -330,7 +326,6 @@ function GroupColumn({ label, editable, members, hovered, dragActive, showIntern
             <HostRow
               key={h.host_id}
               host={h}
-              showInternal={showInternal}
               draggable={authed}
               onDragStart={() => onHostDragStart(h.host_id)}
               onDragEnd={onHostDragEnd}
@@ -345,18 +340,16 @@ function GroupColumn({ label, editable, members, hovered, dragActive, showIntern
 
 interface HostRowProps {
   host: Host;
-  showInternal: boolean;
   draggable: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
   onClick: () => void;
 }
 
-function HostRow({ host, showInternal, draggable, onDragStart, onDragEnd, onClick }: HostRowProps) {
-  const si = showInternal ? '?showInternal=true' : '';
+function HostRow({ host, draggable, onDragStart, onDragEnd, onClick }: HostRowProps) {
   const { data: containers } = useQuery({
-    queryKey: queryKeys.hostContainers(host.host_id, showInternal),
-    queryFn: () => api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(host.host_id)}/containers${si}`),
+    queryKey: queryKeys.hostContainers(host.host_id),
+    queryFn: () => api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(host.host_id)}/containers`),
     refetchInterval: 60_000,
     staleTime: 30_000,
   });

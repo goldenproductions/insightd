@@ -4,7 +4,6 @@ import { queryClient } from '@/lib/queryClient';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider } from '@/context/ThemeContext';
 import { ShortcutsProvider, useShortcutsContext } from '@/context/ShortcutsContext';
-import { ShowInternalProvider } from '@/hooks/useShowInternal';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
 import { Layout } from '@/components/Layout';
 import { ShortcutHelpModal } from '@/components/ShortcutHelpModal';
@@ -99,7 +98,6 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <ThemeProvider>
-          <ShowInternalProvider>
           <HashRouter>
             <ShortcutsProvider>
             <GlobalShortcuts />
@@ -138,7 +136,6 @@ export function App() {
             </Suspense>
             </ShortcutsProvider>
           </HashRouter>
-          </ShowInternalProvider>
         </ThemeProvider>
       </AuthProvider>
     </QueryClientProvider>

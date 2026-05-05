@@ -219,10 +219,8 @@ async function handleDeleteContainer(req: HandlerReq, res: ServerResponse, db: D
 }
 
 function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const showInternal = url.searchParams.get('showInternal') === 'true';
   const threshold = offlineThresholdMinutes();
-  const detail = queries.getHostDetail(db, params.hostId, threshold, showInternal);
+  const detail = queries.getHostDetail(db, params.hostId, threshold);
   if (!detail) {
     res.statusCode = 404;
     return { error: 'Host not found' };
@@ -243,9 +241,7 @@ function handleHostDetail(req: HandlerReq, res: ServerResponse, db: Database.Dat
 }
 
 function handleHostContainers(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const showInternal = url.searchParams.get('showInternal') === 'true';
-  return queries.getLatestContainers(db, params.hostId, offlineThresholdMinutes(), showInternal);
+  return queries.getLatestContainers(db, params.hostId, offlineThresholdMinutes());
 }
 
 function handleHostDisk(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
@@ -253,10 +249,8 @@ function handleHostDisk(req: HandlerReq, res: ServerResponse, db: Database.Datab
 }
 
 function handleDashboard(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const showInternal = url.searchParams.get('showInternal') === 'true';
   const threshold = offlineThresholdMinutes();
-  return queries.getDashboard(db, threshold, showInternal);
+  return queries.getDashboard(db, threshold);
 }
 
 function handleAlerts(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
@@ -486,8 +480,7 @@ function handleTimeline(req: HandlerReq, res: ServerResponse, db: Database.Datab
 function handleRankings(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const limit = Math.max(1, Math.min(50, parseInt(url.searchParams.get('limit') || '10', 10) || 10));
-  const showInternal = url.searchParams.get('showInternal') === 'true';
-  return queries.getResourceRankings(db, limit, showInternal);
+  return queries.getResourceRankings(db, limit);
 }
 
 function handleTrends(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {

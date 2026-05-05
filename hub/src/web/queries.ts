@@ -290,7 +290,7 @@ function getHosts(db: Database.Database, onlineThresholdMinutes: number): HostRo
   `).all(onlineThresholdMinutes) as HostRow[];
 }
 
-function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMinutes: number, showInternal: boolean = false): any {
+function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMinutes: number): any {
   const host = db.prepare(`
     SELECT host_id, first_seen, last_seen, runtime_type,
       COALESCE(host_group_override, host_group) AS host_group,
@@ -304,7 +304,7 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
 
   return {
     ...host,
-    containers: getLatestContainers(db, hostId, onlineThresholdMinutes, showInternal),
+    containers: getLatestContainers(db, hostId, onlineThresholdMinutes),
     disk: getLatestDisk(db, hostId),
     alerts: getAlerts(db, true, hostId),
     updates: getLatestUpdates(db, hostId),
@@ -316,7 +316,7 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
   };
 }
 
-function getLatestContainers(db: Database.Database, hostId: string, onlineThresholdMinutes: number, showInternal: boolean = false): ContainerRow[] {
+function getLatestContainers(db: Database.Database, hostId: string, onlineThresholdMinutes: number): ContainerRow[] {
   // Return the latest snapshot for every container currently present on the
   // host, per the `containers` registry. Containers whose latest batch no
   // longer lists them (Docker rm, k8s pod delete, completed Job pods) have
@@ -350,11 +350,7 @@ function getLatestContainers(db: Database.Database, hostId: string, onlineThresh
     WHERE c.host_id = ? AND c.removed_at IS NULL
     ORDER BY cs.container_name
   `).all(onlineThresholdMinutes, hostId, hostId) as ContainerRow[];
-  if (showInternal) return rows;
-  return rows.filter(r => {
-    if (!r.labels) return true;
-    try { return JSON.parse(r.labels)['insightd.internal'] !== 'true'; } catch { return true; }
-  });
+  return rows;
 }
 
 function getLatestDisk(db: Database.Database, hostId: string): DiskRow[] {
@@ -608,8 +604,8 @@ function getAlertsExplore(db: Database.Database, filters: AlertsExploreFilters):
 const _dashboardCache: { data: any; key: string | null; db: Database.Database | null; time: number } = { data: null, key: null, db: null, time: 0 };
 const DASHBOARD_CACHE_TTL = 30000; // 30 seconds
 
-function getDashboard(db: Database.Database, onlineThresholdMinutes: number, showInternal: boolean = false): any {
-  const cacheKey = `${onlineThresholdMinutes}:${showInternal}`;
+function getDashboard(db: Database.Database, onlineThresholdMinutes: number): any {
+  const cacheKey = `${onlineThresholdMinutes}`;
   if (_dashboardCache.key === cacheKey && _dashboardCache.db === db && Date.now() - _dashboardCache.time < DASHBOARD_CACHE_TTL) {
     return _dashboardCache.data;
   }
@@ -630,11 +626,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
       AND cs.collected_at = latest.max_at
     WHERE c.removed_at IS NULL
   `).all() as ContainerStatusRow[];
-  const filtered = showInternal ? allContainers : allContainers.filter(c => {
-    if (!c.labels) return true;
-    try { return JSON.parse(c.labels)['insightd.internal'] !== 'true'; } catch { return true; }
-  });
-  const containerCounts = { total: filtered.length, running: filtered.filter(c => c.status === 'running').length };
+  const containerCounts = { total: allContainers.length, running: allContainers.filter(c => c.status === 'running').length };
 
   const activeAlerts = db.prepare(
     'SELECT COUNT(*) as count FROM alert_state WHERE resolved_at IS NULL'
@@ -729,10 +721,6 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
       }
     }
   }
-  const availFiltered = showInternal ? availRows : availRows.filter(c => {
-    if (!c.labels) return true;
-    try { return JSON.parse(c.labels)['insightd.internal'] !== 'true'; } catch { return true; }
-  });
   // Per-container retrospective downtime used to surface here as an acute
   // "Downtime" row in the dashboard feed. That duplicated the `availability`
   // insight (same event, same container) in two columns, making recovered
@@ -740,7 +728,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number, sho
   // needs the totals, but individual entries now live only in the Insights
   // feed via getTopInsights + the `had downtime` insight row.
   let totalSnapshots = 0, totalRunning = 0;
-  for (const r of availFiltered) {
+  for (const r of availRows) {
     totalSnapshots += r.total;
     totalRunning += r.running;
   }
@@ -1117,9 +1105,9 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
   return { host, containers };
 }
 
-function getResourceRankings(db: Database.Database, limit: number, showInternal: boolean = false): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
+function getResourceRankings(db: Database.Database, limit: number): { byCpu: ResourceRow[]; byMemory: ResourceRow[] } {
   const query = `
-    SELECT cs.host_id, cs.container_name, cs.cpu_percent, cs.memory_mb, cs.labels
+    SELECT cs.host_id, cs.container_name, cs.cpu_percent, cs.memory_mb
     FROM container_snapshots cs
     INNER JOIN (
       SELECT host_id as h, container_name as cn, MAX(collected_at) as max_at
@@ -1127,17 +1115,9 @@ function getResourceRankings(db: Database.Database, limit: number, showInternal:
     ) latest ON cs.host_id = latest.h AND cs.container_name = latest.cn AND cs.collected_at = latest.max_at
     WHERE cs.status = 'running'
   `;
-  const rawByCpu = db.prepare(query + ' AND cs.cpu_percent IS NOT NULL ORDER BY cs.cpu_percent DESC LIMIT ?').all(limit * 4) as Array<ResourceRow & { labels: string | null }>;
-  const rawByMemory = db.prepare(query + ' AND cs.memory_mb IS NOT NULL ORDER BY cs.memory_mb DESC LIMIT ?').all(limit * 4) as Array<ResourceRow & { labels: string | null }>;
-  const filter = (rows: Array<ResourceRow & { labels: string | null }>): ResourceRow[] => {
-    const filtered = showInternal ? rows : rows.filter(r => {
-      if (!r.labels) return true;
-      try { return JSON.parse(r.labels)['insightd.internal'] !== 'true'; } catch { return true; }
-    });
-    // Strip labels — callers don't need them in the ranking response.
-    return filtered.slice(0, limit).map(({ labels: _labels, ...rest }) => rest);
-  };
-  return { byCpu: filter(rawByCpu), byMemory: filter(rawByMemory) };
+  const byCpu = db.prepare(query + ' AND cs.cpu_percent IS NOT NULL ORDER BY cs.cpu_percent DESC LIMIT ?').all(limit) as ResourceRow[];
+  const byMemory = db.prepare(query + ' AND cs.memory_mb IS NOT NULL ORDER BY cs.memory_mb DESC LIMIT ?').all(limit) as ResourceRow[];
+  return { byCpu, byMemory };
 }
 
 function getTrends(db: Database.Database, hostId: string): { containers: any[]; host: any } {
