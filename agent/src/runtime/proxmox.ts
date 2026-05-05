@@ -205,8 +205,9 @@ async function pvesh<T>(path: string): Promise<T> {
       ['get', path, '--output-format', 'json'],
       { timeout: PVESH_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
       (err, out) => {
+        // execFile with default options returns stdout as a string.
         if (err) reject(err);
-        else resolve(typeof out === 'string' ? out : out.toString('utf8'));
+        else resolve(out);
       },
     );
   });
