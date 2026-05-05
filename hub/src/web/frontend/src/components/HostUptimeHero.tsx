@@ -15,12 +15,14 @@ interface SlotStats {
   noDataHours: number;
 }
 
-function summarizeSlots(slots: ('up' | 'down' | 'none')[]): SlotStats {
+function summarizeSlots(slots: ('up' | 'down' | 'completed' | 'none')[]): SlotStats {
   let up = 0, down = 0, none = 0;
   for (const s of slots) {
     if (s === 'up') up++;
     else if (s === 'down') down++;
-    else none++;
+    // Host-level slots are never 'completed' (host uptime tracks agent
+    // reporting cadence, not container exit codes), but typed for parity.
+    else if (s !== 'completed') none++;
   }
   const counted = up + down;
   return {

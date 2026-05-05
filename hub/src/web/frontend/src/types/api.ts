@@ -704,7 +704,7 @@ export interface Alert {
 // Timeline
 export interface TimelineEntry {
   name: string;
-  slots: ('up' | 'down' | 'none')[];
+  slots: ('up' | 'down' | 'completed' | 'none')[];
   uptimePercent: number | null;
 }
 
@@ -722,9 +722,9 @@ export interface DowntimeIncident {
 }
 
 export interface ContainerAvailability {
-  timeline: { slots: ('up' | 'down' | 'none')[]; uptimePercent: number | null; slotStartTime: number };
+  timeline: { slots: ('up' | 'down' | 'completed' | 'none')[]; uptimePercent: number | null; slotStartTime: number };
   incidents: DowntimeIncident[];
-  summary: { totalHours: number; upHours: number; downHours: number; noDataHours: number; uptimePercent: number | null };
+  summary: { totalHours: number; upHours: number; downHours: number; completedHours: number; noDataHours: number; uptimePercent: number | null };
 }
 
 // Public Status Page

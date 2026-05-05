@@ -92,7 +92,7 @@ interface CountRow {
 
 interface ContainerStatusRow {
   status: string;
-  labels: string | null;
+  exit_code: number | null;
 }
 
 interface HealthScoreRow {
@@ -192,6 +192,7 @@ interface ContainerIdRow {
 interface UptimeSnapshotRow {
   container_name: string;
   status: string;
+  exit_code: number | null;
   collected_at: string;
 }
 
@@ -259,6 +260,7 @@ interface DowntimeChangeRow {
 
 interface DowntimeSnapshotRow {
   status: string;
+  exit_code: number | null;
   collected_at: string;
 }
 
@@ -613,7 +615,7 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number): an
   const hosts = getHosts(db, onlineThresholdMinutes);
 
   const allContainers = db.prepare(`
-    SELECT cs.status, cs.labels
+    SELECT cs.status, cs.exit_code
     FROM container_snapshots cs
     INNER JOIN containers c
       ON c.host_id = cs.host_id AND c.container_name = cs.container_name
@@ -626,7 +628,15 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number): an
       AND cs.collected_at = latest.max_at
     WHERE c.removed_at IS NULL
   `).all() as ContainerStatusRow[];
-  const containerCounts = { total: allContainers.length, running: allContainers.filter(c => c.status === 'running').length };
+  // "Completed" = clean one-shot exit. Init containers (insightd-bootstrap,
+  // migration sidecars, k8s Job pods) sit in this state forever and aren't
+  // outages. We exclude them from the "down" count so the dashboard doesn't
+  // false-flag them.
+  const containerCounts = {
+    total: allContainers.length,
+    running: allContainers.filter(c => c.status === 'running').length,
+    completed: allContainers.filter(c => c.status === 'exited' && c.exit_code === 0).length,
+  };
 
   const activeAlerts = db.prepare(
     'SELECT COUNT(*) as count FROM alert_state WHERE resolved_at IS NULL'
@@ -740,7 +750,8 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number): an
     hostsOffline: hosts.filter(h => !h.is_online).length,
     totalContainers: containerCounts?.total || 0,
     containersRunning: containerCounts?.running || 0,
-    containersDown: (containerCounts?.total || 0) - (containerCounts?.running || 0),
+    containersDown: (containerCounts?.total || 0) - (containerCounts?.running || 0) - (containerCounts?.completed || 0),
+    containersCompleted: containerCounts?.completed || 0,
     activeAlerts: activeAlerts?.count || 0,
     activeAlertsList,
     diskWarnings: diskWarnings?.count || 0,
@@ -1033,7 +1044,7 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
   const startMs = now - days * 86400000;
 
   const rows = db.prepare(`
-    SELECT cs.container_name, cs.status, cs.collected_at
+    SELECT cs.container_name, cs.status, cs.exit_code, cs.collected_at
     FROM container_snapshots cs
     INNER JOIN containers c ON c.host_id = cs.host_id AND c.container_name = cs.container_name AND c.removed_at IS NULL
     WHERE cs.host_id = ? AND cs.collected_at >= datetime('now', '-' || ? || ' days')
@@ -1061,11 +1072,17 @@ function getUptimeTimeline(db: Database.Database, hostId: string, days: number):
       } else if (inSlot.every(s => s.status === 'running')) {
         slots.push('up');
         runningCount++;
+      } else if (inSlot.every(s => s.status === 'exited' && s.exit_code === 0)) {
+        // One-shot init container (insightd-bootstrap, migration sidecar,
+        // k8s Job pod). Don't paint a red bar — it cleanly completed.
+        slots.push('completed');
       } else {
         slots.push('down');
       }
     }
-    const slotsWithData = slots.filter(s => s !== 'none').length;
+    // Completed slots are excluded from the uptime denominator: a container
+    // that only ever ran once and exited 0 has no meaningful "uptime %".
+    const slotsWithData = slots.filter(s => s !== 'none' && s !== 'completed').length;
     const uptimePercent = slotsWithData > 0 ? Math.round((runningCount / slotsWithData) * 100 * 10) / 10 : null;
     return { name, slots, uptimePercent };
   });
@@ -1810,7 +1827,7 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
 
   // Single-container timeline (same logic as getUptimeTimeline)
   const rows = db.prepare(`
-    SELECT status, collected_at FROM container_snapshots
+    SELECT status, exit_code, collected_at FROM container_snapshots
     WHERE host_id = ? AND container_name = ?
       AND collected_at >= datetime('now', '-' || ? || ' days')
     ORDER BY collected_at
@@ -1820,7 +1837,7 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
   const now = Date.now();
   const startMs = now - days * 86400000;
   const slots: string[] = [];
-  let upCount = 0, downCount = 0;
+  let upCount = 0, downCount = 0, completedCount = 0;
   for (let h = 0; h < totalHours; h++) {
     const slotStart = startMs + h * 3600000;
     const slotEnd = slotStart + 3600000;
@@ -1833,19 +1850,23 @@ function getContainerDowntime(db: Database.Database, hostId: string, containerNa
     } else if (inSlot.every(s => s.status === 'running')) {
       slots.push('up');
       upCount++;
+    } else if (inSlot.every(s => s.status === 'exited' && s.exit_code === 0)) {
+      slots.push('completed');
+      completedCount++;
     } else {
       slots.push('down');
       downCount++;
     }
   }
   const noDataCount = slots.filter(s => s === 'none').length;
-  const slotsWithData = totalHours - noDataCount;
+  // Same rule as getUptimeTimeline: completed slots don't drag the % down.
+  const slotsWithData = totalHours - noDataCount - completedCount;
   const uptimePercent = slotsWithData > 0 ? Math.round((upCount / slotsWithData) * 1000) / 10 : null;
 
   return {
     timeline: { slots, uptimePercent, slotStartTime: startMs },
     incidents: incidents.reverse(),
-    summary: { totalHours, upHours: upCount, downHours: downCount, noDataHours: noDataCount, uptimePercent },
+    summary: { totalHours, upHours: upCount, downHours: downCount, completedHours: completedCount, noDataHours: noDataCount, uptimePercent },
   };
 }
 
