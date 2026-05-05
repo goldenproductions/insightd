@@ -67,4 +67,30 @@ describe('detectRuntime', () => {
     const { detectRuntime } = loadDetect();
     assert.equal(detectRuntime(), 'docker');
   });
+
+  it('returns "proxmox" when /etc/pve/.version exists (pmxcfs is mounted)', () => {
+    mock.method(fs, 'existsSync', (p: string) => p === '/etc/pve/.version');
+    const { detectRuntime } = loadDetect();
+    assert.equal(detectRuntime(), 'proxmox');
+  });
+
+  it('still returns "proxmox" when both /etc/pve/.version and docker.sock exist (logs a warning)', () => {
+    // PVE node that also runs Docker for utility containers — single-runtime
+    // model: PVE wins. Operator can override with INSIGHTD_RUNTIME=docker.
+    mock.method(fs, 'existsSync', (p: string) =>
+      p === '/etc/pve/.version' || p === '/var/run/docker.sock'
+    );
+    const { detectRuntime } = loadDetect();
+    assert.equal(detectRuntime(), 'proxmox');
+  });
+
+  it('prefers proxmox over k3s containerd when both signals are present', () => {
+    // Unlikely combo (Proxmox doesn't ship k3s) but the detection order
+    // should be deterministic regardless.
+    mock.method(fs, 'existsSync', (p: string) =>
+      p === '/etc/pve/.version' || p === '/run/k3s/containerd/containerd.sock'
+    );
+    const { detectRuntime } = loadDetect();
+    assert.equal(detectRuntime(), 'proxmox');
+  });
 });

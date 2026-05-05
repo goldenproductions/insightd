@@ -6,7 +6,7 @@
  * from a single codebase.
  */
 
-export type RuntimeName = 'docker' | 'containerd' | 'kubernetes';
+export type RuntimeName = 'docker' | 'containerd' | 'kubernetes' | 'proxmox';
 export type ContainerAction = 'start' | 'stop' | 'restart' | 'remove';
 
 export interface ContainerInfo {
@@ -62,6 +62,17 @@ export interface ContainerInfo {
   hostIp?: string | null;
   /** pod.status.conditions[] — small array (≤4 standard conditions). */
   podConditions?: PodCondition[] | null;
+
+  // ── Proxmox VE guest identity (v48) ───────────────────────────────────
+  // All optional, set only by ProxmoxRuntime. Docker/k8s leave them undefined.
+
+  /** 'lxc' (system container) or 'qemu' (full VM). Null for non-PVE. */
+  guestType?: 'lxc' | 'qemu' | null;
+  /** PVE numeric VMID — stable cluster-wide identifier. */
+  guestVmid?: number | null;
+  /** Per-guest uptime in seconds, from PVE. host_snapshots.uptime_seconds is
+   *  the hypervisor's own uptime, not any individual guest's. */
+  guestUptimeSeconds?: number | null;
 }
 
 export interface PodCondition {

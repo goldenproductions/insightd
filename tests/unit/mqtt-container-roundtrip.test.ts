@@ -28,6 +28,12 @@ describe('MQTT container payload round-trip', () => {
     cpuLimitPercent: 50,
     memoryLimitMb: 512,
     lastOomKilledAt: '2026-04-28T11:38:15.460Z',
+    // v48 — Proxmox VE guest identity. Round-trip these from the fixture so
+    // a missing mapping on either side gets caught here, the same way
+    // last_oom_killed_at would have been.
+    guestType: 'lxc' as const,
+    guestVmid: 200,
+    guestUptimeSeconds: 86_400,
   };
 
   it('agent → snake_case payload includes every camelCase field', () => {
@@ -39,6 +45,9 @@ describe('MQTT container payload round-trip', () => {
     assert.equal(payload.cpu_limit_cores, 0.5);
     assert.equal(payload.size_rootfs_bytes, 50_000_000);
     assert.equal(payload.health_check_output, 'connection refused');
+    assert.equal(payload.guest_type, 'lxc');
+    assert.equal(payload.guest_vmid, 200);
+    assert.equal(payload.guest_uptime_seconds, 86_400);
   });
 
   it('hub payload → snapshot recovers every camelCase field the agent emitted', () => {

@@ -5,6 +5,7 @@ const styles: Record<string, string> = {
   red: 'bg-red-500/10 text-red-600 dark:text-red-400',
   yellow: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
   blue: 'bg-blue-500/10 text-blue-600 dark:text-blue-400',
+  purple: 'bg-purple-500/10 text-purple-600 dark:text-purple-400',
   gray: 'bg-gray-500/10 text-gray-600 dark:text-gray-400',
 };
 

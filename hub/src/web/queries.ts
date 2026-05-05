@@ -50,6 +50,10 @@ interface ContainerRow {
   last_oom_killed_at: string | null;
   size_rootfs_bytes: number | null;
   size_rw_bytes: number | null;
+  // v48 — Proxmox VE guest identity. NULL for Docker/k8s.
+  guest_type: 'lxc' | 'qemu' | null;
+  guest_vmid: number | null;
+  guest_uptime_seconds: number | null;
   collected_at: string;
   is_stale: number;
 }
@@ -334,6 +338,7 @@ function getLatestContainers(db: Database.Database, hostId: string, onlineThresh
            cs.health_status, cs.health_check_output, cs.labels, cs.exit_code, cs.collected_at,
            cs.cpu_limit_cores, cs.cpu_limit_percent, cs.memory_limit_mb,
            cs.size_rootfs_bytes, cs.size_rw_bytes,
+           cs.guest_type, cs.guest_vmid, cs.guest_uptime_seconds,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')

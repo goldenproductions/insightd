@@ -71,6 +71,7 @@ export interface Host {
   first_seen: string;
   last_seen: string;
   is_online: number;
+  /** 'docker' | 'kubernetes' | 'proxmox' | …agent-reported. */
   runtime_type?: string;
   host_group?: string | null;
   host_group_override?: string | null;
@@ -293,6 +294,10 @@ export interface ContainerSnapshot {
   host_ip: string | null;
   /** JSON-stringified PodCondition[] from the agent. Frontend parses on render. */
   pod_conditions: string | null;
+  // v48 — Proxmox VE guest identity. Null for Docker/k8s.
+  guest_type?: 'lxc' | 'qemu' | null;
+  guest_vmid?: number | null;
+  guest_uptime_seconds?: number | null;
   collected_at: string;
   // 1 when the owning host hasn't reported within the offline threshold —
   // the snapshot is last-known state, not current truth.

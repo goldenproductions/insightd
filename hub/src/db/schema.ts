@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 47;
+const SCHEMA_VERSION = 48;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -17,7 +17,11 @@ function bootstrap(db: Database.Database): void {
       agent_version TEXT,
       runtime_type  TEXT NOT NULL DEFAULT 'docker',
       host_group    TEXT,
-      host_group_override TEXT
+      host_group_override TEXT,
+      -- v48: free-form labels the agent reports about itself. Currently used
+      -- only by the Proxmox identity bridge so the in-guest agent's host can
+      -- be linked to its hypervisor's view (label key 'insightd.proxmox.guest').
+      host_labels   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS container_snapshots (
@@ -55,6 +59,12 @@ function bootstrap(db: Database.Database): void {
       pod_ip          TEXT,
       host_ip         TEXT,
       pod_conditions  TEXT,  -- JSON array: [{type,status,reason?,message?}]
+      -- v48: Proxmox VE guest identity. NULL for non-PVE rows. Reusing this
+      -- table (instead of inventing pve_guests) keeps the existing UI/alerts
+      -- working — same precedent as k8s pods sharing container_snapshots.
+      guest_type      TEXT,        -- 'lxc' | 'qemu' | NULL
+      guest_vmid      INTEGER,     -- PVE numeric VMID
+      guest_uptime_seconds INTEGER, -- per-guest uptime; host_snapshots.uptime_seconds is the hypervisor's
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -1190,6 +1200,16 @@ function migrate(db: Database.Database, fromVersion: number): void {
       CREATE INDEX IF NOT EXISTS idx_template_burst_events_ts
         ON template_burst_events (ts);
     `);
+  }
+  if (fromVersion < 48) {
+    // Proxmox VE: guest identity columns on container_snapshots, plus a
+    // host_labels column on hosts for the in-guest ↔ hypervisor identity
+    // bridge (the bridge itself is wired up in a later PR — adding the
+    // column now lets PR1 ship the migration once and only once).
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_type TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_vmid INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uptime_seconds INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN host_labels TEXT'); } catch { /* already exists */ }
   }
 }
 

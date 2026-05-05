@@ -69,6 +69,10 @@ interface CollectionPayload {
     host_ip?: string | null;
     /** JSON-stringified PodCondition[] — hub stores as text, frontend parses. */
     pod_conditions?: string | null;
+    /** v48 — Proxmox VE guest identity. NULL for Docker/k8s. */
+    guest_type?: 'lxc' | 'qemu' | null;
+    guest_vmid?: number | null;
+    guest_uptime_seconds?: number | null;
   }>;
   disk?: Array<{
     mount_point: string;
@@ -331,6 +335,9 @@ export function payloadContainerToSnapshot(c: NonNullable<CollectionPayload['con
     podIp: c.pod_ip ?? null,
     hostIp: c.host_ip ?? null,
     podConditions: c.pod_conditions ?? null,
+    guestType: c.guest_type ?? null,
+    guestVmid: c.guest_vmid ?? null,
+    guestUptimeSeconds: c.guest_uptime_seconds ?? null,
   };
 }
 

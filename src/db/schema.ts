@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 47;
+const SCHEMA_VERSION = 48;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -17,7 +17,8 @@ function bootstrap(db: Database.Database): void {
       agent_version TEXT,
       runtime_type  TEXT NOT NULL DEFAULT 'docker',
       host_group    TEXT,
-      host_group_override TEXT
+      host_group_override TEXT,
+      host_labels   TEXT  -- v48: agent-reported labels (Proxmox identity bridge in PR4+)
     );
 
     CREATE TABLE IF NOT EXISTS container_snapshots (
@@ -49,6 +50,10 @@ function bootstrap(db: Database.Database): void {
       pod_ip          TEXT,
       host_ip         TEXT,
       pod_conditions  TEXT,
+      -- v48: Proxmox VE guest identity. NULL for Docker.
+      guest_type      TEXT,
+      guest_vmid      INTEGER,
+      guest_uptime_seconds INTEGER,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -1084,6 +1089,15 @@ function migrate(db: Database.Database, fromVersion: number): void {
       CREATE INDEX IF NOT EXISTS idx_template_burst_events_ts
         ON template_burst_events (ts);
     `);
+  }
+  if (fromVersion < 48) {
+    // Proxmox VE guest identity columns + agent-reported host labels (the
+    // hub side carries the same migration; standalone mode never sees these
+    // populated but the schema needs to match for shared queries).
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_type TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_vmid INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uptime_seconds INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN host_labels TEXT'); } catch { /* already exists */ }
   }
 }
 

@@ -117,6 +117,7 @@ export function HostOverviewTab({ data, timeline, hostId, navigate: _navigate, i
       <div className="ml-[124px] mr-[60px] mt-1.5 mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 rounded-md bg-bg-secondary px-3 py-2 text-xs">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <Badge text={c.is_stale ? 'stale' : derived.label} color={c.is_stale ? 'gray' : derived.color} />
+          {c.guest_type && <Badge text={c.guest_type} color="purple" />}
           <span className="text-muted">CPU <span className="font-mono text-fg">{fmtPercent(c.cpu_percent)}</span>
             {c.cpu_limit_percent != null && !c.is_stale && (
               <span className={`ml-1 ${cpuLimitCls}`}>({c.cpu_limit_percent}% of limit)</span>

@@ -117,7 +117,10 @@ export function HostDetailPage() {
           <h1 className="text-xl font-bold text-fg">{data.host_id}</h1>
           <Badge text={data.is_online ? 'online' : 'offline'} color={data.is_online ? 'green' : 'red'} />
           {data.runtime_type && data.runtime_type !== 'docker' && (
-            <Badge text={data.runtime_type === 'kubernetes' ? 'k8s' : data.runtime_type} color="blue" />
+            <Badge
+              text={data.runtime_type === 'kubernetes' ? 'k8s' : data.runtime_type}
+              color={data.runtime_type === 'proxmox' ? 'purple' : 'blue'}
+            />
           )}
           {data.nodeConditions && data.nodeConditions.length > 0 && (
             <NodeConditionBadges conditions={data.nodeConditions} />

@@ -41,6 +41,9 @@ interface CollectionData {
     podIp?: string | null;
     hostIp?: string | null;
     podConditions?: Array<{ type: string; status: string; reason?: string | null; message?: string | null }> | null;
+    guestType?: 'lxc' | 'qemu' | null;
+    guestVmid?: number | null;
+    guestUptimeSeconds?: number | null;
   }>;
   disk: Array<{
     mountPoint: string;
@@ -320,6 +323,9 @@ export function containerInfoToPayload(c: CollectionData['containers'][number]):
     pod_ip: c.podIp ?? null,
     host_ip: c.hostIp ?? null,
     pod_conditions: c.podConditions ? JSON.stringify(c.podConditions) : null,
+    guest_type: c.guestType ?? null,
+    guest_vmid: c.guestVmid ?? null,
+    guest_uptime_seconds: c.guestUptimeSeconds ?? null,
   };
 }
 

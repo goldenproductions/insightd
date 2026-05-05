@@ -13,8 +13,8 @@ const config = Object.freeze({
   mqttUser: process.env.INSIGHTD_MQTT_USER || '',
   mqttPass: process.env.INSIGHTD_MQTT_PASS || '',
 
-  // Container runtime — 'auto' detects Docker/containerd/k8s; can be forced to one
-  runtime: (process.env.INSIGHTD_RUNTIME || 'auto') as 'auto' | 'docker' | 'containerd' | 'kubernetes',
+  // Container runtime — 'auto' detects Docker/containerd/k8s/Proxmox; can be forced to one
+  runtime: (process.env.INSIGHTD_RUNTIME || 'auto') as 'auto' | 'docker' | 'containerd' | 'kubernetes' | 'proxmox',
 
   // Kubernetes (DaemonSet mode) — set via downward API in the pod spec
   nodeName: process.env.NODE_NAME || '',
@@ -71,6 +71,13 @@ function validate(): string[] {
   }
   if (isK8s && config.allowActions) {
     errors.push('INSIGHTD_ALLOW_ACTIONS=true is ignored in Kubernetes mode (pod lifecycle is managed by the cluster)');
+  }
+  // Same shape for Proxmox: image updates don't apply to VMs/LXC, and
+  // start/stop will land in a later PR. Surface intent now so the operator
+  // doesn't think actions silently work.
+  const isPve = config.runtime === 'proxmox';
+  if (isPve && config.allowUpdates) {
+    errors.push('INSIGHTD_ALLOW_UPDATES=true is ignored in Proxmox mode (no image concept for VMs/LXC)');
   }
   if (isK8s && !config.podNamespace) {
     errors.push('POD_NAMESPACE is not set — leader election is disabled, PV/PVC inventory will not be published. Set via downward API (fieldRef metadata.namespace).');
