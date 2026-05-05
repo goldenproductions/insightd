@@ -5,7 +5,7 @@ import type { ContainerRuntime } from './runtime/types';
 const { config, validate } = require('./config') as {
   config: {
     hostId: string;
-    runtime: 'auto' | 'docker' | 'containerd' | 'kubernetes';
+    runtime: 'auto' | 'docker' | 'containerd' | 'kubernetes' | 'proxmox';
     nodeName: string;
     nodeIp: string;
     kubeletUrl: string;
@@ -22,6 +22,14 @@ const { config, validate } = require('./config') as {
     allowActions: boolean;
     logLines: number;
     logMaxLines: number;
+    // Proxmox VE — REST API transport (set on the agent talking to PVE) +
+    // node identity. See agent/src/config.ts for the env-var origins.
+    pveApiUrl: string;
+    pveTokenId: string;
+    pveTokenSecret: string;
+    pveVerifyTls: boolean;
+    pveCaBundle: string;
+    pveNode: string;
   };
   validate: () => string[];
 };
@@ -45,6 +53,12 @@ async function main(): Promise<void> {
       nodeName: config.nodeName,
       nodeIp: config.nodeIp,
       kubeletUrl: config.kubeletUrl,
+      pveApiUrl: config.pveApiUrl,
+      pveTokenId: config.pveTokenId,
+      pveTokenSecret: config.pveTokenSecret,
+      pveVerifyTls: config.pveVerifyTls,
+      pveCaBundle: config.pveCaBundle,
+      pveNode: config.pveNode,
     });
   } catch (err) {
     logger.error('runtime', 'Cannot initialize container runtime', err);

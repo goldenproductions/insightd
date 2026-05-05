@@ -24,6 +24,10 @@ const SOCKET_PROBES: Array<{ path: string; runtime: RuntimeName }> = [
  *   2. If pmxcfs is mounted (/etc/pve/.version exists), this is a Proxmox VE node
  *   3. Otherwise probe known container runtime socket paths
  *   4. Fall back to 'docker' if nothing is found (existing behavior)
+ *
+ * Note for PVE REST API mode: that mode runs the agent OFF the hypervisor,
+ * so this probe never matches. Operators using REST mode must set
+ * `INSIGHTD_RUNTIME=proxmox` explicitly. See docs/proxmox-setup.md.
  */
 export function detectRuntime(): RuntimeName {
   if (process.env.KUBERNETES_SERVICE_HOST) {
