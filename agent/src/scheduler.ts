@@ -33,6 +33,9 @@ interface SchedulerConfig {
   podName?: string;
   podNamespace?: string;
   nodeName?: string;
+  /** PR4 — Proxmox identity bridge env vars (set on the in-guest agent). */
+  proxmoxNode?: string;
+  proxmoxVmid?: string;
 }
 
 interface ClusterPublisher {
@@ -187,8 +190,19 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
 
     // Publish to MQTT
     if (containers) {
+      // PR4 — when set, stamp the in-guest agent's identity-bridge label so
+      // the hub can cross-link "this VM as the hypervisor sees it" with
+      // "the host this VM's own agent reports under". Pre-validated by
+      // config.validate() that node + vmid are paired.
+      const hostLabels: Record<string, string> = {};
+      if (config.proxmoxNode && config.proxmoxVmid) {
+        hostLabels['insightd.proxmox.guest'] = `${config.proxmoxNode}/${config.proxmoxVmid}`;
+      }
       await safeCollect('mqtt-publish', () =>
-        publishCollection(config.hostId, { containers, disk, volumes, host, gpu, temperature, diskIO, networkIO, nodeConditions, runtimeName: runtime.name, hostGroup: config.hostGroup })
+        publishCollection(config.hostId, {
+          containers, disk, volumes, host, gpu, temperature, diskIO, networkIO, nodeConditions,
+          runtimeName: runtime.name, hostGroup: config.hostGroup, hostLabels,
+        })
       );
     }
 

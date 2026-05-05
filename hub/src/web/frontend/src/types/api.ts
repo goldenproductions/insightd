@@ -609,6 +609,10 @@ export interface PveGuestExtras {
   snapshotCount: number;
   oldestSnapshotAt: string | null;
   newestSnapshotAt: string | null;
+  /** PR4 — host_id of the in-guest agent observing this VM via the
+   *  insightd.proxmox.guest=<node>/<vmid> identity-bridge label. Null
+   *  when no in-guest agent is reporting the bridge env vars. */
+  linkedInGuestHostId?: string | null;
 }
 
 export interface ContainerDetail extends ContainerSnapshot {
@@ -673,6 +677,10 @@ export interface HostDetail extends Host {
   pveZfsPools?: PveZfsPool[];
   /** v49 — cluster quorum (null for standalone PVE / non-PVE). */
   pveClusterStatus?: PveClusterStatus | null;
+  /** PR4 — for in-guest hosts running with INSIGHTD_PROXMOX_NODE/_VMID
+   *  set, the host_id of the PVE hypervisor that observes this guest.
+   *  Null on hosts without the bridge label. */
+  pveHypervisor?: { pveHostId: string; containerName: string } | null;
 }
 
 export interface PveStoragePool {

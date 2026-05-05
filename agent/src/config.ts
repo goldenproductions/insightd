@@ -47,6 +47,13 @@ const config = Object.freeze({
   // Container actions (start/stop/restart)
   allowActions: process.env.INSIGHTD_ALLOW_ACTIONS === 'true',
 
+  // Proxmox VE identity bridge — set on the in-guest agent so the hub can
+  // link "the VM as the hypervisor sees it" with "the host the VM's own
+  // agent reports under". Both must be set together; either alone is a
+  // configuration mistake. See docs/proxmox-setup.md.
+  proxmoxNode: process.env.INSIGHTD_PROXMOX_NODE || '',
+  proxmoxVmid: process.env.INSIGHTD_PROXMOX_VMID || '',
+
   // Disk warn threshold (used for logging only on agent side)
   diskWarnPercent: parseInt(process.env.INSIGHTD_DISK_WARN_THRESHOLD || '85', 10),
 
@@ -72,12 +79,20 @@ function validate(): string[] {
   if (isK8s && config.allowActions) {
     errors.push('INSIGHTD_ALLOW_ACTIONS=true is ignored in Kubernetes mode (pod lifecycle is managed by the cluster)');
   }
-  // Same shape for Proxmox: image updates don't apply to VMs/LXC, and
-  // start/stop will land in a later PR. Surface intent now so the operator
-  // doesn't think actions silently work.
+  // Image updates don't apply to PVE VMs/LXC. Actions DO work as of PR4
+  // — gated by INSIGHTD_ALLOW_ACTIONS like Docker.
   const isPve = config.runtime === 'proxmox';
   if (isPve && config.allowUpdates) {
     errors.push('INSIGHTD_ALLOW_UPDATES=true is ignored in Proxmox mode (no image concept for VMs/LXC)');
+  }
+  // Identity bridge env vars must be paired — having one without the other
+  // wouldn't be enough to construct the cross-link label so the hub would
+  // silently ignore the half-set value, which is a footgun.
+  if ((!!config.proxmoxNode) !== (!!config.proxmoxVmid)) {
+    errors.push('INSIGHTD_PROXMOX_NODE and INSIGHTD_PROXMOX_VMID must be set together (or both unset)');
+  }
+  if (config.proxmoxVmid && !/^\d+$/.test(config.proxmoxVmid)) {
+    errors.push(`INSIGHTD_PROXMOX_VMID must be a positive integer, got "${config.proxmoxVmid}"`);
   }
   if (isK8s && !config.podNamespace) {
     errors.push('POD_NAMESPACE is not set — leader election is disabled, PV/PVC inventory will not be published. Set via downward API (fieldRef metadata.namespace).');

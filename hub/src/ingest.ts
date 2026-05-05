@@ -205,31 +205,45 @@ function ingestUpdates(db: Database.Database, hostId: string, updates: UpdateRes
 }
 
 /**
- * Update or insert host record.
+ * Update or insert host record. `hostLabels` is the agent-reported label
+ * map (currently only used for the Proxmox identity bridge); JSON-encoded
+ * before write, NULL when empty so empty-vs-missing collapses cleanly.
  */
-function upsertHost(db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null): void {
+function upsertHost(
+  db: Database.Database,
+  hostId: string,
+  agentVersion?: string | null,
+  runtimeType?: string,
+  hostGroup?: string | null,
+  hostLabels?: Record<string, string> | null,
+): void {
   const rt = runtimeType || 'docker';
   // Empty string → NULL so the UI treats it as ungrouped.
   const group = hostGroup && hostGroup.length > 0 ? hostGroup : null;
+  const labelsJson = hostLabels && Object.keys(hostLabels).length > 0
+    ? JSON.stringify(hostLabels)
+    : null;
   if (agentVersion) {
     db.prepare(`
-      INSERT INTO hosts (host_id, first_seen, last_seen, agent_version, runtime_type, host_group)
-      VALUES (?, datetime('now'), datetime('now'), ?, ?, ?)
+      INSERT INTO hosts (host_id, first_seen, last_seen, agent_version, runtime_type, host_group, host_labels)
+      VALUES (?, datetime('now'), datetime('now'), ?, ?, ?, ?)
       ON CONFLICT(host_id) DO UPDATE SET
         last_seen = datetime('now'),
         agent_version = excluded.agent_version,
         runtime_type = excluded.runtime_type,
-        host_group = excluded.host_group
-    `).run(hostId, agentVersion, rt, group);
+        host_group = excluded.host_group,
+        host_labels = excluded.host_labels
+    `).run(hostId, agentVersion, rt, group, labelsJson);
   } else {
     db.prepare(`
-      INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type, host_group)
-      VALUES (?, datetime('now'), datetime('now'), ?, ?)
+      INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type, host_group, host_labels)
+      VALUES (?, datetime('now'), datetime('now'), ?, ?, ?)
       ON CONFLICT(host_id) DO UPDATE SET
         last_seen = datetime('now'),
         runtime_type = excluded.runtime_type,
-        host_group = excluded.host_group
-    `).run(hostId, rt, group);
+        host_group = excluded.host_group,
+        host_labels = excluded.host_labels
+    `).run(hostId, rt, group, labelsJson);
   }
 }
 

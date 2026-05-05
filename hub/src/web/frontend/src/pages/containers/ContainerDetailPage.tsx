@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -193,8 +193,9 @@ export function ContainerDetailPage() {
   // requests at runtime, so the UI should disable the buttons and explain why.
   const isKubernetes = data?.runtime_type === 'kubernetes';
   const isProxmox = data?.runtime_type === 'proxmox';
-  // PVE actions land in PR4; for now treat guests like k8s for control buttons.
-  const canControl = isAuthenticated && isRunning && !isKubernetes && !isProxmox;
+  // PR4: actions are wired up for PVE — start/stop/restart/remove via pct/qm.
+  // The agent enforces INSIGHTD_ALLOW_ACTIONS=true; UI doesn't double-gate.
+  const canControl = isAuthenticated && isRunning && !isKubernetes;
   const k8sReadOnlyTitle = 'Not supported in Kubernetes mode — pod lifecycle is managed by the cluster';
   useKeyboardShortcut({
     keys: 'r',
@@ -485,6 +486,15 @@ export function ContainerDetailPage() {
                 VMID <span className="font-mono text-fg">{data.guest_vmid}</span>
               </span>
             )}
+            {data.pve_guest_extras.linkedInGuestHostId && (
+              <Link
+                to={`/hosts/${encodeURIComponent(data.pve_guest_extras.linkedInGuestHostId)}`}
+                className="rounded border border-info/40 bg-info/5 px-2 py-0.5 font-medium text-info hover:bg-info/10"
+                title="The agent inside this guest reports under a different host id — see its metrics there."
+              >
+                View in-guest metrics →
+              </Link>
+            )}
           </div>
         )}
 
@@ -714,7 +724,18 @@ export function ContainerDetailPage() {
       {/* Logs Tab */}
       {activeTab === 'logs' && (
         <Card title="Logs">
-          <LogViewer hostId={hostId!} containerName={containerName!} />
+          {isProxmox && data.guest_type === 'qemu' ? (
+            <div className="rounded-md bg-bg-secondary p-4 text-sm">
+              <p className="text-fg">Logs are not available for QEMU guests from the hypervisor.</p>
+              <p className="mt-2 text-muted">
+                The hypervisor cannot read inside a full VM's filesystem. To surface this guest's
+                logs here, install <span className="font-mono text-fg">insightd-agent</span> inside
+                the VM. LXC containers don't need this — their logs are read directly from the host.
+              </p>
+            </div>
+          ) : (
+            <LogViewer hostId={hostId!} containerName={containerName!} />
+          )}
         </Card>
       )}
 

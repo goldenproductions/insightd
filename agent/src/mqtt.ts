@@ -84,6 +84,11 @@ interface CollectionData {
   }> | null;
   runtimeName?: string;
   hostGroup?: string;
+  /** Free-form labels the agent reports about itself. Currently only used
+   *  by the Proxmox identity bridge (`insightd.proxmox.guest=<node>/<vmid>`)
+   *  but the field is generic so future labels (rack, datacenter, role)
+   *  don't need a payload-version bump. */
+  hostLabels?: Record<string, string>;
 }
 
 interface UpdateData {
@@ -338,6 +343,9 @@ function publishCollection(hostId: string, data: CollectionData): Promise<void> 
     agent_version: VERSION,
     runtime_type: data.runtimeName ?? 'docker',
     host_group: data.hostGroup || null,
+    host_labels: data.hostLabels && Object.keys(data.hostLabels).length > 0
+      ? data.hostLabels
+      : null,
     collected_at: new Date().toISOString(),
     containers: data.containers.map(containerInfoToPayload),
     disk: data.disk.map(d => ({
