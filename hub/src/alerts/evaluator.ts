@@ -43,6 +43,8 @@ interface AlertsConfig {
   workloadDegradedMinutes?: number;
   workloadRolloutStuck?: boolean;
   workloadRolloutStuckMinutes?: number;
+  /** Days since last successful vzdump before pve_backup_overdue fires. 0 = disabled. */
+  pveBackupAgeWarnDays?: number;
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
@@ -191,6 +193,7 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
   if (alerts.diskPercent > 0) {
     triggered.push(...checkPveStorageSaturation(db, alerts.diskPercent));
   }
+  triggered.push(...checkPveBackupOverdue(db, alerts.pveBackupAgeWarnDays ?? 7));
 
   // Check for resolutions of active alerts
   resolved.push(...checkResolutions(db, alerts));
@@ -832,6 +835,50 @@ function checkPveStorageSaturation(db: Database.Database, threshold: number): Al
     }));
 }
 
+/**
+ * Fire `pve_backup_overdue` for any PVE guest whose last successful vzdump
+ * is older than `warnDays` days, OR whose last_status is 'NEVER'. Target =
+ * "<host_id>/<vmid>" so the alert dedups per-guest. Threshold of 0 disables
+ * the check entirely (some homelabbers don't run vzdump and don't want the
+ * noise).
+ */
+function checkPveBackupOverdue(db: Database.Database, warnDays: number): AlertItem[] {
+  if (warnDays <= 0) return [];
+  const cutoffSql = `datetime('now', '-${warnDays} days')`;
+  // Pull the guest's display name from the latest container_snapshot so the
+  // message uses "node/vmid" (matches the format ProxmoxRuntime stamps as
+  // container_name in PR1) rather than just the bare vmid.
+  const rows = db.prepare(`
+    SELECT b.host_id, b.guest_vmid, b.last_backup_at, b.last_status,
+           CAST((strftime('%s','now') - strftime('%s', COALESCE(b.last_backup_at, '1970-01-01'))) / 86400 AS INTEGER) AS age_days,
+           (SELECT cs.container_name
+              FROM container_snapshots cs
+             WHERE cs.host_id = b.host_id AND cs.guest_vmid = b.guest_vmid
+             ORDER BY cs.collected_at DESC LIMIT 1) AS guest_name
+    FROM pve_guest_backups b
+    WHERE b.last_status = 'NEVER'
+       OR (b.last_backup_at IS NOT NULL AND b.last_backup_at < ${cutoffSql})
+  `).all() as Array<{
+    host_id: string; guest_vmid: number; last_backup_at: string | null;
+    last_status: string; age_days: number; guest_name: string | null;
+  }>;
+
+  return rows.map(r => {
+    const display = r.guest_name ?? `${r.host_id}/${r.guest_vmid}`;
+    const detail = r.last_status === 'NEVER'
+      ? 'never backed up'
+      : `last backup ${r.age_days}d ago (threshold ${warnDays}d)`;
+    return {
+      type: 'pve_backup_overdue',
+      hostId: r.host_id,
+      target: String(r.guest_vmid),
+      message: `Proxmox guest "${display}" — ${detail}.`,
+      value: r.last_backup_at ?? 'never',
+      threshold: `${warnDays}d`,
+    };
+  });
+}
+
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {
   const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
   const endpoints = (getEndpoints(db) as Array<{ id: number; name: string; url: string; enabled: number }>).filter(ep => ep.enabled);
@@ -1060,6 +1107,24 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
         `SELECT quorate FROM pve_cluster_status WHERE cluster_name = ?`
       ).get(alert.host_id) as { quorate: number } | undefined;
       isResolved = !row || row.quorate === 1;
+    } else if (alert.alert_type === 'pve_backup_overdue') {
+      // target = vmid (string). Resolved when last_backup_at is back within
+      // the warn window AND the status flipped to OK — so a fresh failure
+      // (status='FAILED' even with old date) keeps the alert open. Or the
+      // row vanished entirely (guest destroyed/migrated).
+      const warnDays = alertsConfig.pveBackupAgeWarnDays ?? 7;
+      const cutoffSql = `datetime('now', '-${warnDays} days')`;
+      const row = db.prepare(
+        `SELECT last_backup_at, last_status FROM pve_guest_backups WHERE host_id = ? AND guest_vmid = ?`
+      ).get(alert.host_id, Number(alert.target)) as { last_backup_at: string | null; last_status: string } | undefined;
+      if (!row) {
+        isResolved = true;
+      } else if (row.last_status === 'OK' && row.last_backup_at) {
+        const stillOld = (db.prepare(
+          `SELECT (julianday(?) < julianday(${cutoffSql})) AS old`
+        ).get(row.last_backup_at) as { old: number }).old === 1;
+        isResolved = !stillOld;
+      }
     } else if (alert.alert_type === 'pve_storage_saturation') {
       // Resolved when latest snapshot is back under the disk threshold, or
       // the storage no longer reports (decommissioned). Mirrors disk_full.
@@ -1144,6 +1209,7 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'pve_zfs_unhealthy': return `ZFS pool "${target}"${on} is back to ONLINE`;
     case 'pve_cluster_quorum_lost': return `Proxmox cluster "${hostId}" regained quorum`;
     case 'pve_storage_saturation': return `Proxmox storage "${target}"${on} usage back to normal`;
+    case 'pve_backup_overdue': return `Proxmox guest VMID ${target}${on} has a fresh successful backup`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

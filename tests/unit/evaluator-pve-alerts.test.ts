@@ -155,4 +155,60 @@ describe('evaluateAlerts — Proxmox VE (PR2)', () => {
     const { triggered } = evaluateAlerts(db, { alerts: cfg });
     assert.equal(triggered.filter((a: any) => a.type === 'pve_storage_saturation').length, 0);
   });
+
+  // ── pve_backup_overdue (PR3) ───────────────────────────────────────────────
+
+  function upsertBackup(opts: { hostId?: string; vmid: number; daysAgo?: number | null; status: 'OK' | 'FAILED' | 'NEVER' }) {
+    const at = opts.daysAgo == null ? null : `datetime('now', '-${opts.daysAgo} days')`;
+    db.prepare(`
+      INSERT INTO pve_guest_backups (host_id, guest_vmid, last_backup_at, last_status, observed_at)
+      VALUES (?, ?, ${at ?? 'NULL'}, ?, datetime('now'))
+      ON CONFLICT(host_id, guest_vmid) DO UPDATE SET
+        last_backup_at = excluded.last_backup_at, last_status = excluded.last_status
+    `).run(opts.hostId ?? 'pve-01', opts.vmid, opts.status);
+  }
+
+  function insertGuestSnapshot(opts: { hostId?: string; vmid: number; name?: string }) {
+    db.prepare(`
+      INSERT INTO container_snapshots
+        (host_id, container_name, container_id, status, restart_count,
+         guest_type, guest_vmid, collected_at)
+      VALUES (?, ?, ?, 'running', 0, 'qemu', ?, datetime('now'))
+    `).run(opts.hostId ?? 'pve-01', opts.name ?? `pve-01/${opts.vmid}`,
+      `qemu/${opts.vmid}`, opts.vmid);
+  }
+
+  it('fires pve_backup_overdue when last successful vzdump is older than the warn window', () => {
+    insertGuestSnapshot({ vmid: 103, name: 'pve-01/103' });
+    upsertBackup({ vmid: 103, daysAgo: 14, status: 'OK' });
+    const { triggered } = evaluateAlerts(db, { alerts: { ...cfg, pveBackupAgeWarnDays: 7 } });
+    const fired = triggered.filter((a: any) => a.type === 'pve_backup_overdue');
+    assert.equal(fired.length, 1);
+    assert.equal(fired[0].target, '103');
+    assert.match(fired[0].message, /pve-01\/103/);
+    assert.match(fired[0].message, /14d ago/);
+  });
+
+  it('fires pve_backup_overdue with NEVER message for guests that have never been backed up', () => {
+    insertGuestSnapshot({ vmid: 200, name: 'pve-01/200' });
+    upsertBackup({ vmid: 200, daysAgo: null, status: 'NEVER' });
+    const { triggered } = evaluateAlerts(db, { alerts: { ...cfg, pveBackupAgeWarnDays: 7 } });
+    const fired = triggered.filter((a: any) => a.type === 'pve_backup_overdue');
+    assert.equal(fired.length, 1);
+    assert.match(fired[0].message, /never backed up/);
+  });
+
+  it('does not fire pve_backup_overdue when backup is within the warn window', () => {
+    insertGuestSnapshot({ vmid: 103, name: 'pve-01/103' });
+    upsertBackup({ vmid: 103, daysAgo: 3, status: 'OK' });
+    const { triggered } = evaluateAlerts(db, { alerts: { ...cfg, pveBackupAgeWarnDays: 7 } });
+    assert.equal(triggered.filter((a: any) => a.type === 'pve_backup_overdue').length, 0);
+  });
+
+  it('disables pve_backup_overdue when pveBackupAgeWarnDays is 0', () => {
+    insertGuestSnapshot({ vmid: 103 });
+    upsertBackup({ vmid: 103, daysAgo: null, status: 'NEVER' });
+    const { triggered } = evaluateAlerts(db, { alerts: { ...cfg, pveBackupAgeWarnDays: 0 } });
+    assert.equal(triggered.filter((a: any) => a.type === 'pve_backup_overdue').length, 0);
+  });
 });

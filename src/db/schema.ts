@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 49;
+const SCHEMA_VERSION = 50;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -149,6 +149,27 @@ function bootstrap(db: Database.Database): void {
       total_nodes    INTEGER NOT NULL,
       online_nodes   INTEGER NOT NULL,
       observed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- v50: per-guest snapshot inventory + backup state (PVE PR3).
+    CREATE TABLE IF NOT EXISTS pve_guest_snapshots (
+      host_id        TEXT NOT NULL,
+      guest_vmid     INTEGER NOT NULL,
+      snapshot_count INTEGER NOT NULL,
+      newest_at      TEXT,
+      oldest_at      TEXT,
+      observed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (host_id, guest_vmid)
+    );
+
+    CREATE TABLE IF NOT EXISTS pve_guest_backups (
+      host_id          TEXT NOT NULL,
+      guest_vmid       INTEGER NOT NULL,
+      last_backup_at   TEXT,
+      last_status      TEXT NOT NULL,
+      storage_target   TEXT,
+      observed_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (host_id, guest_vmid)
     );
 
     CREATE TABLE IF NOT EXISTS volume_snapshots (
@@ -1174,6 +1195,29 @@ function migrate(db: Database.Database, fromVersion: number): void {
         total_nodes    INTEGER NOT NULL,
         online_nodes   INTEGER NOT NULL,
         observed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  }
+  if (fromVersion < 50) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pve_guest_snapshots (
+        host_id        TEXT NOT NULL,
+        guest_vmid     INTEGER NOT NULL,
+        snapshot_count INTEGER NOT NULL,
+        newest_at      TEXT,
+        oldest_at      TEXT,
+        observed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (host_id, guest_vmid)
+      );
+
+      CREATE TABLE IF NOT EXISTS pve_guest_backups (
+        host_id          TEXT NOT NULL,
+        guest_vmid       INTEGER NOT NULL,
+        last_backup_at   TEXT,
+        last_status      TEXT NOT NULL,
+        storage_target   TEXT,
+        observed_at      TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (host_id, guest_vmid)
       );
     `);
   }

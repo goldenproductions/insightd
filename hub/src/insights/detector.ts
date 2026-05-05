@@ -379,6 +379,13 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   // --- Right-sizing (workload-level) ---
   count += generateRightSizingInsights(db, insert);
 
+  // --- Proxmox VE host/guest checks ---
+  // Periodic, dispatched off PVE-specific tables. Lives in its own module
+  // because the per-container diagnosis framework expects container-symptom
+  // entities and these checks are host- or guest-scoped.
+  const { generateProxmoxInsights } = require('./proxmox-checks') as typeof import('./proxmox-checks');
+  count += generateProxmoxInsights(db, insert);
+
   // --- Correlation enrichment ---
   enrichInsightsWithCorrelations(db);
 

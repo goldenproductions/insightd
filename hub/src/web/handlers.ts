@@ -364,6 +364,11 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
   // container's namespace without a separate round trip.
   const cluster_id = queries.getClusterIdForHost(db, params.hostId);
 
+  // Per-PVE-guest backup + snapshot summary (null for non-PVE containers).
+  const pve_guest_extras = runtime_type === 'proxmox'
+    ? queries.getPveGuestExtras(db, params.hostId, params.containerName)
+    : null;
+
   return {
     ...latest,
     host_id: params.hostId,
@@ -376,6 +381,7 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     alerts: queries.getContainerAlerts(db, params.hostId, params.containerName),
     anomalies,
     logTemplates,
+    pve_guest_extras,
   };
 }
 

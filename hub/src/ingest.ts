@@ -843,4 +843,79 @@ function ingestPveCluster(db: Database.Database, status: PveClusterRecord): void
   `).run(status.clusterName, status.quorate, status.totalNodes, status.onlineNodes);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster };
+interface PveGuestSnapshotRecord {
+  guestVmid: number;
+  snapshotCount: number;
+  newestAt: string | null;
+  oldestAt: string | null;
+}
+
+interface PveGuestBackupRecord {
+  guestVmid: number;
+  lastBackupAt: string | null;
+  lastStatus: 'OK' | 'FAILED' | 'NEVER';
+  storageTarget: string | null;
+}
+
+/**
+ * v50 — per-guest snapshot inventory. Upserted on (host_id, guest_vmid).
+ * Guests no longer present in the batch are pruned so destroyed/migrated
+ * VMs don't keep contributing stale snapshot counts to the diagnoser.
+ */
+function ingestPveGuestSnapshots(db: Database.Database, hostId: string, items: PveGuestSnapshotRecord[]): void {
+  const upsert = db.prepare(`
+    INSERT INTO pve_guest_snapshots
+      (host_id, guest_vmid, snapshot_count, newest_at, oldest_at, observed_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(host_id, guest_vmid) DO UPDATE SET
+      snapshot_count = excluded.snapshot_count,
+      newest_at      = excluded.newest_at,
+      oldest_at      = excluded.oldest_at,
+      observed_at    = excluded.observed_at
+  `);
+  const presentVmids = items.map(i => i.guestVmid);
+  const placeholders = presentVmids.map(() => '?').join(',');
+  const deleteMissing = presentVmids.length > 0
+    ? db.prepare(`DELETE FROM pve_guest_snapshots WHERE host_id = ? AND guest_vmid NOT IN (${placeholders})`)
+    : db.prepare('DELETE FROM pve_guest_snapshots WHERE host_id = ?');
+  const txn = db.transaction((rows: PveGuestSnapshotRecord[]) => {
+    for (const r of rows) {
+      upsert.run(hostId, r.guestVmid, r.snapshotCount, r.newestAt, r.oldestAt);
+    }
+    if (presentVmids.length > 0) deleteMissing.run(hostId, ...presentVmids);
+    else deleteMissing.run(hostId);
+  });
+  txn(items);
+}
+
+/**
+ * v50 — per-guest backup state. Upserted on (host_id, guest_vmid). Same
+ * prune-on-missing semantics as guest snapshots.
+ */
+function ingestPveBackups(db: Database.Database, hostId: string, items: PveGuestBackupRecord[]): void {
+  const upsert = db.prepare(`
+    INSERT INTO pve_guest_backups
+      (host_id, guest_vmid, last_backup_at, last_status, storage_target, observed_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(host_id, guest_vmid) DO UPDATE SET
+      last_backup_at = excluded.last_backup_at,
+      last_status    = excluded.last_status,
+      storage_target = excluded.storage_target,
+      observed_at    = excluded.observed_at
+  `);
+  const presentVmids = items.map(i => i.guestVmid);
+  const placeholders = presentVmids.map(() => '?').join(',');
+  const deleteMissing = presentVmids.length > 0
+    ? db.prepare(`DELETE FROM pve_guest_backups WHERE host_id = ? AND guest_vmid NOT IN (${placeholders})`)
+    : db.prepare('DELETE FROM pve_guest_backups WHERE host_id = ?');
+  const txn = db.transaction((rows: PveGuestBackupRecord[]) => {
+    for (const r of rows) {
+      upsert.run(hostId, r.guestVmid, r.lastBackupAt, r.lastStatus, r.storageTarget);
+    }
+    if (presentVmids.length > 0) deleteMissing.run(hostId, ...presentVmids);
+    else deleteMissing.run(hostId);
+  });
+  txn(items);
+}
+
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster, ingestPveGuestSnapshots, ingestPveBackups };

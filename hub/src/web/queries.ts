@@ -529,6 +529,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   container_cpu_saturation: 'warning',
   cert_expiring_soon: 'warning',
   workload_rollout_stuck: 'warning',
+  pve_backup_overdue: 'warning',
 };
 
 /** The CASE expression equivalent of LEVEL_BY_ALERT_TYPE — used in SQL filters/facets. */
@@ -559,6 +560,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'container_cpu_saturation' THEN 'warning'
     WHEN 'cert_expiring_soon' THEN 'warning'
     WHEN 'workload_rollout_stuck' THEN 'warning'
+    WHEN 'pve_backup_overdue' THEN 'warning'
     ELSE 'info'
   END
 `;
@@ -1093,6 +1095,7 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
            cs.size_rootfs_bytes, cs.size_rw_bytes,
            cs.last_oom_killed_at,
            cs.workload_kind, cs.pod_ip, cs.host_ip, cs.pod_conditions,
+           cs.guest_type, cs.guest_vmid, cs.guest_uptime_seconds,
            CASE WHEN cs.memory_limit_mb > 0 AND cs.memory_mb IS NOT NULL
              THEN ROUND(cs.memory_mb / cs.memory_limit_mb * 100, 1) END AS memory_limit_percent,
            CASE WHEN datetime(h.last_seen, '+' || ? || ' minutes') > datetime('now')
@@ -1102,6 +1105,44 @@ function getLatestContainer(db: Database.Database, hostId: string, containerName
     WHERE cs.host_id = ? AND cs.container_name = ?
     ORDER BY cs.collected_at DESC LIMIT 1
   `).get(onlineThresholdMinutes, hostId, containerName) as ContainerRow | undefined) ?? null;
+}
+
+export interface PveGuestExtras {
+  lastBackupAt: string | null;
+  lastBackupStatus: 'OK' | 'FAILED' | 'NEVER' | null;
+  snapshotCount: number;
+  oldestSnapshotAt: string | null;
+  newestSnapshotAt: string | null;
+}
+
+/**
+ * Backup + snapshot summary for a PVE guest, joined to the container
+ * detail response. Returns null when the container isn't a PVE guest
+ * (guest_vmid IS NULL on its latest snapshot) so the frontend can
+ * conditionally render the row.
+ */
+function getPveGuestExtras(db: Database.Database, hostId: string, containerName: string): PveGuestExtras | null {
+  const meta = db.prepare(`
+    SELECT guest_vmid FROM container_snapshots
+    WHERE host_id = ? AND container_name = ? AND guest_vmid IS NOT NULL
+    ORDER BY collected_at DESC LIMIT 1
+  `).get(hostId, containerName) as { guest_vmid: number } | undefined;
+  if (!meta) return null;
+  const backup = db.prepare(`
+    SELECT last_backup_at, last_status FROM pve_guest_backups
+    WHERE host_id = ? AND guest_vmid = ?
+  `).get(hostId, meta.guest_vmid) as { last_backup_at: string | null; last_status: 'OK' | 'FAILED' | 'NEVER' } | undefined;
+  const snap = db.prepare(`
+    SELECT snapshot_count, oldest_at, newest_at FROM pve_guest_snapshots
+    WHERE host_id = ? AND guest_vmid = ?
+  `).get(hostId, meta.guest_vmid) as { snapshot_count: number; oldest_at: string | null; newest_at: string | null } | undefined;
+  return {
+    lastBackupAt: backup?.last_backup_at ?? null,
+    lastBackupStatus: backup?.last_status ?? null,
+    snapshotCount: snap?.snapshot_count ?? 0,
+    oldestSnapshotAt: snap?.oldest_at ?? null,
+    newestSnapshotAt: snap?.newest_at ?? null,
+  };
 }
 
 function getContainerId(db: Database.Database, hostId: string, containerName: string): string | null {
@@ -3344,4 +3385,4 @@ function getLogBursts(
   `).all(hostId, containerName, fromIso, toIso, limit) as any[];
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview, getLogBursts, getLogPatternsForContainer };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview, getLogBursts, getLogPatternsForContainer, getPveGuestExtras };

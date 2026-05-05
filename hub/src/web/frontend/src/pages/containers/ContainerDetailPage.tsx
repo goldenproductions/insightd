@@ -192,7 +192,9 @@ export function ContainerDetailPage() {
   // Kubernetes pods are managed by the cluster — the agent rejects action
   // requests at runtime, so the UI should disable the buttons and explain why.
   const isKubernetes = data?.runtime_type === 'kubernetes';
-  const canControl = isAuthenticated && isRunning && !isKubernetes;
+  const isProxmox = data?.runtime_type === 'proxmox';
+  // PVE actions land in PR4; for now treat guests like k8s for control buttons.
+  const canControl = isAuthenticated && isRunning && !isKubernetes && !isProxmox;
   const k8sReadOnlyTitle = 'Not supported in Kubernetes mode — pod lifecycle is managed by the cluster';
   useKeyboardShortcut({
     keys: 'r',
@@ -447,6 +449,44 @@ export function ContainerDetailPage() {
             <span className={`font-semibold ${restartDelta > 0 ? 'text-warning' : 'text-fg'}`}>{restartDelta}</span>
           </span>
         </div>
+
+        {/* PVE-only inline meta — calm by default, just facts. The
+            pve_backup_overdue alert handles the loud case. */}
+        {isProxmox && data.pve_guest_extras && (
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+            <span className="text-muted">
+              Last backup{' '}
+              <span className={
+                data.pve_guest_extras.lastBackupStatus === 'NEVER' ? 'font-semibold text-warning'
+                  : data.pve_guest_extras.lastBackupStatus === 'FAILED' ? 'font-semibold text-danger'
+                  : 'font-semibold text-fg'
+              }>
+                {data.pve_guest_extras.lastBackupStatus === 'NEVER' || !data.pve_guest_extras.lastBackupAt
+                  ? 'never'
+                  : timeAgo(data.pve_guest_extras.lastBackupAt)}
+              </span>
+              {data.pve_guest_extras.lastBackupStatus === 'FAILED' && (
+                <span className="ml-1 text-danger">(failed)</span>
+              )}
+            </span>
+            <span className="text-muted">
+              Snapshots{' '}
+              <span className={`font-semibold ${data.pve_guest_extras.snapshotCount > 8 ? 'text-warning' : 'text-fg'}`}>
+                {data.pve_guest_extras.snapshotCount}
+              </span>
+              {data.pve_guest_extras.oldestSnapshotAt && data.pve_guest_extras.snapshotCount > 0 && (
+                <span className="ml-1 text-muted">
+                  (oldest {timeAgo(data.pve_guest_extras.oldestSnapshotAt)})
+                </span>
+              )}
+            </span>
+            {data.guest_vmid != null && (
+              <span className="text-muted">
+                VMID <span className="font-mono text-fg">{data.guest_vmid}</span>
+              </span>
+            )}
+          </div>
+        )}
 
         <ActionResult result={actionResult} />
 
