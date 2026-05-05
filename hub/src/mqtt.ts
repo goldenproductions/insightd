@@ -4,7 +4,7 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
@@ -20,6 +20,9 @@ const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, inge
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
   upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
+  ingestPveStorage: (db: Database.Database, hostId: string, items: any[]) => void;
+  ingestPveZfs: (db: Database.Database, hostId: string, items: any[]) => void;
+  ingestPveCluster: (db: Database.Database, status: any) => void;
 };
 
 interface MqttConfig {
@@ -240,6 +243,22 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         else logger.info('mqtt', 'Subscribed to insightd/+/action/response');
       });
 
+      // Proxmox VE PR2 — host-scoped topics. cluster-status is also
+      // published per-host (no leader election in v1); the hub upserts on
+      // cluster_name so duplicates collapse cleanly.
+      client!.subscribe('insightd/+/pve-storage', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pve-storage topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pve-storage');
+      });
+      client!.subscribe('insightd/+/pve-zfs', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pve-zfs topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pve-zfs');
+      });
+      client!.subscribe('insightd/+/pve-cluster', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pve-cluster topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pve-cluster');
+      });
+
       if (!connected) {
         connected = true;
         resolve(client!);
@@ -273,6 +292,12 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
           handleCollection(db, hostId, payload);
         } else if (type === 'updates') {
           handleUpdates(db, hostId, payload);
+        } else if (type === 'pve-storage') {
+          handlePveStorage(db, hostId, payload);
+        } else if (type === 'pve-zfs') {
+          handlePveZfs(db, hostId, payload);
+        } else if (type === 'pve-cluster') {
+          handlePveCluster(db, payload);
         } else if (type === 'logs' && parts[3] === 'response') {
           handleLogResponse(payload);
         } else if (type === 'update' && parts[3] === 'response') {
@@ -695,6 +720,73 @@ function handleEvents(db: Database.Database, clusterId: string, payload: EventsP
   }));
   if (events.length > 0) ingestEvents(db, clusterId, events);
   logger.info('mqtt', `Ingested ${events.length} events for cluster ${clusterId}`);
+}
+
+interface PveStoragePayload {
+  items?: Array<{
+    storage_name: string;
+    storage_type: string;
+    total_bytes: number | null;
+    used_bytes: number | null;
+    active: number;
+    shared: number;
+  }>;
+}
+
+interface PveZfsPayload {
+  items?: Array<{
+    pool_name: string;
+    health: string;
+    size_bytes: number | null;
+    alloc_bytes: number | null;
+    fragmentation: number | null;
+    dedup_ratio: number | null;
+    last_scrub_at: string | null;
+  }>;
+}
+
+interface PveClusterPayload {
+  cluster_name: string;
+  quorate: number;
+  total_nodes: number;
+  online_nodes: number;
+}
+
+function handlePveStorage(db: Database.Database, hostId: string, payload: PveStoragePayload): void {
+  const items = (payload.items || []).map(i => ({
+    storageName: i.storage_name,
+    storageType: i.storage_type,
+    totalBytes: i.total_bytes,
+    usedBytes: i.used_bytes,
+    active: i.active,
+    shared: i.shared,
+  }));
+  ingestPveStorage(db, hostId, items);
+  logger.info('mqtt', `Ingested ${items.length} PVE storage pools from ${hostId}`);
+}
+
+function handlePveZfs(db: Database.Database, hostId: string, payload: PveZfsPayload): void {
+  const items = (payload.items || []).map(i => ({
+    poolName: i.pool_name,
+    health: i.health,
+    sizeBytes: i.size_bytes,
+    allocBytes: i.alloc_bytes,
+    fragmentation: i.fragmentation,
+    dedupRatio: i.dedup_ratio,
+    lastScrubAt: i.last_scrub_at,
+  }));
+  ingestPveZfs(db, hostId, items);
+  logger.info('mqtt', `Ingested ${items.length} ZFS pools from ${hostId}`);
+}
+
+function handlePveCluster(db: Database.Database, payload: PveClusterPayload): void {
+  ingestPveCluster(db, {
+    clusterName: payload.cluster_name,
+    quorate: payload.quorate,
+    totalNodes: payload.total_nodes,
+    onlineNodes: payload.online_nodes,
+  });
+  logger.info('mqtt', `Ingested PVE cluster ${payload.cluster_name} quorate=${payload.quorate}`);
 }
 
 function handleUpdates(db: Database.Database, hostId: string, payload: UpdatesPayload): void {

@@ -789,6 +789,122 @@ function publishWorkloadRollouts(clusterId: string, publisherHostId: string, rol
   });
 }
 
+interface PveStoragePayloadItem {
+  storageName: string;
+  storageType: string;
+  totalBytes: number | null;
+  usedBytes: number | null;
+  active: boolean;
+  shared: boolean;
+}
+
+interface PveZfsPayloadItem {
+  poolName: string;
+  health: string;
+  sizeBytes: number | null;
+  allocBytes: number | null;
+  fragmentation: number | null;
+  dedupRatio: number | null;
+  lastScrubAt: string | null;
+}
+
+interface PveClusterPayload {
+  clusterName: string;
+  quorate: boolean;
+  totalNodes: number;
+  onlineNodes: number;
+}
+
+function publishPveStorage(hostId: string, items: PveStoragePayloadItem[]): Promise<void> {
+  const topic = `insightd/${hostId}/pve-storage`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    host_id: hostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: items.map(i => ({
+      storage_name: i.storageName,
+      storage_type: i.storageType,
+      total_bytes: i.totalBytes,
+      used_bytes: i.usedBytes,
+      active: i.active ? 1 : 0,
+      shared: i.shared ? 1 : 0,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${items.length} PVE storage pools (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
+function publishPveZfs(hostId: string, items: PveZfsPayloadItem[]): Promise<void> {
+  const topic = `insightd/${hostId}/pve-zfs`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    host_id: hostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: items.map(i => ({
+      pool_name: i.poolName,
+      health: i.health,
+      size_bytes: i.sizeBytes,
+      alloc_bytes: i.allocBytes,
+      fragmentation: i.fragmentation,
+      dedup_ratio: i.dedupRatio,
+      last_scrub_at: i.lastScrubAt,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${items.length} ZFS pools (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
+function publishPveCluster(hostId: string, status: PveClusterPayload | null): Promise<void> {
+  // Standalone PVE host (no /cluster/status row of type='cluster') — nothing
+  // to report. The hub never alerts on quorum for hosts that never publish.
+  if (!status) return Promise.resolve();
+  const topic = `insightd/${hostId}/pve-cluster`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    host_id: hostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    cluster_name: status.clusterName,
+    quorate: status.quorate ? 1 : 0,
+    total_nodes: status.totalNodes,
+    online_nodes: status.onlineNodes,
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published cluster status quorate=${status.quorate} (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -822,4 +938,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, disconnect, containerInfoToPayload };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, disconnect, containerInfoToPayload };

@@ -308,6 +308,7 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
 
   if (!host) return null;
 
+  const isPve = host.runtime_type === 'proxmox';
   return {
     ...host,
     containers: getLatestContainers(db, hostId, onlineThresholdMinutes),
@@ -319,7 +320,93 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
     // K8s-only — empty array for Docker hosts. Embedded here so the detail
     // page badge row doesn't need a second round-trip.
     nodeConditions: host.runtime_type === 'kubernetes' ? getNodeConditionsForHost(db, hostId) : [],
+    // Proxmox VE-only — same pattern as nodeConditions. Empty/null on
+    // non-PVE hosts so the frontend can branch on runtime_type alone.
+    pveStoragePools: isPve ? getLatestPveStorage(db, hostId) : [],
+    pveZfsPools: isPve ? getPveZfsPools(db, hostId) : [],
+    pveClusterStatus: isPve ? getPveClusterStatus(db, hostId) : null,
   };
+}
+
+interface PveStorageRow {
+  storage_name: string;
+  storage_type: string;
+  total_bytes: number | null;
+  used_bytes: number | null;
+  active: number;
+  shared: number;
+  used_percent: number | null;
+}
+
+function getLatestPveStorage(db: Database.Database, hostId: string): PveStorageRow[] {
+  return db.prepare(`
+    SELECT s.storage_name, s.storage_type, s.total_bytes, s.used_bytes, s.active, s.shared,
+           CASE WHEN s.total_bytes > 0
+                THEN ROUND(s.used_bytes * 100.0 / s.total_bytes, 1)
+                ELSE NULL END AS used_percent
+    FROM pve_storage_snapshots s
+    INNER JOIN (
+      SELECT host_id, storage_name, MAX(collected_at) AS max_at
+      FROM pve_storage_snapshots WHERE host_id = ?
+      GROUP BY host_id, storage_name
+    ) latest ON s.host_id = latest.host_id
+            AND s.storage_name = latest.storage_name
+            AND s.collected_at = latest.max_at
+    WHERE s.host_id = ?
+    ORDER BY s.storage_name
+  `).all(hostId, hostId) as PveStorageRow[];
+}
+
+interface PveZfsRow {
+  pool_name: string;
+  health: string;
+  size_bytes: number | null;
+  alloc_bytes: number | null;
+  fragmentation: number | null;
+  dedup_ratio: number | null;
+  last_scrub_at: string | null;
+  observed_at: string;
+}
+
+function getPveZfsPools(db: Database.Database, hostId: string): PveZfsRow[] {
+  return db.prepare(`
+    SELECT pool_name, health, size_bytes, alloc_bytes, fragmentation,
+           dedup_ratio, last_scrub_at, observed_at
+    FROM pve_zfs_pools
+    WHERE host_id = ?
+    ORDER BY pool_name
+  `).all(hostId) as PveZfsRow[];
+}
+
+interface PveClusterRow {
+  cluster_name: string;
+  quorate: number;
+  total_nodes: number;
+  online_nodes: number;
+  observed_at: string;
+}
+
+/**
+ * Cluster status is keyed by cluster_name, not host_id. Look up via the
+ * host's host_group (where the agent stamps the cluster id) — falls back
+ * to the most recent row if the host doesn't have a group set.
+ */
+function getPveClusterStatus(db: Database.Database, hostId: string): PveClusterRow | null {
+  const host = db.prepare(
+    `SELECT COALESCE(host_group_override, host_group) AS hg FROM hosts WHERE host_id = ?`
+  ).get(hostId) as { hg: string | null } | undefined;
+  // PVE agents don't always stamp host_group with the cluster name (the
+  // user controls that). When unset, fall back to "the only cluster row" —
+  // single-node setups have at most one row anyway.
+  if (host?.hg) {
+    const row = db.prepare(
+      'SELECT cluster_name, quorate, total_nodes, online_nodes, observed_at FROM pve_cluster_status WHERE cluster_name = ?'
+    ).get(host.hg) as PveClusterRow | undefined;
+    if (row) return row;
+  }
+  return db.prepare(
+    'SELECT cluster_name, quorate, total_nodes, online_nodes, observed_at FROM pve_cluster_status ORDER BY observed_at DESC LIMIT 1'
+  ).get() as PveClusterRow | null;
 }
 
 function getLatestContainers(db: Database.Database, hostId: string, onlineThresholdMinutes: number): ContainerRow[] {
@@ -423,6 +510,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   node_not_ready: 'critical',
   cert_expired: 'critical',
   workload_unavailable: 'critical',
+  pve_cluster_quorum_lost: 'critical',
   container_unhealthy: 'error',
   restart_loop: 'error',
   disk_full: 'error',
@@ -431,6 +519,8 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   cert_invalid: 'error',
   pod_pending: 'error',
   workload_degraded: 'error',
+  pve_zfs_unhealthy: 'error',
+  pve_storage_saturation: 'error',
   high_cpu: 'warning',
   high_memory: 'warning',
   high_host_cpu: 'warning',
@@ -450,6 +540,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'node_not_ready' THEN 'critical'
     WHEN 'cert_expired' THEN 'critical'
     WHEN 'workload_unavailable' THEN 'critical'
+    WHEN 'pve_cluster_quorum_lost' THEN 'critical'
     WHEN 'container_unhealthy' THEN 'error'
     WHEN 'restart_loop' THEN 'error'
     WHEN 'disk_full' THEN 'error'
@@ -458,6 +549,8 @@ const LEVEL_CASE_SQL = `
     WHEN 'cert_invalid' THEN 'error'
     WHEN 'pod_pending' THEN 'error'
     WHEN 'workload_degraded' THEN 'error'
+    WHEN 'pve_zfs_unhealthy' THEN 'error'
+    WHEN 'pve_storage_saturation' THEN 'error'
     WHEN 'high_cpu' THEN 'warning'
     WHEN 'high_memory' THEN 'warning'
     WHEN 'high_host_cpu' THEN 'warning'

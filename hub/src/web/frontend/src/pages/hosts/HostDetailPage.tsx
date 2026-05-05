@@ -21,6 +21,7 @@ import { HostOverviewTab } from './HostOverviewTab';
 import { HostResourcesTab } from './HostResourcesTab';
 import { HostAlertsTab } from './HostAlertsTab';
 import { HostK8sEventsTab } from './HostK8sEventsTab';
+import { HostPveTab } from './HostPveTab';
 import { AnomaliesList } from '@/components/AnomaliesList';
 import { BaselinesViewer } from '@/components/BaselinesViewer';
 import { ExploreDrawer } from '@/components/ExploreDrawer';
@@ -60,7 +61,7 @@ export function HostDetailPage() {
   useKeyboardShortcut({ keys: '1', description: 'Overview tab', scope: 'Host detail', onTrigger: () => setActiveTab('overview') });
   useKeyboardShortcut({ keys: '2', description: 'Resources tab', scope: 'Host detail', onTrigger: () => setActiveTab('resources') });
   useKeyboardShortcut({ keys: '3', description: 'Alerts tab', scope: 'Host detail', onTrigger: () => setActiveTab('alerts') });
-  useKeyboardShortcut({ keys: '4', description: 'K8s Events tab', scope: 'Host detail', onTrigger: () => setActiveTab('k8s-events') });
+  useKeyboardShortcut({ keys: '4', description: 'K8s Events / Proxmox tab', scope: 'Host detail', onTrigger: () => setActiveTab(data?.runtime_type === 'proxmox' ? 'pve' : 'k8s-events') });
   useKeyboardShortcut({ keys: 'b', description: 'Back to hosts', scope: 'Host detail', onTrigger: () => navigate('/hosts') });
   useKeyboardShortcut({ keys: '[', description: 'Previous host', scope: 'Host detail', disabled: !prevHost, onTrigger: () => { if (prevHost) goToHost(prevHost); } });
   useKeyboardShortcut({ keys: ']', description: 'Next host', scope: 'Host detail', disabled: !nextHost, onTrigger: () => { if (nextHost) goToHost(nextHost); } });
@@ -75,11 +76,15 @@ export function HostDetailPage() {
   );
 
   const isK8s = data.runtime_type === 'kubernetes';
+  const isPve = data.runtime_type === 'proxmox';
   const tabs = [
     { id: 'overview', label: 'Overview', shortcut: '1' },
     { id: 'resources', label: 'Resources', shortcut: '2' },
     { id: 'alerts', label: 'Alerts', count: data.alerts.length, shortcut: '3' },
     ...(isK8s ? [{ id: 'k8s-events', label: 'Events', shortcut: '4' }] : []),
+    // Distinct shortcut from k8s events since the two are mutually exclusive
+    // by runtime — '4' on a PVE host opens this tab; on k8s opens Events.
+    ...(isPve ? [{ id: 'pve', label: 'Proxmox', shortcut: '4' }] : []),
   ];
 
   return (
@@ -169,6 +174,10 @@ export function HostDetailPage() {
 
       {activeTab === 'k8s-events' && isK8s && (
         <HostK8sEventsTab hostId={hostId!} />
+      )}
+
+      {activeTab === 'pve' && isPve && (
+        <HostPveTab data={data} />
       )}
 
       {(() => {

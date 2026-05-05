@@ -743,4 +743,104 @@ function ingestNodeConditions(db: Database.Database, hostId: string, conditions:
   upsertMany(conditions);
 }
 
-module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost };
+interface PveStorageRecord {
+  storageName: string;
+  storageType: string;
+  totalBytes: number | null;
+  usedBytes: number | null;
+  active: number;
+  shared: number;
+}
+
+interface PveZfsRecord {
+  poolName: string;
+  health: string;
+  sizeBytes: number | null;
+  allocBytes: number | null;
+  fragmentation: number | null;
+  dedupRatio: number | null;
+  lastScrubAt: string | null;
+}
+
+interface PveClusterRecord {
+  clusterName: string;
+  quorate: number;
+  totalNodes: number;
+  onlineNodes: number;
+}
+
+/**
+ * v49 — per-cycle storage usage per PVE node. Append-only, queries take the
+ * latest row per (host, storage). Mirrors the disk_snapshots shape rather
+ * than upserting — keeps history available for trends without bloating the
+ * row count beyond what daily prune handles.
+ */
+function ingestPveStorage(db: Database.Database, hostId: string, items: PveStorageRecord[]): void {
+  const insert = db.prepare(`
+    INSERT INTO pve_storage_snapshots
+      (host_id, storage_name, storage_type, total_bytes, used_bytes, active, shared, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
+  const insertMany = db.transaction((rows: PveStorageRecord[]) => {
+    for (const r of rows) {
+      insert.run(hostId, r.storageName, r.storageType, r.totalBytes, r.usedBytes, r.active, r.shared);
+    }
+  });
+  if (items.length > 0) insertMany(items);
+}
+
+/**
+ * v49 — ZFS pool health. Upserted on (host_id, pool_name) so each cycle
+ * overwrites the previous row — the table holds *current* state, not
+ * history. Anomalies in pool health are surfaced as alerts, not trends.
+ */
+function ingestPveZfs(db: Database.Database, hostId: string, items: PveZfsRecord[]): void {
+  const upsert = db.prepare(`
+    INSERT INTO pve_zfs_pools
+      (host_id, pool_name, health, size_bytes, alloc_bytes, fragmentation, dedup_ratio, last_scrub_at, observed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(host_id, pool_name) DO UPDATE SET
+      health        = excluded.health,
+      size_bytes    = excluded.size_bytes,
+      alloc_bytes   = excluded.alloc_bytes,
+      fragmentation = excluded.fragmentation,
+      dedup_ratio   = excluded.dedup_ratio,
+      last_scrub_at = excluded.last_scrub_at,
+      observed_at   = excluded.observed_at
+  `);
+  // Pools that disappear since last cycle are pruned so the alert evaluator
+  // doesn't see ghost-DEGRADED rows for a pool that's been zpool-destroyed.
+  const presentNames = items.map(i => i.poolName);
+  const placeholders = presentNames.map(() => '?').join(',');
+  const deleteMissing = presentNames.length > 0
+    ? db.prepare(`DELETE FROM pve_zfs_pools WHERE host_id = ? AND pool_name NOT IN (${placeholders})`)
+    : db.prepare('DELETE FROM pve_zfs_pools WHERE host_id = ?');
+  const upsertMany = db.transaction((rows: PveZfsRecord[]) => {
+    for (const r of rows) {
+      upsert.run(hostId, r.poolName, r.health, r.sizeBytes, r.allocBytes, r.fragmentation, r.dedupRatio, r.lastScrubAt);
+    }
+    if (presentNames.length > 0) deleteMissing.run(hostId, ...presentNames);
+    else deleteMissing.run(hostId);
+  });
+  upsertMany(items);
+}
+
+/**
+ * v49 — cluster quorum + node count. Single row per cluster, upserted —
+ * every PVE node publishes the same row each cycle and last write wins.
+ * Hub stores nothing on standalone PVE installs (publishPveCluster
+ * short-circuits when the agent's collectClusterStatus returns null).
+ */
+function ingestPveCluster(db: Database.Database, status: PveClusterRecord): void {
+  db.prepare(`
+    INSERT INTO pve_cluster_status (cluster_name, quorate, total_nodes, online_nodes, observed_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(cluster_name) DO UPDATE SET
+      quorate      = excluded.quorate,
+      total_nodes  = excluded.total_nodes,
+      online_nodes = excluded.online_nodes,
+      observed_at  = excluded.observed_at
+  `).run(status.clusterName, status.quorate, status.totalNodes, status.onlineNodes);
+}
+
+module.exports = { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster };

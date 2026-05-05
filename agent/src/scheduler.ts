@@ -4,7 +4,7 @@ import logger = require('../../shared/utils/logger');
 import type { ContainerRuntime } from './runtime/types';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
-const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts } = require('./mqtt') as {
+const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster } = require('./mqtt') as {
   publishCollection: (hostId: string, data: any) => Promise<void>;
   publishUpdates: (hostId: string, updates: any[]) => Promise<void>;
   publishPvs: (clusterId: string, publisherHostId: string, pvs: any[]) => Promise<void>;
@@ -15,6 +15,9 @@ const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvent
   publishServices: (clusterId: string, publisherHostId: string, services: any[]) => Promise<void>;
   publishPodVolumes: (clusterId: string, publisherHostId: string, volumes: any[]) => Promise<void>;
   publishWorkloadRollouts: (clusterId: string, publisherHostId: string, rollouts: any[]) => Promise<void>;
+  publishPveStorage: (hostId: string, items: any[]) => Promise<void>;
+  publishPveZfs: (hostId: string, items: any[]) => Promise<void>;
+  publishPveCluster: (hostId: string, status: any) => Promise<void>;
 };
 
 interface SchedulerConfig {
@@ -45,6 +48,7 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
   const { collectNetworkIO } = require('./collectors/network-io') as { collectNetworkIO: (config: any) => any };
 
   const isK8s = runtime.name === 'kubernetes';
+  const isPve = runtime.name === 'proxmox';
   let clusterPublisher: ClusterPublisher | null = null;
 
   async function runCollection(): Promise<void> {
@@ -145,6 +149,24 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
       if (services) await safeCollect('mqtt-services', () => publishServices(clusterPublisher!.clusterId, config.hostId, services));
       if (podVolumes) await safeCollect('mqtt-pod-volumes', () => publishPodVolumes(clusterPublisher!.clusterId, config.hostId, podVolumes));
       if (workloadRollouts) await safeCollect('mqtt-workload-rollouts', () => publishWorkloadRollouts(clusterPublisher!.clusterId, config.hostId, workloadRollouts));
+    }
+
+    // Proxmox VE cluster-scoped collectors. Every PVE node publishes — the
+    // hub deduplicates via INSERT ON CONFLICT (storage/zfs are host-scoped
+    // by their PK; cluster_status PK is cluster_name so each node writes
+    // the same row, last cycle wins). No leader election needed in v1.
+    if (isPve) {
+      const pveRuntime = runtime as any as { nodeName: string };
+      const { collectStoragePools, collectZfsPools, collectClusterStatus } =
+        require('./collectors/proxmox-cluster') as typeof import('./collectors/proxmox-cluster');
+      const storage = await safeCollect('pve-storage', () => collectStoragePools(pveRuntime.nodeName));
+      const zfs = await safeCollect('pve-zfs', () => collectZfsPools(pveRuntime.nodeName));
+      const clusterStatus = await safeCollect('pve-cluster', () => collectClusterStatus());
+      if (storage) await safeCollect('mqtt-pve-storage', () => publishPveStorage(config.hostId, storage));
+      if (zfs) await safeCollect('mqtt-pve-zfs', () => publishPveZfs(config.hostId, zfs));
+      // clusterStatus may be null on standalone PVE — publishPveCluster
+      // short-circuits in that case so the hub never sees a phantom cluster.
+      if (clusterStatus !== null) await safeCollect('mqtt-pve-cluster', () => publishPveCluster(config.hostId, clusterStatus));
     }
 
     logger.info('scheduler', 'Collection cycle complete');
