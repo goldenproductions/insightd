@@ -18,7 +18,7 @@ const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, inge
   ingestWorkloadRollouts: (db: Database.Database, clusterId: string, rollouts: any[]) => void;
   ingestNodeConditions: (db: Database.Database, hostId: string, conditions: any[]) => void;
   ingestUpdates: (db: Database.Database, hostId: string, updates: any[]) => void;
-  upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null) => void;
+  upsertHost: (db: Database.Database, hostId: string, agentVersion?: string | null, runtimeType?: string, hostGroup?: string | null, hostLabels?: Record<string, string> | null) => void;
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
   ingestPveStorage: (db: Database.Database, hostId: string, items: any[]) => void;
   ingestPveZfs: (db: Database.Database, hostId: string, items: any[]) => void;
@@ -126,6 +126,8 @@ interface CollectionPayload {
   agent_version?: string;
   runtime_type?: string;
   host_group?: string | null;
+  /** v48 column, populated as of PR4 — agent-reported labels for cross-linking. */
+  host_labels?: Record<string, string> | null;
 }
 
 interface UpdatesPayload {
@@ -422,7 +424,7 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
     labels: v.labels ?? null,
   }));
 
-  upsertHost(db, hostId, payload.agent_version || null, payload.runtime_type || 'docker', payload.host_group ?? null);
+  upsertHost(db, hostId, payload.agent_version || null, payload.runtime_type || 'docker', payload.host_group ?? null, payload.host_labels ?? null);
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
 

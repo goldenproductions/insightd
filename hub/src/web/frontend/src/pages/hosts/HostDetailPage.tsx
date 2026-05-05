@@ -140,6 +140,15 @@ export function HostDetailPage() {
               View cluster →
             </Link>
           )}
+          {data.pveHypervisor && (
+            <Link
+              to={`/hosts/${encodeURIComponent(data.pveHypervisor.pveHostId)}/containers/${encodeURIComponent(data.pveHypervisor.containerName)}`}
+              className="rounded border border-info/40 bg-info/5 px-2 py-0.5 text-xs font-medium text-info hover:bg-info/10"
+              title="This host runs as a guest on a Proxmox hypervisor — see how the hypervisor sees it (snapshots, backups, host-side stats)."
+            >
+              View hypervisor view →
+            </Link>
+          )}
         </div>
         <RemoveHostButton hostId={hostId!} confirm={confirm} />
       </div>

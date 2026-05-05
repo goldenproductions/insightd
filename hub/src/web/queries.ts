@@ -309,6 +309,10 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
   if (!host) return null;
 
   const isPve = host.runtime_type === 'proxmox';
+  // PR4 — for non-PVE hosts (in-guest agents), see if the host_labels
+  // bridge points at a PVE host that observes this guest. Null for hosts
+  // whose agent doesn't have INSIGHTD_PROXMOX_NODE/_VMID set.
+  const hypervisor = !isPve ? findHypervisorHostId(db, hostId) : null;
   return {
     ...host,
     containers: getLatestContainers(db, hostId, onlineThresholdMinutes),
@@ -325,6 +329,7 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
     pveStoragePools: isPve ? getLatestPveStorage(db, hostId) : [],
     pveZfsPools: isPve ? getPveZfsPools(db, hostId) : [],
     pveClusterStatus: isPve ? getPveClusterStatus(db, hostId) : null,
+    pveHypervisor: hypervisor,  // null on non-bridged hosts
   };
 }
 
@@ -1113,6 +1118,59 @@ export interface PveGuestExtras {
   snapshotCount: number;
   oldestSnapshotAt: string | null;
   newestSnapshotAt: string | null;
+  /** PR4 — host_id of the in-guest agent reporting this VM (via the
+   *  insightd.proxmox.guest=<node>/<vmid> label). Null if no agent inside
+   *  the guest, or the agent isn't running the bridge env vars. */
+  linkedInGuestHostId: string | null;
+}
+
+/**
+ * Find the host whose host_labels JSON advertises the given PVE node/vmid
+ * via the identity bridge label. Returns null when no in-guest agent
+ * matches — the common case until users opt into the bridge env vars.
+ */
+function findHostByProxmoxLabel(db: Database.Database, pveNode: string, vmid: number): string | null {
+  const target = `${pveNode}/${vmid}`;
+  const row = db.prepare(
+    `SELECT host_id FROM hosts
+     WHERE host_labels IS NOT NULL
+       AND json_extract(host_labels, '$."insightd.proxmox.guest"') = ?
+     LIMIT 1`
+  ).get(target) as { host_id: string } | undefined;
+  return row?.host_id ?? null;
+}
+
+/**
+ * Reverse direction — given a host that runs an in-guest agent with the
+ * bridge label set, return the host_id of the PVE hypervisor that observes
+ * this guest. Looks up the PVE host by its `proxmox` runtime_type AND a
+ * container_snapshot row matching the bridge target. Returns null when no
+ * PVE host is observing this guest (yet) or the guest's agent doesn't have
+ * the bridge label.
+ */
+function findHypervisorHostId(db: Database.Database, hostId: string): { pveHostId: string; containerName: string } | null {
+  const row = db.prepare(
+    `SELECT json_extract(host_labels, '$."insightd.proxmox.guest"') AS guest
+     FROM hosts WHERE host_id = ?`
+  ).get(hostId) as { guest: string | null } | undefined;
+  const target = row?.guest;
+  if (!target) return null;
+  const slash = target.indexOf('/');
+  if (slash < 0) return null;
+  const pveNode = target.slice(0, slash);
+  const vmid = Number(target.slice(slash + 1));
+  if (!Number.isInteger(vmid)) return null;
+  // Find the latest container_snapshot for this vmid from a PVE host whose
+  // own container_name encoding matches "<pveNode>/<vmid>" (PR1's format).
+  const cn = `${pveNode}/${vmid}`;
+  const cRow = db.prepare(
+    `SELECT cs.host_id, cs.container_name
+     FROM container_snapshots cs
+     INNER JOIN hosts h ON h.host_id = cs.host_id
+     WHERE cs.container_name = ? AND h.runtime_type = 'proxmox'
+     ORDER BY cs.collected_at DESC LIMIT 1`
+  ).get(cn) as { host_id: string; container_name: string } | undefined;
+  return cRow ? { pveHostId: cRow.host_id, containerName: cRow.container_name } : null;
 }
 
 /**
@@ -1136,12 +1194,20 @@ function getPveGuestExtras(db: Database.Database, hostId: string, containerName:
     SELECT snapshot_count, oldest_at, newest_at FROM pve_guest_snapshots
     WHERE host_id = ? AND guest_vmid = ?
   `).get(hostId, meta.guest_vmid) as { snapshot_count: number; oldest_at: string | null; newest_at: string | null } | undefined;
+  // PR4 — pull the PVE node from container_name ("<node>/<vmid>") and look
+  // up the in-guest agent's host_id via the identity bridge label.
+  const slash = containerName.indexOf('/');
+  const pveNode = slash > 0 ? containerName.slice(0, slash) : null;
+  const linkedInGuestHostId = pveNode != null
+    ? findHostByProxmoxLabel(db, pveNode, meta.guest_vmid)
+    : null;
   return {
     lastBackupAt: backup?.last_backup_at ?? null,
     lastBackupStatus: backup?.last_status ?? null,
     snapshotCount: snap?.snapshot_count ?? 0,
     oldestSnapshotAt: snap?.oldest_at ?? null,
     newestSnapshotAt: snap?.newest_at ?? null,
+    linkedInGuestHostId,
   };
 }
 

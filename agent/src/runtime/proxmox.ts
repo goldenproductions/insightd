@@ -6,6 +6,11 @@ import type {
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
 } from './types';
 
+const VALID_ACTIONS: ContainerAction[] = ['start', 'stop', 'restart', 'remove'];
+const ACTION_TIMEOUT_MS = 30_000;
+const LOG_TIMEOUT_MS = 10_000;
+const LOG_MAX_BUFFER = 8 * 1024 * 1024;
+
 /**
  * `pvesh get /cluster/resources --output-format json` returns one row per
  * cluster resource. We only consume the subset we need; PVE adds fields
@@ -47,13 +52,15 @@ interface PveClusterStatusRow {
  * collectors work natively on PVE (it's just Debian) so getHostMetrics is
  * not implemented.
  *
- * PR 1 scope: list + resource collection only. Logs, actions, and the
- * cluster-scoped collectors (storage, ZFS, backups, snapshots) land in
- * later PRs.
+ * Capabilities by PR:
+ * - PR1: list + resource collection
+ * - PR2: cluster-scoped collectors (storage / ZFS / quorum)
+ * - PR3: per-guest snapshot + backup collectors
+ * - PR4: pct/qm actions, LXC log fetch, identity bridge
  */
 export class ProxmoxRuntime implements ContainerRuntime {
   readonly name = 'proxmox' as const;
-  readonly supportsActions = false;       // enabled in PR 4
+  readonly supportsActions: boolean;
   readonly supportsUpdateChecks = false;  // not meaningful for VMs/LXC
 
   /** PVE node name as PVE itself sees it (cluster/status local=1 row).
@@ -61,8 +68,19 @@ export class ProxmoxRuntime implements ContainerRuntime {
    *  in `agent/src/collectors/proxmox-cluster.ts`. */
   nodeName: string = os.hostname();
 
+  private allowActions: boolean;
+
   /** In-cycle cache so listContainers and collectResources share one pvesh call. */
   private resourceCache = new Map<string, PveResource>();
+
+  constructor(options: { allowActions?: boolean } = {}) {
+    this.allowActions = options.allowActions === true;
+    // supportsActions advertises capability, not authorization — true even
+    // when allowActions=false so the UI doesn't claim "actions unsupported"
+    // when the operator just hasn't enabled them. The performAction() guard
+    // returns the actionable error message in that case.
+    this.supportsActions = true;
+  }
 
   async init(): Promise<void> {
     // Confirm pvesh is reachable. A clear error here beats an obscure ENOENT
@@ -144,20 +162,186 @@ export class ProxmoxRuntime implements ContainerRuntime {
     return enriched;
   }
 
-  async fetchLogs(_containerId: string, _options: LogOptions): Promise<LogEntry[]> {
-    // LXC: journalctl --machine=<vmid> / pct exec — wired up in PR 4.
-    // QEMU: no host-side logs available, requires in-guest agent.
-    throw new Error('Log fetch for Proxmox guests is not implemented yet (planned for PR 4)');
+  /**
+   * Best-effort log fetch for PVE guests.
+   *
+   * - LXC: try `journalctl --machine=<vmid>` first (works for unprivileged
+   *   LXCs with reachable systemd-journald). Falls back to
+   *   `pct exec <vmid> -- journalctl -n <lines>` which works for any LXC
+   *   regardless of journald reachability but forks into the container's
+   *   namespace (heavier).
+   * - QEMU: no host-side log path. Throws an error the UI catches to render
+   *   an "install in-guest agent" empty state.
+   *
+   * containerId is the PVE id field from listContainers (`lxc/200` or
+   * `qemu/103`) so we don't need to re-look-up the type.
+   */
+  async fetchLogs(containerId: string, options: LogOptions): Promise<LogEntry[]> {
+    const parsed = parseGuestId(containerId);
+    if (!parsed) throw new Error(`Unrecognised PVE guest id: "${containerId}"`);
+    const lines = Math.max(1, Math.min(10_000, options.lines ?? 100));
+
+    if (parsed.type === 'qemu') {
+      throw new Error(
+        'Logs are not available for QEMU guests from the hypervisor. ' +
+        'Install insightd-agent inside the VM to surface its logs here.'
+      );
+    }
+
+    // LXC path 1 — journalctl --machine. Works for unprivileged LXCs whose
+    // systemd-journald is reachable from the host. Fast (no namespace fork).
+    try {
+      const out = await execStdout('journalctl', [
+        `--machine=${parsed.vmid}`, '-n', String(lines),
+        '--no-pager', '--output=short-iso',
+      ], LOG_TIMEOUT_MS);
+      const entries = parseJournalctlPlain(out);
+      if (entries.length > 0) return entries;
+      // Empty output usually means "nothing logged yet" rather than failure
+      // — surface as empty array. Continue to fallback only on actual error.
+      return entries;
+    } catch (err) {
+      logger.info('proxmox', `journalctl --machine=${parsed.vmid} failed (${(err as Error).message}); falling back to pct exec`);
+    }
+
+    // LXC path 2 — pct exec. Works for any LXC but slower; the guest needs
+    // journalctl on its $PATH (true for any systemd LXC).
+    try {
+      const out = await execStdout('pct', [
+        'exec', String(parsed.vmid), '--',
+        'journalctl', '-n', String(lines), '--no-pager', '--output=short-iso',
+      ], LOG_TIMEOUT_MS);
+      return parseJournalctlPlain(out);
+    } catch (err) {
+      logger.warn('proxmox', `pct exec journalctl on ${parsed.vmid} failed: ${(err as Error).message}`);
+      return [];
+    }
   }
 
-  async performAction(_containerName: string, _action: ContainerAction): Promise<ActionResult> {
-    throw new Error('Container actions for Proxmox guests are not implemented yet (planned for PR 4)');
+  /**
+   * Start / stop / restart / remove a PVE guest via pct or qm.
+   *
+   * - start: `<tool> start <vmid>` — async on PVE side; returns immediately.
+   * - stop: `<tool> shutdown <vmid>` — graceful (ACPI for QEMU). Falls through
+   *   to nothing-happens if the guest ignores ACPI; users can wait or use a
+   *   second action call.
+   * - restart: `<tool> reboot <vmid>` — graceful. QEMU requires the guest
+   *   agent or an ACPI-aware OS; documented in proxmox-setup.md.
+   * - remove: `<tool> destroy <vmid>` — refuses to remove a running guest;
+   *   we surface PVE's own error in that case.
+   *
+   * containerName arrives from the hub as `<node>/<vmid>` (matches the
+   * format ProxmoxRuntime stamps on listContainers). We re-query
+   * /cluster/resources every call rather than trust the resourceCache from
+   * listContainers — actions can fire between cycles and the cache may be
+   * stale (guest migrated away, vmid recreated).
+   */
+  async performAction(containerName: string, action: ContainerAction): Promise<ActionResult> {
+    if (!this.allowActions) {
+      throw new Error('Proxmox actions are disabled. Set INSIGHTD_ALLOW_ACTIONS=true to enable.');
+    }
+    if (!VALID_ACTIONS.includes(action)) {
+      throw new Error(`Invalid action "${action}". Must be one of: ${VALID_ACTIONS.join(', ')}`);
+    }
+
+    const slash = containerName.indexOf('/');
+    if (slash < 0) {
+      throw new Error(`Unrecognised PVE container name "${containerName}" — expected "<node>/<vmid>"`);
+    }
+    const targetNode = containerName.slice(0, slash);
+    const vmidPart = containerName.slice(slash + 1);
+    const vmid = Number(vmidPart);
+    if (!Number.isInteger(vmid) || vmid <= 0) {
+      throw new Error(`Unrecognised PVE container name "${containerName}" — non-numeric vmid`);
+    }
+    if (targetNode !== this.nodeName) {
+      throw new Error(`Guest ${vmid} lives on node "${targetNode}", not this agent's node "${this.nodeName}"`);
+    }
+
+    // Look up the type fresh — caches go stale, action requests don't.
+    const resources = await pvesh<PveResource[]>('/cluster/resources');
+    const guest = resources.find(r => r.vmid === vmid && r.node === targetNode && (r.type === 'lxc' || r.type === 'qemu'));
+    if (!guest) {
+      throw new Error(`PVE guest vmid=${vmid} not found on node "${targetNode}"`);
+    }
+
+    const tool = guest.type === 'qemu' ? 'qm' : 'pct';
+    const verb = pveActionVerb(action);
+    logger.info('actions', `Performing ${action} on ${guest.type}/${vmid} via ${tool} ${verb}`);
+
+    try {
+      const out = await execStdout(tool, [verb, String(vmid)], ACTION_TIMEOUT_MS);
+      const past = action === 'stop' ? 'shutdown initiated'
+        : action === 'restart' ? 'reboot initiated'
+        : action === 'remove' ? 'destroyed'
+        : 'started';
+      const trailer = out.trim() ? ` — ${out.trim()}` : '';
+      return {
+        status: 'success',
+        message: `Proxmox guest "${containerName}" ${past}${trailer}`,
+      };
+    } catch (err) {
+      throw new Error(`${tool} ${verb} ${vmid} failed: ${(err as Error).message}`);
+    }
   }
 
   async checkImageUpdates(): Promise<ImageUpdate[]> {
     // No "image" concept for VMs/LXC. Returning an empty array is the contract.
     return [];
   }
+}
+
+function parseGuestId(id: string): { type: 'qemu' | 'lxc'; vmid: number } | null {
+  const slash = id.indexOf('/');
+  if (slash < 0) return null;
+  const type = id.slice(0, slash);
+  const vmid = Number(id.slice(slash + 1));
+  if ((type !== 'qemu' && type !== 'lxc') || !Number.isInteger(vmid) || vmid <= 0) return null;
+  return { type, vmid };
+}
+
+function pveActionVerb(action: ContainerAction): string {
+  switch (action) {
+    case 'start':   return 'start';
+    case 'stop':    return 'shutdown'; // graceful; matches Docker stop({t:10})
+    case 'restart': return 'reboot';
+    case 'remove':  return 'destroy';  // PVE refuses on a running guest
+  }
+}
+
+/**
+ * Parse `journalctl --output=short-iso` output. Each line looks like:
+ *   2026-05-05T17:42:13+0000 hostname process[pid]: message
+ * We split off the leading timestamp and treat the rest as the message body.
+ * Anything that doesn't match falls through with timestamp=null.
+ */
+function parseJournalctlPlain(stdout: string): LogEntry[] {
+  const out: LogEntry[] = [];
+  const re = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+\-]\d{4})\s+(.*)$/;
+  for (const raw of stdout.split('\n')) {
+    if (!raw) continue;
+    const m = re.exec(raw);
+    if (m) {
+      out.push({ stream: 'stdout', timestamp: m[1], message: m[2] });
+    } else {
+      out.push({ stream: 'stdout', timestamp: null, message: raw });
+    }
+  }
+  return out;
+}
+
+/**
+ * Run a child process and capture stdout. Reads `child_process.execFile`
+ * lazily so tests can swap it via mock.method (same pattern as pvesh.ts).
+ */
+async function execStdout(file: string, args: string[], timeoutMs: number): Promise<string> {
+  const { execFile } = require('child_process') as typeof import('child_process');
+  return new Promise<string>((resolve, reject) => {
+    execFile(file, args, { timeout: timeoutMs, maxBuffer: LOG_MAX_BUFFER }, (err, stdout) => {
+      if (err) reject(err);
+      else resolve(stdout);
+    });
+  });
 }
 
 /**

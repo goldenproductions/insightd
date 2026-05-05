@@ -161,10 +161,13 @@ describe('ProxmoxRuntime', () => {
     await assert.rejects(() => r.init(), /ProxmoxRuntime init failed/);
   });
 
-  it('reports supportsActions=false and supportsUpdateChecks=false in PR1', async () => {
+  it('advertises supportsActions=true (PR4 capability) and supportsUpdateChecks=false', async () => {
+    // supportsActions is a capability flag — true even when allowActions=false
+    // so the UI doesn't claim the runtime can't do actions; the agent's own
+    // allowActions guard returns the actionable error.
     const { ProxmoxRuntime } = loadProxmox(defaultStub);
     const r = new ProxmoxRuntime();
-    assert.equal(r.supportsActions, false);
+    assert.equal(r.supportsActions, true);
     assert.equal(r.supportsUpdateChecks, false);
     assert.equal(r.name, 'proxmox');
   });

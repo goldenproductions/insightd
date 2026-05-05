@@ -49,7 +49,7 @@ export async function getRuntime(options: RuntimeOptions): Promise<ContainerRunt
       });
       break;
     case 'proxmox':
-      runtime = new ProxmoxRuntime();
+      runtime = new ProxmoxRuntime({ allowActions: options.allowActions });
       break;
     default:
       throw new Error(`Unknown runtime: ${resolved}`);
