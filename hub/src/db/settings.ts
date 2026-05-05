@@ -69,6 +69,8 @@ interface AlertsConfig {
   certExpiry: boolean;
   certExpiryWarnDays: number;
   certCheckIntervalHours: number;
+  /** Days without a successful vzdump before pve_backup_overdue fires. 0 disables. */
+  pveBackupAgeWarnDays?: number;
 }
 
 interface AiConfig {
@@ -130,6 +132,7 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'alerts.certExpiry', env: 'INSIGHTD_ALERT_CERT_EXPIRY', type: 'bool', category: 'Alerts', label: 'TLS Certificate Alerts', hotReload: true, default: 'true', description: 'Fire alerts when an https endpoint certificate is expiring soon, expired, or invalid (chain/hostname).' },
   { key: 'alerts.certExpiryWarnDays', env: 'INSIGHTD_ALERT_CERT_WARN_DAYS', type: 'int', category: 'Alerts', label: 'TLS Expiry Warning (days)', hotReload: true, default: '14', description: 'Fire a warning when the certificate expires within this many days.' },
   { key: 'alerts.certCheckIntervalHours', env: 'INSIGHTD_CERT_CHECK_INTERVAL_HOURS', type: 'int', category: 'Alerts', label: 'TLS Check Interval (hours)', hotReload: true, default: '6', description: 'How often to re-fetch certificate metadata for monitored https endpoints.' },
+  { key: 'alerts.pveBackupAgeWarnDays', env: 'INSIGHTD_ALERT_PVE_BACKUP_DAYS', type: 'int', category: 'Alerts', label: 'PVE Backup Overdue (days)', hotReload: true, default: '7', description: 'Days without a successful vzdump before pve_backup_overdue fires for a Proxmox guest. Set 0 to disable.' },
 
   // Collection
   { key: 'collectIntervalMinutes', env: 'INSIGHTD_COLLECT_INTERVAL', type: 'int', category: 'Collection', label: 'Collection Interval (minutes)', hotReload: false, default: '5' },
@@ -296,6 +299,7 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       certExpiry: get('alerts.certExpiry'),
       certExpiryWarnDays: get('alerts.certExpiryWarnDays') ?? baseConfig.alerts?.certExpiryWarnDays ?? 14,
       certCheckIntervalHours: get('alerts.certCheckIntervalHours') ?? baseConfig.alerts?.certCheckIntervalHours ?? 6,
+      pveBackupAgeWarnDays: get('alerts.pveBackupAgeWarnDays') ?? baseConfig.alerts?.pveBackupAgeWarnDays ?? 7,
     },
     web: {
       baseUrl: (get('web.baseUrl') as string) || baseConfig.web?.baseUrl || '',

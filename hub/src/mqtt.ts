@@ -4,7 +4,7 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
-const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster } = require('./ingest') as {
+const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster, ingestPveGuestSnapshots, ingestPveBackups } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
   ingestVolumes: (db: Database.Database, hostId: string, volumes: any[]) => void;
@@ -23,6 +23,8 @@ const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, inge
   ingestPveStorage: (db: Database.Database, hostId: string, items: any[]) => void;
   ingestPveZfs: (db: Database.Database, hostId: string, items: any[]) => void;
   ingestPveCluster: (db: Database.Database, status: any) => void;
+  ingestPveGuestSnapshots: (db: Database.Database, hostId: string, items: any[]) => void;
+  ingestPveBackups: (db: Database.Database, hostId: string, items: any[]) => void;
 };
 
 interface MqttConfig {
@@ -258,6 +260,14 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         if (err) logger.error('mqtt', 'Failed to subscribe to pve-cluster topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/pve-cluster');
       });
+      client!.subscribe('insightd/+/pve-guest-snapshots', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pve-guest-snapshots topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pve-guest-snapshots');
+      });
+      client!.subscribe('insightd/+/pve-backups', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to pve-backups topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/pve-backups');
+      });
 
       if (!connected) {
         connected = true;
@@ -298,6 +308,10 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
           handlePveZfs(db, hostId, payload);
         } else if (type === 'pve-cluster') {
           handlePveCluster(db, payload);
+        } else if (type === 'pve-guest-snapshots') {
+          handlePveGuestSnapshots(db, hostId, payload);
+        } else if (type === 'pve-backups') {
+          handlePveBackups(db, hostId, payload);
         } else if (type === 'logs' && parts[3] === 'response') {
           handleLogResponse(payload);
         } else if (type === 'update' && parts[3] === 'response') {
@@ -787,6 +801,46 @@ function handlePveCluster(db: Database.Database, payload: PveClusterPayload): vo
     onlineNodes: payload.online_nodes,
   });
   logger.info('mqtt', `Ingested PVE cluster ${payload.cluster_name} quorate=${payload.quorate}`);
+}
+
+interface PveGuestSnapshotsPayload {
+  items?: Array<{
+    guest_vmid: number;
+    snapshot_count: number;
+    newest_at: string | null;
+    oldest_at: string | null;
+  }>;
+}
+
+interface PveBackupsPayload {
+  items?: Array<{
+    guest_vmid: number;
+    last_backup_at: string | null;
+    last_status: 'OK' | 'FAILED' | 'NEVER';
+    storage_target: string | null;
+  }>;
+}
+
+function handlePveGuestSnapshots(db: Database.Database, hostId: string, payload: PveGuestSnapshotsPayload): void {
+  const items = (payload.items || []).map(i => ({
+    guestVmid: i.guest_vmid,
+    snapshotCount: i.snapshot_count,
+    newestAt: i.newest_at,
+    oldestAt: i.oldest_at,
+  }));
+  ingestPveGuestSnapshots(db, hostId, items);
+  logger.info('mqtt', `Ingested ${items.length} PVE guest snapshot summaries from ${hostId}`);
+}
+
+function handlePveBackups(db: Database.Database, hostId: string, payload: PveBackupsPayload): void {
+  const items = (payload.items || []).map(i => ({
+    guestVmid: i.guest_vmid,
+    lastBackupAt: i.last_backup_at,
+    lastStatus: i.last_status,
+    storageTarget: i.storage_target,
+  }));
+  ingestPveBackups(db, hostId, items);
+  logger.info('mqtt', `Ingested ${items.length} PVE guest backup summaries from ${hostId}`);
 }
 
 function handleUpdates(db: Database.Database, hostId: string, payload: UpdatesPayload): void {

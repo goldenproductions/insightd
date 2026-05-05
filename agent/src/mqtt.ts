@@ -905,6 +905,76 @@ function publishPveCluster(hostId: string, status: PveClusterPayload | null): Pr
   });
 }
 
+interface PveGuestSnapshotPayloadItem {
+  guestVmid: number;
+  snapshotCount: number;
+  newestAt: string | null;
+  oldestAt: string | null;
+}
+
+interface PveGuestBackupPayloadItem {
+  guestVmid: number;
+  lastBackupAt: string | null;
+  lastStatus: 'OK' | 'FAILED' | 'NEVER';
+  storageTarget: string | null;
+}
+
+function publishPveGuestSnapshots(hostId: string, items: PveGuestSnapshotPayloadItem[]): Promise<void> {
+  const topic = `insightd/${hostId}/pve-guest-snapshots`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    host_id: hostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: items.map(i => ({
+      guest_vmid: i.guestVmid,
+      snapshot_count: i.snapshotCount,
+      newest_at: i.newestAt,
+      oldest_at: i.oldestAt,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${items.length} PVE guest snapshot summaries (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
+function publishPveBackups(hostId: string, items: PveGuestBackupPayloadItem[]): Promise<void> {
+  const topic = `insightd/${hostId}/pve-backups`;
+  const { VERSION } = require('./config') as { VERSION: string };
+  const payload = JSON.stringify({
+    version: 1,
+    host_id: hostId,
+    agent_version: VERSION,
+    collected_at: new Date().toISOString(),
+    items: items.map(i => ({
+      guest_vmid: i.guestVmid,
+      last_backup_at: i.lastBackupAt,
+      last_status: i.lastStatus,
+      storage_target: i.storageTarget,
+    })),
+  });
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published ${items.length} PVE backup summaries (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   const topic = `insightd/${hostId}/updates`;
   const payload = JSON.stringify({
@@ -938,4 +1008,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, disconnect, containerInfoToPayload };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, publishPveGuestSnapshots, publishPveBackups, disconnect, containerInfoToPayload };

@@ -4,7 +4,7 @@ import logger = require('../../shared/utils/logger');
 import type { ContainerRuntime } from './runtime/types';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
-const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster } = require('./mqtt') as {
+const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, publishPveGuestSnapshots, publishPveBackups } = require('./mqtt') as {
   publishCollection: (hostId: string, data: any) => Promise<void>;
   publishUpdates: (hostId: string, updates: any[]) => Promise<void>;
   publishPvs: (clusterId: string, publisherHostId: string, pvs: any[]) => Promise<void>;
@@ -18,6 +18,8 @@ const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvent
   publishPveStorage: (hostId: string, items: any[]) => Promise<void>;
   publishPveZfs: (hostId: string, items: any[]) => Promise<void>;
   publishPveCluster: (hostId: string, status: any) => Promise<void>;
+  publishPveGuestSnapshots: (hostId: string, items: any[]) => Promise<void>;
+  publishPveBackups: (hostId: string, items: any[]) => Promise<void>;
 };
 
 interface SchedulerConfig {
@@ -157,16 +159,28 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
     // the same row, last cycle wins). No leader election needed in v1.
     if (isPve) {
       const pveRuntime = runtime as any as { nodeName: string };
-      const { collectStoragePools, collectZfsPools, collectClusterStatus } =
-        require('./collectors/proxmox-cluster') as typeof import('./collectors/proxmox-cluster');
-      const storage = await safeCollect('pve-storage', () => collectStoragePools(pveRuntime.nodeName));
-      const zfs = await safeCollect('pve-zfs', () => collectZfsPools(pveRuntime.nodeName));
-      const clusterStatus = await safeCollect('pve-cluster', () => collectClusterStatus());
+      const pveCollectors = require('./collectors/proxmox-cluster') as typeof import('./collectors/proxmox-cluster');
+      const storage = await safeCollect('pve-storage', () => pveCollectors.collectStoragePools(pveRuntime.nodeName));
+      const zfs = await safeCollect('pve-zfs', () => pveCollectors.collectZfsPools(pveRuntime.nodeName));
+      const clusterStatus = await safeCollect('pve-cluster', () => pveCollectors.collectClusterStatus());
       if (storage) await safeCollect('mqtt-pve-storage', () => publishPveStorage(config.hostId, storage));
       if (zfs) await safeCollect('mqtt-pve-zfs', () => publishPveZfs(config.hostId, zfs));
       // clusterStatus may be null on standalone PVE — publishPveCluster
       // short-circuits in that case so the hub never sees a phantom cluster.
       if (clusterStatus !== null) await safeCollect('mqtt-pve-cluster', () => publishPveCluster(config.hostId, clusterStatus));
+
+      // PR3 — per-guest snapshot + backup collectors. Reuses the runtime's
+      // listing (containers were collected at the top of the cycle) so we
+      // don't re-shell pvesh /cluster/resources just to get vmids.
+      const guestRefs = (containers || [])
+        .filter((c: any) => c.guestVmid != null && (c.guestType === 'qemu' || c.guestType === 'lxc'))
+        .map((c: any) => ({ vmid: c.guestVmid as number, type: c.guestType as 'qemu' | 'lxc' }));
+      if (guestRefs.length > 0) {
+        const snapshots = await safeCollect('pve-guest-snapshots', () => pveCollectors.collectGuestSnapshots(pveRuntime.nodeName, guestRefs));
+        const backups = await safeCollect('pve-guest-backups', () => pveCollectors.collectGuestBackups(guestRefs));
+        if (snapshots) await safeCollect('mqtt-pve-guest-snapshots', () => publishPveGuestSnapshots(config.hostId, snapshots));
+        if (backups) await safeCollect('mqtt-pve-backups', () => publishPveBackups(config.hostId, backups));
+      }
     }
 
     logger.info('scheduler', 'Collection cycle complete');

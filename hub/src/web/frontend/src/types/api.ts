@@ -603,10 +603,20 @@ export interface Finding {
   neighbors?: Neighbor[];
 }
 
+export interface PveGuestExtras {
+  lastBackupAt: string | null;
+  lastBackupStatus: 'OK' | 'FAILED' | 'NEVER' | null;
+  snapshotCount: number;
+  oldestSnapshotAt: string | null;
+  newestSnapshotAt: string | null;
+}
+
 export interface ContainerDetail extends ContainerSnapshot {
   host_id: string;
   /** Runtime of the host this container lives on — drives UI gating of Docker-only actions. */
-  runtime_type?: 'docker' | 'kubernetes' | string;
+  runtime_type?: 'docker' | 'kubernetes' | 'proxmox' | string;
+  /** v50 — backup + snapshot summary for PVE guests. Null for Docker/k8s. */
+  pve_guest_extras?: PveGuestExtras | null;
   /** Latest image string from update_checks; null when the agent hasn't
    *  reported one yet. */
   image: string | null;
