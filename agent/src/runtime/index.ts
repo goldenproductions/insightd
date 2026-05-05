@@ -18,6 +18,19 @@ export interface RuntimeOptions {
   nodeIp?: string;
   /** Explicit kubelet URL override. From INSIGHTD_KUBELET_URL env. */
   kubeletUrl?: string;
+  /** PVE REST API base URL — when set, ProxmoxRuntime uses HTTPS instead
+   *  of shelling local pvesh. From INSIGHTD_PVE_API_URL env. */
+  pveApiUrl?: string;
+  /** PVE token id `user@realm!tokenid`. Required in REST mode. */
+  pveTokenId?: string;
+  /** PVE token secret. Required in REST mode. */
+  pveTokenSecret?: string;
+  /** Default false (matches pvesh --insecure). Set true with a real CA. */
+  pveVerifyTls?: boolean;
+  /** Path to CA bundle PEM. Only consulted when pveVerifyTls=true. */
+  pveCaBundle?: string;
+  /** PVE node name this agent is responsible for. Required in REST mode. */
+  pveNode?: string;
 }
 
 /**
@@ -49,7 +62,17 @@ export async function getRuntime(options: RuntimeOptions): Promise<ContainerRunt
       });
       break;
     case 'proxmox':
-      runtime = new ProxmoxRuntime({ allowActions: options.allowActions });
+      runtime = new ProxmoxRuntime({
+        allowActions: options.allowActions,
+        api: options.pveApiUrl ? {
+          url: options.pveApiUrl,
+          tokenId: options.pveTokenId,
+          tokenSecret: options.pveTokenSecret,
+          verifyTls: options.pveVerifyTls,
+          caBundle: options.pveCaBundle,
+        } : undefined,
+        nodeName: options.pveNode,
+      });
       break;
     default:
       throw new Error(`Unknown runtime: ${resolved}`);

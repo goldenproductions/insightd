@@ -51,8 +51,27 @@ const config = Object.freeze({
   // link "the VM as the hypervisor sees it" with "the host the VM's own
   // agent reports under". Both must be set together; either alone is a
   // configuration mistake. See docs/proxmox-setup.md.
+  // NB: separate from the PVE_API vars below — these are set on the
+  // *in-guest* agent pointing back at PVE; the PVE_API vars are set on
+  // the agent that's *talking to* PVE (typically a different process).
   proxmoxNode: process.env.INSIGHTD_PROXMOX_NODE || '',
   proxmoxVmid: process.env.INSIGHTD_PROXMOX_VMID || '',
+
+  // Proxmox VE REST API transport — when set, the agent talks to PVE over
+  // HTTPS instead of shelling out to local pvesh. Lets the agent run from
+  // any guest VM that can reach the PVE web port (default 8006), without
+  // installing Node + the agent on the hypervisor itself. Token model is
+  // `user@realm!tokenid` + secret; create via Datacenter → Permissions →
+  // API Tokens. See docs/proxmox-setup.md for the full walkthrough.
+  pveApiUrl: process.env.INSIGHTD_PVE_API_URL || '',
+  pveTokenId: process.env.INSIGHTD_PVE_TOKEN_ID || '',
+  pveTokenSecret: process.env.INSIGHTD_PVE_TOKEN_SECRET || '',
+  pveVerifyTls: process.env.INSIGHTD_PVE_VERIFY_TLS === 'true',
+  pveCaBundle: process.env.INSIGHTD_PVE_CA_BUNDLE || '',
+  // PVE node this agent is responsible for. Mirrors PR1's "one agent per
+  // PVE node" model — in REST mode there's no `local=1` row to autodiscover
+  // from, so the operator declares which node this process covers.
+  pveNode: process.env.INSIGHTD_PVE_NODE || '',
 
   // Disk warn threshold (used for logging only on agent side)
   diskWarnPercent: parseInt(process.env.INSIGHTD_DISK_WARN_THRESHOLD || '85', 10),
@@ -93,6 +112,40 @@ function validate(): string[] {
   }
   if (config.proxmoxVmid && !/^\d+$/.test(config.proxmoxVmid)) {
     errors.push(`INSIGHTD_PROXMOX_VMID must be a positive integer, got "${config.proxmoxVmid}"`);
+  }
+
+  // PVE REST API mode — when INSIGHTD_PVE_API_URL is set, the token + node
+  // env vars become required. Validates here so misconfigurations surface
+  // at startup, not on the first failed pveApi call mid-cycle.
+  const pveApiActive = !!config.pveApiUrl;
+  if (pveApiActive && !isPve) {
+    errors.push('INSIGHTD_PVE_API_URL is set but INSIGHTD_RUNTIME is not "proxmox" — REST API mode only applies to the proxmox runtime');
+  }
+  if (pveApiActive) {
+    if (!config.pveTokenId) {
+      errors.push('INSIGHTD_PVE_TOKEN_ID is required in PVE REST API mode (format: user@realm!tokenid)');
+    } else if (!/^[^@!]+@[^!]+![^=]+$/.test(config.pveTokenId)) {
+      errors.push(`INSIGHTD_PVE_TOKEN_ID malformed — expected user@realm!tokenid, got "${config.pveTokenId}"`);
+    }
+    if (!config.pveTokenSecret) {
+      errors.push('INSIGHTD_PVE_TOKEN_SECRET is required in PVE REST API mode');
+    } else if (config.pveTokenSecret.length < 16) {
+      // PVE tokens are UUID-shaped (36 chars). Anything shorter is almost
+      // certainly a copy-paste mistake from a credential prefix.
+      errors.push(`INSIGHTD_PVE_TOKEN_SECRET looks too short to be a real PVE token (got ${config.pveTokenSecret.length} chars)`);
+    }
+    if (!config.pveNode) {
+      errors.push('INSIGHTD_PVE_NODE is required in PVE REST API mode (one agent per PVE node — name as PVE knows it, e.g. "proxmox-01")');
+    }
+    if (!config.pveApiUrl.startsWith('https://')) {
+      // Warn only — http:// might be a deliberate test setup against a
+      // localhost reverse proxy. Surfacing as an error here would block.
+      errors.push(`INSIGHTD_PVE_API_URL should use https:// (got "${config.pveApiUrl}") — PVE's API is HTTPS-only by default`);
+    }
+  }
+  // PVE token vars set without API URL — almost certainly a misconfig.
+  if (!pveApiActive && (config.pveTokenId || config.pveTokenSecret)) {
+    errors.push('INSIGHTD_PVE_TOKEN_ID/SECRET set but INSIGHTD_PVE_API_URL is empty — REST mode will not activate');
   }
   if (isK8s && !config.podNamespace) {
     errors.push('POD_NAMESPACE is not set — leader election is disabled, PV/PVC inventory will not be published. Set via downward API (fieldRef metadata.namespace).');

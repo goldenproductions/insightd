@@ -1,6 +1,6 @@
 import os = require('os');
 import logger = require('../../../shared/utils/logger');
-import { pvesh } from './pvesh';
+import { pveApi, pveAction, isRestMode, configurePveTransport, type PveApiConfig } from './pveApi';
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
@@ -63,40 +63,72 @@ export class ProxmoxRuntime implements ContainerRuntime {
   readonly supportsActions: boolean;
   readonly supportsUpdateChecks = false;  // not meaningful for VMs/LXC
 
-  /** PVE node name as PVE itself sees it (cluster/status local=1 row).
+  /** PVE node name as PVE itself sees it.
+   *  - local-shell mode: resolved from `/cluster/status` `local=1` row.
+   *  - REST mode: provided by INSIGHTD_PVE_NODE (no `local` notion remotely).
    *  Public so the scheduler can pass it into the cluster-scoped collectors
    *  in `agent/src/collectors/proxmox-cluster.ts`. */
   nodeName: string = os.hostname();
 
   private allowActions: boolean;
+  private apiConfig?: PveApiConfig;
+  /** Operator-declared node name from INSIGHTD_PVE_NODE, used only in REST mode. */
+  private configuredNodeName?: string;
 
   /** In-cycle cache so listContainers and collectResources share one pvesh call. */
   private resourceCache = new Map<string, PveResource>();
 
-  constructor(options: { allowActions?: boolean } = {}) {
+  constructor(options: {
+    allowActions?: boolean;
+    api?: PveApiConfig;
+    nodeName?: string;
+  } = {}) {
     this.allowActions = options.allowActions === true;
+    this.apiConfig = options.api;
+    this.configuredNodeName = options.nodeName;
     // supportsActions advertises capability, not authorization — true even
     // when allowActions=false so the UI doesn't claim "actions unsupported"
     // when the operator just hasn't enabled them. The performAction() guard
     // returns the actionable error message in that case.
     this.supportsActions = true;
+
+    // Wire the transport before anything else can call pveApi/pveAction.
+    // configurePveTransport with empty config selects local-shell.
+    configurePveTransport(this.apiConfig ?? {});
   }
 
   async init(): Promise<void> {
-    // Confirm pvesh is reachable. A clear error here beats an obscure ENOENT
-    // on every collection cycle.
+    // Confirm the chosen transport works. A clear error here beats an obscure
+    // ENOENT (local-shell missing pvesh) or 401 (REST bad token) on every
+    // collection cycle.
     try {
-      const status = await pvesh<PveClusterStatusRow[]>('/cluster/status');
-      const local = status.find(r => r.type === 'node' && r.local === 1);
-      if (local?.name) this.nodeName = local.name;
-      logger.info('proxmox', `Connected via pvesh — local node: ${this.nodeName}`);
+      const status = await pveApi<PveClusterStatusRow[]>('/cluster/status');
+      if (isRestMode()) {
+        // No `local` notion when we're remote — the operator told us which
+        // node we cover. Validate it actually exists in the cluster so a
+        // typo surfaces here, not as silently-empty listContainers later.
+        if (!this.configuredNodeName) {
+          throw new Error('REST mode requires INSIGHTD_PVE_NODE to declare which node this agent covers');
+        }
+        const match = status.find(r => r.type === 'node' && r.name === this.configuredNodeName);
+        if (!match) {
+          const known = status.filter(r => r.type === 'node').map(r => r.name).join(', ');
+          throw new Error(`INSIGHTD_PVE_NODE="${this.configuredNodeName}" not found in cluster. Known nodes: ${known || '(none)'}`);
+        }
+        this.nodeName = this.configuredNodeName;
+        logger.info('proxmox', `Connected via REST API — node: ${this.nodeName}`);
+      } else {
+        const local = status.find(r => r.type === 'node' && r.local === 1);
+        if (local?.name) this.nodeName = local.name;
+        logger.info('proxmox', `Connected via pvesh — local node: ${this.nodeName}`);
+      }
     } catch (err) {
       throw new Error(`ProxmoxRuntime init failed: ${(err as Error).message}`);
     }
   }
 
   async listContainers(): Promise<ContainerInfo[]> {
-    const resources = await pvesh<PveResource[]>('/cluster/resources');
+    const resources = await pveApi<PveResource[]>('/cluster/resources');
     this.resourceCache.clear();
 
     const guests: ContainerInfo[] = [];
@@ -181,6 +213,17 @@ export class ProxmoxRuntime implements ContainerRuntime {
     if (!parsed) throw new Error(`Unrecognised PVE guest id: "${containerId}"`);
     const lines = Math.max(1, Math.min(10_000, options.lines ?? 100));
 
+    if (isRestMode()) {
+      // PVE's `/exec` REST endpoint is async/streaming and only useful with
+      // VM.Console on the token — too much surface for a feature that's
+      // already best-effort on LXC and unavailable on QEMU. The UI catches
+      // this exact error and renders the in-guest-agent empty state.
+      throw new Error(
+        'Logs are not available when insightd reads PVE via REST API. ' +
+        'Install insightd-agent inside the guest to surface its logs here.'
+      );
+    }
+
     if (parsed.type === 'qemu') {
       throw new Error(
         'Logs are not available for QEMU guests from the hypervisor. ' +
@@ -259,22 +302,48 @@ export class ProxmoxRuntime implements ContainerRuntime {
     }
 
     // Look up the type fresh — caches go stale, action requests don't.
-    const resources = await pvesh<PveResource[]>('/cluster/resources');
+    const resources = await pveApi<PveResource[]>('/cluster/resources');
     const guest = resources.find(r => r.vmid === vmid && r.node === targetNode && (r.type === 'lxc' || r.type === 'qemu'));
     if (!guest) {
       throw new Error(`PVE guest vmid=${vmid} not found on node "${targetNode}"`);
     }
 
-    const tool = guest.type === 'qemu' ? 'qm' : 'pct';
     const verb = pveActionVerb(action);
-    logger.info('actions', `Performing ${action} on ${guest.type}/${vmid} via ${tool} ${verb}`);
+    const past = action === 'stop' ? 'shutdown initiated'
+      : action === 'restart' ? 'reboot initiated'
+      : action === 'remove' ? 'destroyed'
+      : 'started';
 
+    if (isRestMode()) {
+      // REST mode: fire-and-forget; surface the UPID in the success message
+      // so operators can poll PVE's task log for completion if they want to.
+      // remove → DELETE /nodes/{node}/{type}/{vmid}; everything else POST
+      // /nodes/{node}/{type}/{vmid}/status/{verb}.
+      const basePath = `/nodes/${encodeURIComponent(guest.node)}/${guest.type}/${vmid}`;
+      logger.info('actions', `Performing ${action} on ${guest.type}/${vmid} via REST ${verb}`);
+      try {
+        const upid = action === 'remove'
+          ? await pveAction('DELETE', basePath)
+          : await pveAction('POST', `${basePath}/status/${verb}`);
+        const upidPart = typeof upid === 'string' && upid.length > 0
+          ? ` — UPID:${upid}`
+          : '';
+        return {
+          status: 'success',
+          message: `Proxmox guest "${containerName}" ${past}${upidPart}`,
+        };
+      } catch (err) {
+        // REST errors already include the PVE error envelope detail (see
+        // pveApi.ts:describeError) — pass through unchanged.
+        throw new Error(`PVE ${verb} on ${guest.type}/${vmid} failed: ${(err as Error).message}`);
+      }
+    }
+
+    // Local-shell mode — same shape as before PR5.
+    const tool = guest.type === 'qemu' ? 'qm' : 'pct';
+    logger.info('actions', `Performing ${action} on ${guest.type}/${vmid} via ${tool} ${verb}`);
     try {
       const out = await execStdout(tool, [verb, String(vmid)], ACTION_TIMEOUT_MS);
-      const past = action === 'stop' ? 'shutdown initiated'
-        : action === 'restart' ? 'reboot initiated'
-        : action === 'remove' ? 'destroyed'
-        : 'started';
       const trailer = out.trim() ? ` — ${out.trim()}` : '';
       return {
         status: 'success',
