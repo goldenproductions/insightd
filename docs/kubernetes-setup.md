@@ -106,14 +106,26 @@ The DaemonSet uses a ServiceAccount with these cluster permissions:
 - `pods` and `pods/log` — get, list, watch (to discover pods on the node and read logs)
 - `nodes` — get, list (to verify the node exists, read capacity for total memory, read `creationTimestamp` for uptime)
 - `nodes/metrics`, `nodes/stats`, `nodes/proxy` — get (to query the kubelet's `/metrics/cadvisor` and `/stats/summary` endpoints)
-- `replicasets` (apps API group) — get, list (to walk pod owner references up to the parent Deployment for stable container names across rollouts)
-- `persistentvolumes`, `persistentvolumeclaims` — get, list, watch (cluster-scoped PV/PVC inventory for the Storage page's Kubernetes view)
+- `replicasets`, `deployments`, `statefulsets`, `daemonsets` (apps API group) — get, list, watch. ReplicaSets are walked to resolve pod owner references up to the parent Deployment for stable container names across rollouts. The other three back the workload-rollout alerts (`workload_unavailable`, `workload_degraded`, `workload_rollout_stuck`) — the elected leader compares `spec.replicas` against `status.readyReplicas` and publishes the result for the hub to evaluate.
+- `persistentvolumes`, `persistentvolumeclaims`, `services` — get, list, watch. Cluster-scoped PV/PVC inventory powers the Storage page's Kubernetes view; Service inventory backs the topology view's Ingress→Service→Workload edges (real selector-based matching, replacing the heuristic name-matching used in earlier versions).
+- `events` — get, list. The elected leader polls cluster-scoped Warning events and publishes them; events live on the apiserver with a ~1h TTL so a watch isn't needed.
+- `ingresses` (networking.k8s.io API group) — get, list. The elected leader publishes Ingress inventory to the hub for endpoint auto-discovery.
 
 Namespace-scoped (in the agent's own namespace, `insightd` by default):
 
-- `coordination.k8s.io/leases` — get, create, update, patch (used to elect a single PV/PVC publisher per cluster so the hub doesn't receive duplicate inventory from every DaemonSet pod)
+- `coordination.k8s.io/leases` — get, create, update, patch (used to elect a single publisher per cluster for PV/PVC, Service, Ingress, Event and workload-rollout inventory, so the hub doesn't receive duplicate publishes from every DaemonSet pod)
 
-These are read-only permissions over cluster state. The `leases` writes are confined to a single Lease object in the agent's own namespace.
+These are read-only over cluster state. The only writes are confined to a single Lease object in the agent's own namespace.
+
+### Upgrading existing deployments
+
+`agent-v0.17.0` added several rules at once (events + ingresses in PR #196, services in PR #217, and the apps/v1 verbs that back the workload-rollout alerts in PR #221). If you're upgrading from any earlier agent release, reapply the manifest after pulling the new image:
+
+```bash
+kubectl apply -f agent/k8s/rbac.yaml
+```
+
+Without this, the corresponding leader-published features (cluster Events, ingress auto-discovery, topology Service edges, workload-rollout alerts) will silently fail with permission errors in the agent log.
 
 ### Cluster identity (required if you run more than one cluster)
 
