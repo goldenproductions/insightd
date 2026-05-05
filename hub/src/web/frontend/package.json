@@ -9,10 +9,10 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@tanstack/react-query": "^5.100.6",
+    "@tanstack/react-query": "^5.100.9",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
-    "react-router-dom": "^7.14.2",
+    "react-router-dom": "^7.15.0",
     "reactflow": "^11.11.4",
     "uplot": "^1.6.32",
     "uplot-react": "^1.2.4"
