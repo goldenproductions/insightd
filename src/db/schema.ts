@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 48;
+const SCHEMA_VERSION = 49;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -112,6 +112,44 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_disk_host_time
       ON disk_snapshots (host_id, collected_at);
+
+    -- v49: Proxmox VE PR2 tables — populated only by hub mode in practice
+    -- but bootstrapped here too so shared queries don't barf.
+    CREATE TABLE IF NOT EXISTS pve_storage_snapshots (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id       TEXT NOT NULL,
+      storage_name  TEXT NOT NULL,
+      storage_type  TEXT NOT NULL,
+      total_bytes   INTEGER,
+      used_bytes    INTEGER,
+      active        INTEGER NOT NULL DEFAULT 1,
+      shared        INTEGER NOT NULL DEFAULT 0,
+      collected_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pve_storage_host_time
+      ON pve_storage_snapshots (host_id, collected_at);
+
+    CREATE TABLE IF NOT EXISTS pve_zfs_pools (
+      host_id        TEXT NOT NULL,
+      pool_name      TEXT NOT NULL,
+      health         TEXT NOT NULL,
+      size_bytes     INTEGER,
+      alloc_bytes    INTEGER,
+      fragmentation  INTEGER,
+      dedup_ratio    REAL,
+      last_scrub_at  TEXT,
+      observed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (host_id, pool_name)
+    );
+
+    CREATE TABLE IF NOT EXISTS pve_cluster_status (
+      cluster_name   TEXT PRIMARY KEY,
+      quorate        INTEGER NOT NULL,
+      total_nodes    INTEGER NOT NULL,
+      online_nodes   INTEGER NOT NULL,
+      observed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
     CREATE TABLE IF NOT EXISTS volume_snapshots (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1098,6 +1136,46 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_vmid INTEGER'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uptime_seconds INTEGER'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE hosts ADD COLUMN host_labels TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 49) {
+    // PVE PR2 cluster-scoped tables. Standalone mode never populates these
+    // but the schema match keeps shared query helpers honest.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pve_storage_snapshots (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id       TEXT NOT NULL,
+        storage_name  TEXT NOT NULL,
+        storage_type  TEXT NOT NULL,
+        total_bytes   INTEGER,
+        used_bytes    INTEGER,
+        active        INTEGER NOT NULL DEFAULT 1,
+        shared        INTEGER NOT NULL DEFAULT 0,
+        collected_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pve_storage_host_time
+        ON pve_storage_snapshots (host_id, collected_at);
+
+      CREATE TABLE IF NOT EXISTS pve_zfs_pools (
+        host_id        TEXT NOT NULL,
+        pool_name      TEXT NOT NULL,
+        health         TEXT NOT NULL,
+        size_bytes     INTEGER,
+        alloc_bytes    INTEGER,
+        fragmentation  INTEGER,
+        dedup_ratio    REAL,
+        last_scrub_at  TEXT,
+        observed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (host_id, pool_name)
+      );
+
+      CREATE TABLE IF NOT EXISTS pve_cluster_status (
+        cluster_name   TEXT PRIMARY KEY,
+        quorate        INTEGER NOT NULL,
+        total_nodes    INTEGER NOT NULL,
+        online_nodes   INTEGER NOT NULL,
+        observed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
   }
 }
 

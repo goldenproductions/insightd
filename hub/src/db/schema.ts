@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 48;
+const SCHEMA_VERSION = 49;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -123,6 +123,53 @@ function bootstrap(db: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_disk_host_time
       ON disk_snapshots (host_id, collected_at);
+
+    -- v49: Proxmox VE per-storage-pool usage. Append-only per cycle, queries
+    -- take the latest row per (host, storage). Drives pve_storage_saturation
+    -- alert + the Storage Pools card on the host detail page.
+    CREATE TABLE IF NOT EXISTS pve_storage_snapshots (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id       TEXT NOT NULL,
+      storage_name  TEXT NOT NULL,
+      storage_type  TEXT NOT NULL,
+      total_bytes   INTEGER,
+      used_bytes    INTEGER,
+      active        INTEGER NOT NULL DEFAULT 1,
+      shared        INTEGER NOT NULL DEFAULT 0,
+      collected_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pve_storage_host_time
+      ON pve_storage_snapshots (host_id, collected_at);
+
+    -- v49: ZFS pool health, keyed by (host_id, pool_name) so each cycle
+    -- overwrites the previous row. Drives pve_zfs_unhealthy alert + the ZFS
+    -- Pools card. last_scrub_at is null for v1 (PVE /disks/zfs doesn't
+    -- expose it; would need a per-pool detail call).
+    CREATE TABLE IF NOT EXISTS pve_zfs_pools (
+      host_id        TEXT NOT NULL,
+      pool_name      TEXT NOT NULL,
+      health         TEXT NOT NULL,
+      size_bytes     INTEGER,
+      alloc_bytes    INTEGER,
+      fragmentation  INTEGER,
+      dedup_ratio    REAL,
+      last_scrub_at  TEXT,
+      observed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      PRIMARY KEY (host_id, pool_name)
+    );
+
+    -- v49: Cluster quorum + node count, keyed by cluster_name. Every PVE
+    -- node publishes the same row each cycle; INSERT ON CONFLICT means the
+    -- last cycle wins (they all see the same corosync state, no leader
+    -- election needed in v1). Standalone PVE installs publish nothing here.
+    CREATE TABLE IF NOT EXISTS pve_cluster_status (
+      cluster_name   TEXT PRIMARY KEY,
+      quorate        INTEGER NOT NULL,
+      total_nodes    INTEGER NOT NULL,
+      online_nodes   INTEGER NOT NULL,
+      observed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
     CREATE TABLE IF NOT EXISTS volume_snapshots (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1211,6 +1258,46 @@ function migrate(db: Database.Database, fromVersion: number): void {
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uptime_seconds INTEGER'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE hosts ADD COLUMN host_labels TEXT'); } catch { /* already exists */ }
   }
+  if (fromVersion < 49) {
+    // PVE PR2: storage pools (per-node, append-only), ZFS pool health
+    // (per-node, upserted), cluster quorum (cluster-scoped, last write wins).
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS pve_storage_snapshots (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id       TEXT NOT NULL,
+        storage_name  TEXT NOT NULL,
+        storage_type  TEXT NOT NULL,
+        total_bytes   INTEGER,
+        used_bytes    INTEGER,
+        active        INTEGER NOT NULL DEFAULT 1,
+        shared        INTEGER NOT NULL DEFAULT 0,
+        collected_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_pve_storage_host_time
+        ON pve_storage_snapshots (host_id, collected_at);
+
+      CREATE TABLE IF NOT EXISTS pve_zfs_pools (
+        host_id        TEXT NOT NULL,
+        pool_name      TEXT NOT NULL,
+        health         TEXT NOT NULL,
+        size_bytes     INTEGER,
+        alloc_bytes    INTEGER,
+        fragmentation  INTEGER,
+        dedup_ratio    REAL,
+        last_scrub_at  TEXT,
+        observed_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (host_id, pool_name)
+      );
+
+      CREATE TABLE IF NOT EXISTS pve_cluster_status (
+        cluster_name   TEXT PRIMARY KEY,
+        quorate        INTEGER NOT NULL,
+        total_nodes    INTEGER NOT NULL,
+        online_nodes   INTEGER NOT NULL,
+        observed_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+  }
 }
 
 /**
@@ -1249,6 +1336,8 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   // the table small but long enough that diagnoser evidence still resolves
   // for findings up to two weeks old.
   const rTb = db.prepare(`DELETE FROM template_burst_events WHERE ts < datetime('now', '-15 days')`).run();
+  // PVE storage snapshots — per-cycle append. Same retention as disk_snapshots.
+  const rPveSt = db.prepare(`DELETE FROM pve_storage_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
     UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
@@ -1263,7 +1352,7 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
-    + rEv.changes + rIng.changes + rNc.changes + rTb.changes
+    + rEv.changes + rIng.changes + rNc.changes + rTb.changes + rPveSt.changes
     + r9.changes + r10.changes + r11.changes + r12.changes;
 
   if (total > 0) {

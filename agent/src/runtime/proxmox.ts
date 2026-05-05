@@ -1,12 +1,10 @@
 import os = require('os');
 import logger = require('../../../shared/utils/logger');
+import { pvesh } from './pvesh';
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
 } from './types';
-
-const PVESH_PATH = '/usr/bin/pvesh';
-const PVESH_TIMEOUT_MS = 10_000;
 
 /**
  * `pvesh get /cluster/resources --output-format json` returns one row per
@@ -58,8 +56,10 @@ export class ProxmoxRuntime implements ContainerRuntime {
   readonly supportsActions = false;       // enabled in PR 4
   readonly supportsUpdateChecks = false;  // not meaningful for VMs/LXC
 
-  /** PVE node name as PVE itself sees it (cluster/status local=1 row). */
-  private nodeName: string = os.hostname();
+  /** PVE node name as PVE itself sees it (cluster/status local=1 row).
+   *  Public so the scheduler can pass it into the cluster-scoped collectors
+   *  in `agent/src/collectors/proxmox-cluster.ts`. */
+  nodeName: string = os.hostname();
 
   /** In-cycle cache so listContainers and collectResources share one pvesh call. */
   private resourceCache = new Map<string, PveResource>();
@@ -189,27 +189,3 @@ function buildLabels(r: PveResource): Record<string, string> {
   return labels;
 }
 
-/**
- * Run `pvesh get <path> --output-format json` and parse the result.
- * Throws if pvesh exits non-zero, the JSON is malformed, or the call times out.
- *
- * Reads `child_process.execFile` lazily (rather than destructuring at module
- * load) so tests can replace the export via mock.method without race
- * conditions around when the module's promisify-wrapped reference was bound.
- */
-async function pvesh<T>(path: string): Promise<T> {
-  const { execFile } = require('child_process') as typeof import('child_process');
-  const stdout: string = await new Promise((resolve, reject) => {
-    execFile(
-      PVESH_PATH,
-      ['get', path, '--output-format', 'json'],
-      { timeout: PVESH_TIMEOUT_MS, maxBuffer: 8 * 1024 * 1024 },
-      (err, out) => {
-        // execFile with default options returns stdout as a string.
-        if (err) reject(err);
-        else resolve(out);
-      },
-    );
-  });
-  return JSON.parse(stdout) as T;
-}

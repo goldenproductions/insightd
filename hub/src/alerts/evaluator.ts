@@ -184,6 +184,14 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
     triggered.push(...checkWorkloadRolloutStuck(db, alerts.workloadRolloutStuckMinutes ?? 10));
   }
 
+  // Proxmox VE — only fires for hosts that publish PVE data; non-PVE
+  // deployments have empty tables and emit nothing. No config toggle.
+  triggered.push(...checkPveZfsUnhealthy(db));
+  triggered.push(...checkPveClusterQuorumLost(db));
+  if (alerts.diskPercent > 0) {
+    triggered.push(...checkPveStorageSaturation(db, alerts.diskPercent));
+  }
+
   // Check for resolutions of active alerts
   resolved.push(...checkResolutions(db, alerts));
 
@@ -742,6 +750,88 @@ function checkWorkloadRolloutStuck(db: Database.Database, thresholdMinutes: numb
   });
 }
 
+/**
+ * Fire `pve_zfs_unhealthy` for any ZFS pool not in ONLINE state. Target =
+ * pool_name so each pool fires/resolves independently. No config toggle —
+ * pools that don't exist (non-PVE / non-ZFS) simply don't appear in the
+ * table, mirroring how node_pressure handles k8s-only signals.
+ */
+function checkPveZfsUnhealthy(db: Database.Database): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT host_id, pool_name, health, fragmentation
+    FROM pve_zfs_pools
+    WHERE health != 'ONLINE'
+  `).all() as Array<{ host_id: string; pool_name: string; health: string; fragmentation: number | null }>;
+
+  return rows.map(r => ({
+    type: 'pve_zfs_unhealthy',
+    hostId: r.host_id,
+    target: r.pool_name,
+    message: `ZFS pool "${r.pool_name}" on ${r.host_id} is ${r.health}. Run \`zpool status ${r.pool_name}\` for detail.`,
+    value: r.health,
+    threshold: 'ONLINE',
+  }));
+}
+
+/**
+ * Fire `pve_cluster_quorum_lost` when corosync has lost quorum (split brain
+ * or multiple nodes offline). Target = 'quorum' (singleton — there's only
+ * one quorum state per cluster). hostId = cluster_name so the alert dedups
+ * across every PVE node that publishes the same status.
+ */
+function checkPveClusterQuorumLost(db: Database.Database): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT cluster_name, total_nodes, online_nodes
+    FROM pve_cluster_status
+    WHERE quorate = 0
+  `).all() as Array<{ cluster_name: string; total_nodes: number; online_nodes: number }>;
+
+  return rows.map(r => ({
+    type: 'pve_cluster_quorum_lost',
+    hostId: r.cluster_name,
+    target: 'quorum',
+    message: `Proxmox cluster "${r.cluster_name}" has lost quorum (${r.online_nodes}/${r.total_nodes} nodes online). VMs/LXC cannot be started or migrated until quorum is restored.`,
+    value: `${r.online_nodes}/${r.total_nodes}`,
+    threshold: 'quorate=1',
+  }));
+}
+
+/**
+ * Fire `pve_storage_saturation` when a PVE storage pool exceeds the
+ * (shared) disk threshold. Reuses `alerts.diskPercent` rather than
+ * introducing a parallel knob — same semantic, the user already tuned it.
+ * Inactive storages (mounted offline, missing disk) are skipped so we don't
+ * alert on 0/0.
+ */
+function checkPveStorageSaturation(db: Database.Database, threshold: number): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT s.host_id, s.storage_name, s.storage_type, s.total_bytes, s.used_bytes,
+           CASE WHEN s.total_bytes > 0
+                THEN ROUND(s.used_bytes * 100.0 / s.total_bytes, 1)
+                ELSE NULL END AS used_percent
+    FROM pve_storage_snapshots s
+    INNER JOIN (
+      SELECT host_id, storage_name, MAX(collected_at) AS max_at
+      FROM pve_storage_snapshots
+      GROUP BY host_id, storage_name
+    ) latest ON s.host_id = latest.host_id
+            AND s.storage_name = latest.storage_name
+            AND s.collected_at = latest.max_at
+    WHERE s.active = 1
+  `).all() as Array<{ host_id: string; storage_name: string; storage_type: string; total_bytes: number | null; used_bytes: number | null; used_percent: number | null }>;
+
+  return rows
+    .filter(r => r.used_percent !== null && r.used_percent > threshold)
+    .map(r => ({
+      type: 'pve_storage_saturation',
+      hostId: r.host_id,
+      target: r.storage_name,
+      message: `Proxmox storage "${r.storage_name}" (${r.storage_type}) on ${r.host_id} at ${r.used_percent}% (threshold: ${threshold}%)`,
+      value: r.used_percent,
+      threshold,
+    }));
+}
+
 function checkEndpointDown(db: Database.Database, failureThreshold: number): AlertItem[] {
   const { getEndpoints, getLastNChecks } = require('../http-monitor/queries');
   const endpoints = (getEndpoints(db) as Array<{ id: number; name: string; url: string; enabled: number }>).filter(ep => ep.enabled);
@@ -956,6 +1046,32 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
         ).get(alert.host_id, ns, pod);
         isResolved = !row;
       }
+    } else if (alert.alert_type === 'pve_zfs_unhealthy') {
+      // Resolved when the pool is back to ONLINE — or the row is gone
+      // (zpool destroyed, host removed). target = pool_name.
+      const row = db.prepare(
+        `SELECT health FROM pve_zfs_pools WHERE host_id = ? AND pool_name = ?`
+      ).get(alert.host_id, alert.target) as { health: string } | undefined;
+      isResolved = !row || row.health === 'ONLINE';
+    } else if (alert.alert_type === 'pve_cluster_quorum_lost') {
+      // Resolved when corosync regains quorum, or the cluster row is gone.
+      // hostId = cluster_name (cluster-scoped, not a real host).
+      const row = db.prepare(
+        `SELECT quorate FROM pve_cluster_status WHERE cluster_name = ?`
+      ).get(alert.host_id) as { quorate: number } | undefined;
+      isResolved = !row || row.quorate === 1;
+    } else if (alert.alert_type === 'pve_storage_saturation') {
+      // Resolved when latest snapshot is back under the disk threshold, or
+      // the storage no longer reports (decommissioned). Mirrors disk_full.
+      const latest = db.prepare(`
+        SELECT CASE WHEN total_bytes > 0
+                    THEN ROUND(used_bytes * 100.0 / total_bytes, 1)
+                    ELSE NULL END AS percent
+        FROM pve_storage_snapshots
+        WHERE host_id = ? AND storage_name = ?
+        ORDER BY collected_at DESC LIMIT 1
+      `).get(alert.host_id, alert.target) as { percent: number | null } | undefined;
+      isResolved = !latest || latest.percent === null || latest.percent <= alertsConfig.diskPercent;
     } else if (alert.alert_type === 'workload_unavailable'
             || alert.alert_type === 'workload_degraded'
             || alert.alert_type === 'workload_rollout_stuck') {
@@ -1025,6 +1141,9 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'workload_unavailable': return `Workload "${target}" has Ready replicas again`;
     case 'workload_degraded': return `Workload "${target}" is fully Ready`;
     case 'workload_rollout_stuck': return `Workload "${target}" rollout is progressing`;
+    case 'pve_zfs_unhealthy': return `ZFS pool "${target}"${on} is back to ONLINE`;
+    case 'pve_cluster_quorum_lost': return `Proxmox cluster "${hostId}" regained quorum`;
+    case 'pve_storage_saturation': return `Proxmox storage "${target}"${on} usage back to normal`;
     default: return `Alert resolved for ${target}${on}`;
   }
 }

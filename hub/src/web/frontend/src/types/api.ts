@@ -657,6 +657,41 @@ export interface HostDetail extends Host {
   anomalies?: RollupAnomaly[];
   /** v35 — k8s node conditions (empty for non-k8s hosts). */
   nodeConditions: NodeCondition[];
+  /** v49 — Proxmox VE storage pools on this node (empty for non-PVE). */
+  pveStoragePools?: PveStoragePool[];
+  /** v49 — ZFS pools on this node (empty for non-PVE). */
+  pveZfsPools?: PveZfsPool[];
+  /** v49 — cluster quorum (null for standalone PVE / non-PVE). */
+  pveClusterStatus?: PveClusterStatus | null;
+}
+
+export interface PveStoragePool {
+  storage_name: string;
+  storage_type: string;
+  total_bytes: number | null;
+  used_bytes: number | null;
+  active: number;
+  shared: number;
+  used_percent: number | null;
+}
+
+export interface PveZfsPool {
+  pool_name: string;
+  health: string;
+  size_bytes: number | null;
+  alloc_bytes: number | null;
+  fragmentation: number | null;
+  dedup_ratio: number | null;
+  last_scrub_at: string | null;
+  observed_at: string;
+}
+
+export interface PveClusterStatus {
+  cluster_name: string;
+  quorate: number;
+  total_nodes: number;
+  online_nodes: number;
+  observed_at: string;
 }
 
 export interface NodeCondition {
