@@ -29,6 +29,10 @@ interface ContainerSnapshot {
   hostIp?: string | null;
   /** JSON-stringified PodCondition[] from the agent. */
   podConditions?: string | null;
+  /** v48 — Proxmox VE guest identity. */
+  guestType?: 'lxc' | 'qemu' | null;
+  guestVmid?: number | null;
+  guestUptimeSeconds?: number | null;
 }
 
 interface DiskResult {
@@ -95,8 +99,8 @@ interface HostData {
  */
 function ingestContainers(db: Database.Database, hostId: string, containers: ContainerSnapshot[]): void {
   const insert = db.prepare(`
-    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, size_rootfs_bytes, size_rw_bytes, cpu_limit_cores, cpu_limit_percent, memory_limit_mb, cpu_request_cores, memory_request_mb, last_oom_killed_at, workload_kind, pod_ip, host_ip, pod_conditions, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO container_snapshots (host_id, container_name, container_id, status, cpu_percent, memory_mb, restart_count, network_rx_bytes, network_tx_bytes, blkio_read_bytes, blkio_write_bytes, health_status, health_check_output, labels, exit_code, size_rootfs_bytes, size_rw_bytes, cpu_limit_cores, cpu_limit_percent, memory_limit_mb, cpu_request_cores, memory_request_mb, last_oom_killed_at, workload_kind, pod_ip, host_ip, pod_conditions, guest_type, guest_vmid, guest_uptime_seconds, collected_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const upsertRegistry = db.prepare(`
     INSERT INTO containers (host_id, container_name, first_seen, last_seen, removed_at)
@@ -122,6 +126,7 @@ function ingestContainers(db: Database.Database, hostId: string, containers: Con
         c.cpuRequestCores ?? null, c.memoryRequestMb ?? null,
         c.lastOomKilledAt ?? null,
         c.workloadKind ?? null, c.podIp ?? null, c.hostIp ?? null, c.podConditions ?? null,
+        c.guestType ?? null, c.guestVmid ?? null, c.guestUptimeSeconds ?? null,
         batchAt);
       upsertRegistry.run(hostId, c.name, batchAt, batchAt);
     }

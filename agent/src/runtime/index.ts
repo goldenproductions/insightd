@@ -2,6 +2,7 @@ import logger = require('../../../shared/utils/logger');
 import type { ContainerRuntime, RuntimeName } from './types';
 import { DockerRuntime } from './docker';
 import { KubernetesRuntime } from './kubernetes';
+import { ProxmoxRuntime } from './proxmox';
 import { detectRuntime } from './detect';
 
 export interface RuntimeOptions {
@@ -47,6 +48,9 @@ export async function getRuntime(options: RuntimeOptions): Promise<ContainerRunt
         kubeletUrl: options.kubeletUrl,
       });
       break;
+    case 'proxmox':
+      runtime = new ProxmoxRuntime();
+      break;
     default:
       throw new Error(`Unknown runtime: ${resolved}`);
   }
@@ -58,3 +62,4 @@ export async function getRuntime(options: RuntimeOptions): Promise<ContainerRunt
 export type { ContainerRuntime, RuntimeName } from './types';
 export { DockerRuntime } from './docker';
 export { KubernetesRuntime } from './kubernetes';
+export { ProxmoxRuntime } from './proxmox';

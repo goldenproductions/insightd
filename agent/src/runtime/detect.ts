@@ -21,13 +21,36 @@ const SOCKET_PROBES: Array<{ path: string; runtime: RuntimeName }> = [
  *
  * Resolution order:
  *   1. If KUBERNETES_SERVICE_HOST env var is set (running in a pod), use 'kubernetes'
- *   2. Otherwise probe known socket paths
- *   3. Fall back to 'docker' if nothing is found (existing behavior)
+ *   2. If pmxcfs is mounted (/etc/pve/.version exists), this is a Proxmox VE node
+ *   3. Otherwise probe known container runtime socket paths
+ *   4. Fall back to 'docker' if nothing is found (existing behavior)
  */
 export function detectRuntime(): RuntimeName {
   if (process.env.KUBERNETES_SERVICE_HOST) {
     logger.info('runtime', 'Detected Kubernetes environment (running in-cluster)');
     return 'kubernetes';
+  }
+
+  // Proxmox VE: pmxcfs mounts /etc/pve/.version on every cluster node, even
+  // single-node "clusters of one". A stronger signal than any binary path
+  // because pmxcfs only mounts when pve-cluster.service is up.
+  try {
+    if (fs.existsSync('/etc/pve/.version')) {
+      let dockerAlsoPresent = false;
+      try { dockerAlsoPresent = fs.existsSync('/var/run/docker.sock'); } catch { /* ignore */ }
+      if (dockerAlsoPresent) {
+        logger.warn(
+          'runtime',
+          'Detected Proxmox VE — but /var/run/docker.sock is also present. ' +
+          'Defaulting to proxmox; set INSIGHTD_RUNTIME=docker to override.'
+        );
+      } else {
+        logger.info('runtime', 'Detected Proxmox VE via /etc/pve/.version');
+      }
+      return 'proxmox';
+    }
+  } catch {
+    // permission denied or similar — keep probing
   }
 
   for (const probe of SOCKET_PROBES) {
