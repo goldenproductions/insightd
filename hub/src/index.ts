@@ -65,10 +65,10 @@ async function main(): Promise<void> {
     // hits pre-populated data instead of paying a ~10s cold-cache penalty.
     setImmediate(() => {
       try {
-        const { getDashboard } = require('./web/queries') as { getDashboard: (db: Database.Database, threshold: number, showInternal: boolean) => unknown };
+        const { getDashboard } = require('./web/queries') as { getDashboard: (db: Database.Database, threshold: number) => unknown };
         const threshold = (config.collectIntervalMinutes || 5) * 2;
         const t0 = Date.now();
-        getDashboard(db, threshold, false);
+        getDashboard(db, threshold);
         logger.info('warmup', `Dashboard cache primed in ${Date.now() - t0}ms`);
       } catch (err) {
         logger.warn('warmup', `Dashboard warmup failed: ${(err as Error).message}`);

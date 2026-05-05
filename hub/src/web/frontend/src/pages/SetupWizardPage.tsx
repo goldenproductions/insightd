@@ -223,7 +223,7 @@ function WaitingStep({ mode, onNext, onSkip }: { mode: string; onNext: () => voi
         const h = await api<Host[]>('/hosts');
         setHosts(h);
         if (h.length > 0) {
-          const c = await api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(h[0]!.host_id)}/containers?showInternal=true`);
+          const c = await api<ContainerSnapshot[]>(`/hosts/${encodeURIComponent(h[0]!.host_id)}/containers`);
           setContainers(c);
           setConnected(true);
           clearInterval(poll);

@@ -4,7 +4,6 @@ import { api } from '@/lib/api';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { DashboardData, HealthData } from '@/types/api';
 import { HealthBadge } from '@/components/HealthBadge';
-import { useShowInternal } from '@/hooks/useShowInternal';
 import { StatsGridSkeleton, CardSkeleton } from '@/components/Skeleton';
 import { useFeedItems } from '@/hooks/useFeedItems';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
@@ -18,11 +17,9 @@ import { DashboardHosts } from './DashboardHosts';
 import { RecentActivity } from './RecentActivity';
 
 export function DashboardPage() {
-  const { showInternal } = useShowInternal();
-  const si = showInternal ? '?showInternal=true' : '';
   const { data, error, refetch, isFetching, dataUpdatedAt } = useQuery({
-    queryKey: queryKeys.dashboard(showInternal),
-    queryFn: () => api<DashboardData>(`/dashboard${si}`),
+    queryKey: queryKeys.dashboard(),
+    queryFn: () => api<DashboardData>('/dashboard'),
     refetchInterval: 30_000,
     retry: 1,
   });

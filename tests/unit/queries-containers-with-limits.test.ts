@@ -18,7 +18,7 @@ describe('getLatestContainers — k8s resource limits (v36)', () => {
     ]);
     db.prepare("INSERT INTO hosts (host_id, first_seen, last_seen) VALUES ('local', ?, ?)").run(ts(new Date()), ts(new Date()));
 
-    const rows = getLatestContainers(db, 'local', 15, true);
+    const rows = getLatestContainers(db, 'local', 15);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].cpu_limit_cores, null);
     assert.equal(rows[0].cpu_limit_percent, null);
@@ -39,7 +39,7 @@ describe('getLatestContainers — k8s resource limits (v36)', () => {
       WHERE container_name = 'memtest'
     `).run();
 
-    const rows = getLatestContainers(db, 'local', 15, true);
+    const rows = getLatestContainers(db, 'local', 15);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].cpu_limit_cores, 0.5);
     assert.equal(rows[0].cpu_limit_percent, 82.5);
@@ -56,7 +56,7 @@ describe('getLatestContainers — k8s resource limits (v36)', () => {
     db.prepare("INSERT INTO hosts (host_id, first_seen, last_seen) VALUES ('local', ?, ?)").run(now, now);
     db.prepare(`UPDATE container_snapshots SET memory_limit_mb = 0 WHERE container_name = 'edge'`).run();
 
-    const rows = getLatestContainers(db, 'local', 15, true);
+    const rows = getLatestContainers(db, 'local', 15);
     assert.equal(rows[0].memory_limit_percent, null);
   });
 });

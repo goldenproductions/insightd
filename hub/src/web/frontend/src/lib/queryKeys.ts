@@ -3,13 +3,13 @@ export const queryKeys = {
   health: () => ['health'] as const,
 
   // Dashboard
-  dashboard: (showInternal?: boolean) => ['dashboard', showInternal] as const,
+  dashboard: () => ['dashboard'] as const,
   rankings: () => ['rankings'] as const,
 
   // Hosts
   hosts: () => ['hosts'] as const,
-  host: (hostId?: string, showInternal?: boolean) => ['host', hostId, showInternal] as const,
-  hostContainers: (hostId?: string, showInternal?: boolean) => ['host-containers', hostId, showInternal] as const,
+  host: (hostId?: string) => ['host', hostId] as const,
+  hostContainers: (hostId?: string) => ['host-containers', hostId] as const,
   timeline: (hostId?: string) => ['timeline', hostId] as const,
   trends: (hostId?: string) => ['trends', hostId] as const,
   events: (hostId?: string) => ['events', hostId] as const,

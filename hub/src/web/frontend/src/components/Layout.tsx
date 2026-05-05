@@ -2,12 +2,11 @@ import { useState, useMemo } from 'react';
 import { Outlet, NavLink, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
-import { useShowInternal } from '@/hooks/useShowInternal';
 import { UpdateBanner } from './UpdateBanner';
 import {
   DashboardIcon, HostsIcon, AlertsIcon, InsightsIcon, EndpointsIcon,
   StorageIcon, WebhooksIcon, KeyIcon, UpdatesIcon, AgentIcon, SettingsIcon,
-  EyeIcon, SunIcon, MoonIcon, MenuIcon,
+  SunIcon, MoonIcon, MenuIcon,
 } from './Icons';
 
 interface NavItem { to: string; label: string; icon: () => React.JSX.Element }
@@ -16,7 +15,6 @@ interface NavGroup { label: string; items: NavItem[] }
 export function Layout() {
   const { authEnabled, isAuthenticated, isHubMode } = useAuth();
   const { theme, toggleTheme } = useTheme();
-  const { showInternal, toggleShowInternal } = useShowInternal();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
 
@@ -101,14 +99,6 @@ export function Layout() {
 
         {/* Bottom controls */}
         <div className="border-t border-white/10 px-4 py-3 space-y-1">
-          <button
-            onClick={toggleShowInternal}
-            aria-label="Toggle insightd containers visibility"
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm transition-colors hover:text-white text-sidebar-text"
-          >
-            <EyeIcon hidden={!showInternal} />
-            {showInternal ? 'Hide insightd' : 'Show insightd'}
-          </button>
           <button
             onClick={toggleTheme}
             aria-label="Toggle dark mode"
