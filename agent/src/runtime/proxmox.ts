@@ -151,11 +151,17 @@ export class ProxmoxRuntime implements ContainerRuntime {
       if (r.node !== this.nodeName) continue;
 
       this.resourceCache.set(r.id, r);
+      // Display-friendly identifier `<node>/<guest-name>` — readable on the
+      // host detail page and across the UI (was previously `<node>/<vmid>`,
+      // which forced users to memorise PVE numbers). Falls back to the VMID
+      // when PVE returns an empty name (rare but possible). The leading
+      // `<node>/` is load-bearing — `getProxmoxContainerMeta` in the hub
+      // splits on the first slash to find the PVE node, and the in-guest
+      // identity bridge does the same lookup keyed on `(node, vmid)` rather
+      // than the container name, so renames in PVE don't break the link.
+      const displayName = r.name && r.name.length > 0 ? r.name : String(r.vmid);
       guests.push({
-        // Stable cluster-wide identifier — matches the label format the
-        // in-guest agent stamps via INSIGHTD_PROXMOX_NODE/_VMID for the
-        // identity bridge in PR 4.
-        name: `${r.node}/${r.vmid}`,
+        name: `${r.node}/${displayName}`,
         id: r.id,                                                // "lxc/200"
         status: mapStatus(r.status),
         restartCount: 0,                                         // no concept on PVE
@@ -299,24 +305,29 @@ export class ProxmoxRuntime implements ContainerRuntime {
 
     const slash = containerName.indexOf('/');
     if (slash < 0) {
-      throw new Error(`Unrecognised PVE container name "${containerName}" — expected "<node>/<vmid>"`);
+      throw new Error(`Unrecognised PVE container name "${containerName}" — expected "<node>/<guest>"`);
     }
     const targetNode = containerName.slice(0, slash);
-    const vmidPart = containerName.slice(slash + 1);
-    const vmid = Number(vmidPart);
-    if (!Number.isInteger(vmid) || vmid <= 0) {
-      throw new Error(`Unrecognised PVE container name "${containerName}" — non-numeric vmid`);
-    }
+    const guestKey = containerName.slice(slash + 1);
     if (targetNode !== this.nodeName) {
-      throw new Error(`Guest ${vmid} lives on node "${targetNode}", not this agent's node "${this.nodeName}"`);
+      throw new Error(`Guest "${guestKey}" lives on node "${targetNode}", not this agent's node "${this.nodeName}"`);
     }
 
     // Look up the type fresh — caches go stale, action requests don't.
+    // Resolve the guest by display name first (the new identifier format
+    // since the rename PR), falling back to numeric VMID for any stale UI
+    // state still using the old `<node>/<vmid>` shape.
     const resources = await pveApi<PveResource[]>('/cluster/resources');
-    const guest = resources.find(r => r.vmid === vmid && r.node === targetNode && (r.type === 'lxc' || r.type === 'qemu'));
+    const candidates = resources.filter(r =>
+      r.node === targetNode && (r.type === 'lxc' || r.type === 'qemu')
+    );
+    const numericVmid = /^\d+$/.test(guestKey) ? Number(guestKey) : null;
+    const guest = candidates.find(r => r.name === guestKey)
+      ?? (numericVmid != null ? candidates.find(r => r.vmid === numericVmid) : undefined);
     if (!guest) {
-      throw new Error(`PVE guest vmid=${vmid} not found on node "${targetNode}"`);
+      throw new Error(`PVE guest "${guestKey}" not found on node "${targetNode}"`);
     }
+    const vmid = guest.vmid as number;
 
     const verb = pveActionVerb(action);
     const past = action === 'stop' ? 'shutdown initiated'

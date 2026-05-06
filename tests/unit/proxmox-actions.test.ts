@@ -56,7 +56,7 @@ describe('ProxmoxRuntime.performAction (PR4)', () => {
     const r = new ProxmoxRuntime({ allowActions: false });
     await r.init();
     await assert.rejects(
-      () => r.performAction('pve-01/200', 'start'),
+      () => r.performAction('pve-01/web', 'start'),
       /actions are disabled/i,
     );
   });
@@ -69,7 +69,7 @@ describe('ProxmoxRuntime.performAction (PR4)', () => {
     });
     const r = new ProxmoxRuntime({ allowActions: true });
     await r.init();
-    const result = await r.performAction('pve-01/200', 'start');
+    const result = await r.performAction('pve-01/web', 'start');
     assert.equal(result.status, 'success');
     const pctCall = calls.find(c => c.file === 'pct');
     assert.ok(pctCall);
@@ -84,7 +84,7 @@ describe('ProxmoxRuntime.performAction (PR4)', () => {
     });
     const r = new ProxmoxRuntime({ allowActions: true });
     await r.init();
-    await r.performAction('pve-01/103', 'stop');
+    await r.performAction('pve-01/db', 'stop');
     const qmCall = calls.find(c => c.file === 'qm');
     assert.ok(qmCall);
     // 'shutdown' = graceful ACPI, not 'stop' (which would be a hard kill).
@@ -99,8 +99,8 @@ describe('ProxmoxRuntime.performAction (PR4)', () => {
     });
     const r = new ProxmoxRuntime({ allowActions: true });
     await r.init();
-    await r.performAction('pve-01/103', 'restart');
-    await r.performAction('pve-01/103', 'remove');
+    await r.performAction('pve-01/db', 'restart');
+    await r.performAction('pve-01/db', 'remove');
     const qmCalls = calls.filter(c => c.file === 'qm');
     assert.deepEqual(qmCalls.map(c => c.args[0]), ['reboot', 'destroy']);
   });
@@ -131,13 +131,31 @@ describe('ProxmoxRuntime.performAction (PR4)', () => {
     const r = new ProxmoxRuntime({ allowActions: true });
     await r.init();
     await assert.rejects(
-      () => r.performAction('not-a-vmid', 'start'),
-      /expected "<node>\/<vmid>"/,
+      () => r.performAction('not-a-guest', 'start'),
+      /expected "<node>\/<guest>"/,
     );
+    // Unknown guest name on the right node — falls through to the lookup
+    // and surfaces a "not found" error rather than a parse error.
     await assert.rejects(
-      () => r.performAction('pve-01/notnumeric', 'start'),
-      /non-numeric vmid/,
+      () => r.performAction('pve-01/missing', 'start'),
+      /not found/,
     );
+  });
+
+  it('still accepts the legacy numeric-VMID identifier (backward compat)', async () => {
+    const calls: Array<{ file: string; args: string[] }> = [];
+    const { ProxmoxRuntime } = loadRuntime((file, args) => {
+      calls.push({ file, args });
+      return defaultStub(file, args);
+    });
+    const r = new ProxmoxRuntime({ allowActions: true });
+    await r.init();
+    // UI state cached before the rename PR may still pass `<node>/<vmid>`.
+    const result = await r.performAction('pve-01/200', 'start');
+    assert.equal(result.status, 'success');
+    const pctCall = calls.find(c => c.file === 'pct');
+    assert.ok(pctCall);
+    assert.deepEqual(pctCall!.args, ['start', '200']);
   });
 
   it('surfaces pct/qm errors from the underlying tool unchanged', async () => {
@@ -148,7 +166,7 @@ describe('ProxmoxRuntime.performAction (PR4)', () => {
     const r = new ProxmoxRuntime({ allowActions: true });
     await r.init();
     await assert.rejects(
-      () => r.performAction('pve-01/200', 'start'),
+      () => r.performAction('pve-01/web', 'start'),
       /container is locked/,
     );
   });

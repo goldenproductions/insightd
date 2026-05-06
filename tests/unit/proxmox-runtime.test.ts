@@ -90,7 +90,7 @@ describe('ProxmoxRuntime', () => {
     const list = await r.listContainers();
     // proxmox-02's VM is filtered out; templates and storage rows too.
     const names = list.map(c => c.name).sort();
-    assert.deepEqual(names, ['proxmox-01/103', 'proxmox-01/200']);
+    assert.deepEqual(names, ['proxmox-01/db', 'proxmox-01/web']);
   });
 
   it('listContainers maps lxc/qemu rows to ContainerInfo with guest fields', async () => {
