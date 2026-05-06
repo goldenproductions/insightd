@@ -2,10 +2,7 @@
 
 ## Supported Versions
 
-| Version | Supported |
-| ------- | --------- |
-| 0.4.x   | Yes       |
-| < 0.4   | No        |
+Insightd is pre-1.0; we support the latest minor release of the hub and agent. Older versions are not patched — please upgrade before reporting an issue you've found on a stale build. The current Docker Hub `latest` tags track the most recent `hub-v*` / `agent-v*` GitHub releases.
 
 ## Reporting a Vulnerability
 
