@@ -63,6 +63,20 @@ curl -sSL https://insightd.org/install.sh | bash
 
 The script is ~40 lines of bash and [public on GitHub](https://github.com/goldenproductions/insightd.org/blob/main/public/install.sh) — audit before running if you prefer. See the [Quick Start guide](https://docs.insightd.org/guides/quick-start/) for the manual Docker Compose walkthrough.
 
+#### Manual Docker Compose
+
+If you'd rather clone the repo and run `docker compose` yourself, generate an MQTT password into `.env` **before** the first `compose up` — the bootstrap container refuses to create an empty-password broker user and will fail fast otherwise:
+
+```bash
+git clone https://github.com/goldenproductions/insightd.git
+cd insightd
+printf 'INSIGHTD_MQTT_USER=insightd\nINSIGHTD_MQTT_PASS=%s\n' \
+  "$(openssl rand -hex 24)" > .env
+docker compose -f docker-compose.hub.yml up -d
+```
+
+`.env` is the source of truth for your MQTT credentials — back it up. Re-running `compose up` is idempotent and won't rotate the password.
+
 ### Kubernetes / k3s
 
 Run the agent as a DaemonSet — one pod per node, each reports its node as a host. See the [Kubernetes guide](https://docs.insightd.org/guides/kubernetes/) for the full setup.
