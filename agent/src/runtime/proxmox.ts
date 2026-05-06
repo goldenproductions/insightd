@@ -5,6 +5,7 @@ import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
 } from './types';
+import { LogsUnavailableError } from './types';
 
 const VALID_ACTIONS: ContainerAction[] = ['start', 'stop', 'restart', 'remove'];
 const ACTION_TIMEOUT_MS = 30_000;
@@ -216,16 +217,17 @@ export class ProxmoxRuntime implements ContainerRuntime {
     if (isRestMode()) {
       // PVE's `/exec` REST endpoint is async/streaming and only useful with
       // VM.Console on the token — too much surface for a feature that's
-      // already best-effort on LXC and unavailable on QEMU. The UI catches
-      // this exact error and renders the in-guest-agent empty state.
-      throw new Error(
+      // already best-effort on LXC and unavailable on QEMU. Throws
+      // LogsUnavailableError so the MQTT dispatcher and UI treat this as a
+      // documented empty state rather than a fetch failure.
+      throw new LogsUnavailableError(
         'Logs are not available when insightd reads PVE via REST API. ' +
         'Install insightd-agent inside the guest to surface its logs here.'
       );
     }
 
     if (parsed.type === 'qemu') {
-      throw new Error(
+      throw new LogsUnavailableError(
         'Logs are not available for QEMU guests from the hypervisor. ' +
         'Install insightd-agent inside the VM to surface its logs here.'
       );

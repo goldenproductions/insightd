@@ -144,6 +144,10 @@ interface LogResponsePayload {
   requestId: string;
   error?: string;
   logs?: any[];
+  /** Documented "logs not available here" hint (PVE REST mode, QEMU from
+   *  hypervisor). When set, the response is treated as a soft empty state,
+   *  not a fetch failure. */
+  unavailable?: string;
 }
 
 interface UpdateResponsePayload {
@@ -865,6 +869,15 @@ function handleLogResponse(payload: LogResponsePayload): void {
   if (!pending) return;
   clearTimeout(pending.timer);
   pendingLogRequests.delete(payload.requestId);
+  if (payload.unavailable) {
+    // Resolve as an empty array tagged with the hint. Diagnoser-side callers
+    // (logCache, periodicMine) iterate `length` and noop on empty; only the
+    // /api logs handler reads the `unavailable` property to surface in the UI.
+    const out: any = [];
+    out.unavailable = payload.unavailable;
+    pending.resolve(out);
+    return;
+  }
   if (payload.error) {
     pending.reject(new Error(payload.error));
   } else {

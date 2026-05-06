@@ -80,14 +80,17 @@ describe('ProxmoxRuntime.fetchLogs (PR4)', () => {
     assert.deepEqual(logs, []);
   });
 
-  it('throws a clear error for QEMU (UI uses this to render an empty-state)', async () => {
+  it('throws LogsUnavailableError for QEMU (UI uses this to render an empty-state)', async () => {
+    const { LogsUnavailableError } = require('../../agent/src/runtime/types');
     const { ProxmoxRuntime } = loadRuntime(() => CLUSTER_STATUS);
     const r = new ProxmoxRuntime();
     await r.init();
-    await assert.rejects(
-      () => r.fetchLogs('qemu/103', { lines: 50 }),
-      /not available for QEMU/i,
+    const err = await r.fetchLogs('qemu/103', { lines: 50 }).then(
+      () => null,
+      (e: Error) => e,
     );
+    assert.ok(err instanceof LogsUnavailableError, 'expected LogsUnavailableError, got ' + err);
+    assert.match(err!.message, /not available for QEMU/i);
   });
 
   it('rejects unparseable container ids', async () => {
