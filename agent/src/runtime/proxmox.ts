@@ -4,6 +4,7 @@ import { pveApi, pveAction, isRestMode, configurePveTransport, type PveApiConfig
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
+  HostMetricsOverride, DiskResult,
 } from './types';
 import { LogsUnavailableError } from './types';
 
@@ -49,9 +50,16 @@ interface PveClusterStatusRow {
  *
  * Treats LXC containers and QEMU VMs as `ContainerInfo` rows so they show up
  * in the existing Hosts page / container UI without inventing a parallel
- * "guests" surface. The PVE host itself is a regular host_snapshot — `/proc`
- * collectors work natively on PVE (it's just Debian) so getHostMetrics is
- * not implemented.
+ * "guests" surface.
+ *
+ * Host-level metrics (CPU, memory, swap, load, uptime, rootfs disk):
+ * - **local-shell mode** (agent on the PVE box): /proc + /sys collectors are
+ *   the source of truth — `getHostMetrics` and `getDiskMetrics` return null so
+ *   the scheduler keeps those values.
+ * - **REST mode** (agent on a guest VM talking to PVE over HTTPS): /proc
+ *   reflects the guest, NOT the hypervisor we report under, so both methods
+ *   query `/nodes/{node}/status` and override the local readings. Without
+ *   this, the host detail page shows "Uptime unknown" + the guest's CPU/mem.
  *
  * Capabilities by PR:
  * - PR1: list + resource collection
@@ -360,6 +368,83 @@ export class ProxmoxRuntime implements ContainerRuntime {
     // No "image" concept for VMs/LXC. Returning an empty array is the contract.
     return [];
   }
+
+  /**
+   * REST mode only: source PVE node CPU/memory/swap/load/uptime from
+   * `/nodes/{node}/status` instead of the agent container's local /proc.
+   * Returns null in local-shell mode so /proc keeps winning.
+   *
+   * Field map vs PVE response:
+   *   uptime          → uptimeSeconds (already seconds since boot)
+   *   cpu (0..1)      → cpuPercent (×100, 2dp)
+   *   memory.total/used/free (bytes) → memoryTotalMb/UsedMb/AvailableMb (bytes ÷ 1MiB)
+   *   swap.total/used (bytes)        → swapTotalMb/swapUsedMb
+   *   loadavg ['1.16','1.46','1.65'] → load1/5/15 (parseFloat each)
+   */
+  async getHostMetrics(): Promise<HostMetricsOverride | null> {
+    if (!isRestMode()) return null;
+    try {
+      const status = await pveApi<PveNodeStatus>(`/nodes/${encodeURIComponent(this.nodeName)}/status`);
+      const cpuPercent = typeof status.cpu === 'number'
+        ? Math.round(status.cpu * 100 * 100) / 100
+        : null;
+      const toMb = (b: number | undefined): number | null =>
+        typeof b === 'number' && Number.isFinite(b)
+          ? Math.round((b / 1024 / 1024) * 100) / 100
+          : null;
+      const [l1, l5, l15] = (status.loadavg || []).map(s => parseFloat(s));
+      return {
+        cpuPercent,
+        memoryTotalMb: toMb(status.memory?.total),
+        memoryUsedMb: toMb(status.memory?.used),
+        memoryAvailableMb: toMb(status.memory?.free),
+        swapTotalMb: toMb(status.swap?.total),
+        swapUsedMb: toMb(status.swap?.used),
+        load1: Number.isFinite(l1) ? l1 : null,
+        load5: Number.isFinite(l5) ? l5 : null,
+        load15: Number.isFinite(l15) ? l15 : null,
+        uptimeSeconds: typeof status.uptime === 'number' ? status.uptime : null,
+      };
+    } catch (err) {
+      logger.warn('proxmox', `getHostMetrics failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * REST mode only: report the PVE node's rootfs from the same `/status`
+   * payload (PR2's `pve_storage_snapshots` covers the rest of the storages
+   * separately on the Storage tab). Returns null in local-shell mode so
+   * `collectDisk` keeps producing the full mount list from /proc/mounts.
+   */
+  async getDiskMetrics(): Promise<DiskResult[] | null> {
+    if (!isRestMode()) return null;
+    try {
+      const status = await pveApi<PveNodeStatus>(`/nodes/${encodeURIComponent(this.nodeName)}/status`);
+      const fs = status.rootfs;
+      if (!fs || typeof fs.total !== 'number' || fs.total <= 0) return [];
+      const usedBytes = typeof fs.used === 'number'
+        ? fs.used
+        : (typeof fs.avail === 'number' ? fs.total - fs.avail : NaN);
+      if (!Number.isFinite(usedBytes) || usedBytes < 0) return [];
+      const totalGb = Math.round((fs.total / 1e9) * 100) / 100;
+      const usedGb = Math.round((usedBytes / 1e9) * 100) / 100;
+      const usedPercent = totalGb > 0 ? Math.round((usedGb / totalGb) * 100 * 10) / 10 : 0;
+      return [{ mountPoint: '/', totalGb, usedGb, usedPercent }];
+    } catch (err) {
+      logger.warn('proxmox', `getDiskMetrics failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+}
+
+interface PveNodeStatus {
+  uptime?: number;
+  cpu?: number;
+  loadavg?: string[];
+  memory?: { total?: number; used?: number; free?: number };
+  swap?: { total?: number; used?: number };
+  rootfs?: { total?: number; used?: number; avail?: number; free?: number };
 }
 
 function parseGuestId(id: string): { type: 'qemu' | 'lxc'; vmid: number } | null {

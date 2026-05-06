@@ -191,6 +191,12 @@ export interface HostMetricsOverride {
   memoryUsedMb?: number | null;
   memoryAvailableMb?: number | null;
   memoryTotalMb?: number | null;
+  /** When the runtime can report swap (e.g. PVE node status), the scheduler
+   *  uses these values; when undefined (k8s — no per-node swap concept) the
+   *  scheduler zeros swap to avoid surfacing the underlying machine's
+   *  /proc/meminfo, which is misleading for the reported node. */
+  swapTotalMb?: number | null;
+  swapUsedMb?: number | null;
   load1?: number | null;
   load5?: number | null;
   load15?: number | null;

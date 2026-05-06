@@ -90,9 +90,11 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
           if (override.memoryUsedMb !== undefined) host.memory.usedMb = override.memoryUsedMb;
           if (override.memoryAvailableMb !== undefined) host.memory.availableMb = override.memoryAvailableMb;
           if (override.memoryTotalMb !== undefined) host.memory.totalMb = override.memoryTotalMb;
-          // Swap is meaningless inside a k8s container — suppress
-          host.memory.swapTotalMb = 0;
-          host.memory.swapUsedMb = 0;
+          // If the runtime supplies swap (PVE), trust it; otherwise zero so we
+          // don't leak the underlying machine's /proc value (k8s, PVE REST
+          // running from a guest VM whose /proc differs from the reported node).
+          host.memory.swapTotalMb = override.swapTotalMb ?? 0;
+          host.memory.swapUsedMb = override.swapUsedMb ?? 0;
         }
         if (override.load1 !== undefined || override.load5 !== undefined || override.load15 !== undefined) {
           host.load = host.load || { load1: 0, load5: 0, load15: 0 };
