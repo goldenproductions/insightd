@@ -22,6 +22,20 @@ export function useSilenceAlert(alertId: number, hostId?: string, containerName?
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: queryKeys.alerts() });
+    // Dashboard's activeAlertsList + activeAlerts count both filter out
+    // silenced alerts (queries.ts), so silencing must invalidate the
+    // dashboard query too — otherwise the row sticks around until the
+    // 30s refetch tick.
+    queryClient.invalidateQueries({ queryKey: queryKeys.dashboard() });
+    // Host alerts tab reads `data.alerts` from getHostDetail (queryKeys.host).
+    // Without this invalidation, silencing from the host page leaves rows
+    // showing preset buttons (stale silenced_until) — the user clicks again,
+    // hits the API again, and the page feels unresponsive. AlertsPage
+    // experiences the same issue for hostless silences but that path
+    // already invalidates queryKeys.alerts() which it subscribes to.
+    if (hostId) {
+      queryClient.invalidateQueries({ queryKey: queryKeys.host(hostId) });
+    }
     if (hostId && containerName) {
       queryClient.invalidateQueries({ queryKey: queryKeys.container(hostId, containerName) });
     }

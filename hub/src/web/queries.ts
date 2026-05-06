@@ -474,7 +474,12 @@ function getLatestUpdates(db: Database.Database, hostId: string): UpdateRow[] {
   `).all(hostId, hostId) as UpdateRow[];
 }
 
-function getAlerts(db: Database.Database, activeOnly?: boolean, hostId?: string): AlertRow[] {
+function getAlerts(
+  db: Database.Database,
+  activeOnly?: boolean,
+  hostId?: string,
+  excludeSilenced?: boolean,
+): AlertRow[] {
   let sql = `
     SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified, notify_count, message, trigger_value, threshold, silenced_until, silenced_by, silenced_at
     FROM alert_state
@@ -488,6 +493,9 @@ function getAlerts(db: Database.Database, activeOnly?: boolean, hostId?: string)
   if (hostId) {
     conditions.push('host_id = ?');
     params.push(hostId);
+  }
+  if (excludeSilenced) {
+    conditions.push("(silenced_until IS NULL OR silenced_until < datetime('now'))");
   }
 
   if (conditions.length > 0) {
@@ -743,10 +751,14 @@ function getDashboard(db: Database.Database, onlineThresholdMinutes: number): an
     completed: allContainers.filter(c => c.status === 'exited' && c.exit_code === 0).length,
   };
 
+  // "Active" on the dashboard means "needs eyeballs right now" — silenced
+  // alerts are intentionally hidden by the user, so they're excluded from
+  // both the count and the list. The Alerts page still shows them via its
+  // own filter UI.
   const activeAlerts = db.prepare(
-    'SELECT COUNT(*) as count FROM alert_state WHERE resolved_at IS NULL'
+    "SELECT COUNT(*) as count FROM alert_state WHERE resolved_at IS NULL AND (silenced_until IS NULL OR silenced_until < datetime('now'))"
   ).get() as CountRow | undefined;
-  const activeAlertsList = getAlerts(db, true).slice(0, 10);
+  const activeAlertsList = getAlerts(db, true, undefined, true).slice(0, 10);
 
   const diskWarnings = db.prepare(`
     SELECT COUNT(*) as count FROM disk_snapshots ds

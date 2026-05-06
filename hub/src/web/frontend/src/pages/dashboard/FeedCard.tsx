@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/Card';
 import { LinkButton } from '@/components/FormField';
 import { FeedRow } from '@/components/FeedRow';
+import { useAuth } from '@/context/AuthContext';
+import { useSilenceAlert } from '@/hooks/useSilenceAlert';
 import type { DashboardInsight } from '@/types/api';
 import type { FeedItem } from '@/hooks/useFeedItems';
 
@@ -10,6 +12,13 @@ import type { FeedItem } from '@/hooks/useFeedItems';
 // is still wired; restore <InsightActions> here when re-enabling.
 
 const DISMISSED_STORAGE_KEY = 'insightd-dismissed-insights';
+
+// Single click dismisses an alert via a 24h silence — matches the
+// insight dismiss UX (one click + Undo) but uses the real silence API
+// underneath, so the alert is actually quiet across reloads, tabs, and
+// notification channels rather than just hidden in this tab. The Alerts
+// page exposes the full preset range for users who want a different window.
+const ALERT_DISMISS_SILENCE_MINUTES = 1440;
 
 function loadDismissed(): Set<string> {
   try {
@@ -28,6 +37,13 @@ function insightKey(insight: DashboardInsight): string {
   return `${insight.entity_type}:${insight.entity_id}:${insight.category}`;
 }
 
+interface DismissedRecord {
+  item: FeedItem;
+  undo: () => void;
+  /** Toast copy. Differs between insight ("Dismissed") and alert ("Silenced 24h"). */
+  toastVerb: string;
+}
+
 interface FeedCardProps {
   title: string;
   subtitle?: string;
@@ -40,28 +56,60 @@ interface FeedCardProps {
 
 export function FeedCard({ title, subtitle, items, viewAllHref, className, emptyMessage }: FeedCardProps) {
   const [dismissed, setDismissed] = useState(loadDismissed);
-  const [lastDismissed, setLastDismissed] = useState<FeedItem | null>(null);
+  // Optimistic hide for alerts whose silence mutation is in flight or has
+  // just succeeded — kept in local state because the dashboard query takes
+  // ~one tick to refetch even after invalidation.
+  const [pendingSilenced, setPendingSilenced] = useState<Set<number>>(() => new Set());
+  const [lastDismissed, setLastDismissed] = useState<DismissedRecord | null>(null);
 
-  const dismiss = useCallback((item: FeedItem) => {
+  const dismissInsight = useCallback((item: FeedItem) => {
     if (!item.insight) return;
+    const key = insightKey(item.insight);
     setDismissed(prev => {
       const next = new Set(prev);
-      next.add(insightKey(item.insight!));
+      next.add(key);
       saveDismissed(next);
       return next;
     });
-    setLastDismissed(item);
+    setLastDismissed({
+      item,
+      toastVerb: 'Dismissed',
+      undo: () => {
+        setDismissed(prev => {
+          const next = new Set(prev);
+          next.delete(key);
+          saveDismissed(next);
+          return next;
+        });
+      },
+    });
+  }, []);
+
+  const recordAlertDismiss = useCallback((item: FeedItem, unsilence: () => void) => {
+    if (!item.alert) return;
+    const alertId = item.alert.id;
+    setPendingSilenced(prev => {
+      const next = new Set(prev);
+      next.add(alertId);
+      return next;
+    });
+    setLastDismissed({
+      item,
+      toastVerb: 'Silenced for 24h',
+      undo: () => {
+        unsilence();
+        setPendingSilenced(prev => {
+          const next = new Set(prev);
+          next.delete(alertId);
+          return next;
+        });
+      },
+    });
   }, []);
 
   const undoDismiss = useCallback(() => {
-    if (!lastDismissed?.insight) return;
-    const key = insightKey(lastDismissed.insight);
-    setDismissed(prev => {
-      const next = new Set(prev);
-      next.delete(key);
-      saveDismissed(next);
-      return next;
-    });
+    if (!lastDismissed) return;
+    lastDismissed.undo();
     setLastDismissed(null);
   }, [lastDismissed]);
 
@@ -71,9 +119,15 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
     return () => clearTimeout(t);
   }, [lastDismissed]);
 
-  const visible = items.filter(item =>
-    item.kind !== 'insight' || !item.insight || !dismissed.has(insightKey(item.insight))
-  );
+  const visible = items.filter(item => {
+    if (item.kind === 'insight' && item.insight && dismissed.has(insightKey(item.insight))) return false;
+    if (item.kind === 'alert' && item.alert && pendingSilenced.has(item.alert.id)) return false;
+    return true;
+  });
+  // Only insight dismissals accumulate a header count — alert dismissals
+  // are gone from `items` on the next dashboard refetch (server filters
+  // silenced alerts out of activeAlertsList), so there's nothing stable
+  // to count.
   const dismissedCount = items.filter(item =>
     item.kind === 'insight' && item.insight && dismissed.has(insightKey(item.insight))
   ).length;
@@ -101,7 +155,7 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
           className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-border bg-bg-secondary px-3 py-2 text-xs animate-fade-in"
         >
           <span className="min-w-0 truncate text-secondary">
-            Dismissed <span className="font-medium text-fg">{lastDismissed.title}</span>
+            {lastDismissed.toastVerb} <span className="font-medium text-fg">{lastDismissed.item.title}</span>
           </span>
           <button
             onClick={undoDismiss}
@@ -124,9 +178,13 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
               meta={item.meta}
               time={item.time}
               to={item.to}
-              footer={item.kind === 'insight' && item.insight ? (
-                <DismissAction onDismiss={() => dismiss(item)} />
-              ) : undefined}
+              footer={
+                item.kind === 'insight' && item.insight ? (
+                  <DismissAction onDismiss={() => dismissInsight(item)} ariaLabel="Dismiss insight" />
+                ) : item.kind === 'alert' && item.alert ? (
+                  <AlertDismissAction item={item} onDismissed={recordAlertDismiss} />
+                ) : undefined
+              }
             />
           ))}
         </div>
@@ -139,13 +197,48 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
   );
 }
 
-function DismissAction({ onDismiss }: { onDismiss: () => void }) {
+function DismissAction({ onDismiss, ariaLabel }: { onDismiss: () => void; ariaLabel: string }) {
   return (
     <div className="flex items-center justify-end border-t border-border-light px-3 py-1.5">
       <button
         onClick={onDismiss}
         className="rounded px-1.5 py-0.5 text-xs text-muted transition-colors hover:text-fg"
-        aria-label="Dismiss insight"
+        aria-label={ariaLabel}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+function AlertDismissAction({
+  item,
+  onDismissed,
+}: {
+  item: FeedItem;
+  onDismissed: (item: FeedItem, unsilence: () => void) => void;
+}) {
+  const { isAuthenticated, authEnabled } = useAuth();
+  const alert = item.alert!;
+  const { silence, unsilence, isPending } = useSilenceAlert(alert.id);
+
+  // Mirrors AlertSilenceControls — when auth is required and the user isn't
+  // logged in, hide the button rather than letting them click into a 401.
+  if (authEnabled && !isAuthenticated) return null;
+
+  const handleClick = () => {
+    silence(ALERT_DISMISS_SILENCE_MINUTES);
+    onDismissed(item, () => unsilence());
+  };
+
+  return (
+    <div className="flex items-center justify-end border-t border-border-light px-3 py-1.5">
+      <button
+        onClick={handleClick}
+        disabled={isPending}
+        className="rounded px-1.5 py-0.5 text-xs text-muted transition-colors hover:text-fg disabled:opacity-50"
+        title="Silence for 24h — manage on the Alerts page"
+        aria-label="Dismiss alert"
       >
         Dismiss
       </button>

@@ -16,6 +16,7 @@ export interface FeedItem {
   time?: string | null;
   to: string;
   insight?: DashboardInsight;
+  alert?: Alert;
 }
 
 const HOST_SCOPED_ALERTS = new Set(['disk_full', 'high_host_cpu', 'low_host_memory', 'high_load']);
@@ -98,6 +99,7 @@ export function useFeedItems(data: DashboardData | undefined): FeedItem[] {
         meta: alert.host_id,
         time: alert.triggered_at,
         to: alertLink(alert),
+        alert,
       });
     }
 
