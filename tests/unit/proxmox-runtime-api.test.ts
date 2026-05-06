@@ -131,6 +131,60 @@ describe('ProxmoxRuntime — REST API mode', () => {
     assert.deepEqual(await r.checkImageUpdates(), []);
   });
 
+  it('getHostMetrics maps /nodes/{node}/status into the override shape', async () => {
+    const { transport } = fakeRestTransport(call => {
+      if (call.path === '/cluster/status') return CLUSTER_STATUS_REMOTE;
+      if (call.path === '/nodes/pve-01/status') {
+        return {
+          uptime: 11_706_361,
+          cpu: 0.318103241296519,
+          loadavg: ['1.16', '1.46', '1.65'],
+          memory: { total: 33_465_860_096, used: 25_465_696_256, free: 1_052_426_240 },
+          swap:   { total:  8_589_930_496, used:  8_577_904_640 },
+          rootfs: { total: 241_928_577_024, used: 229_581_828_096, avail: 1_729_884_160 },
+        };
+      }
+      return [];
+    });
+    __setTestTransport(transport);
+    const r = new ProxmoxRuntime({ api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
+    await r.init();
+    const m = await r.getHostMetrics();
+    assert.ok(m, 'expected a metrics override in REST mode');
+    assert.equal(m!.uptimeSeconds, 11_706_361);
+    assert.equal(m!.cpuPercent, 31.81);
+    assert.equal(m!.load1, 1.16);
+    assert.equal(m!.load15, 1.65);
+    // 33_465_860_096 / 1024 / 1024 ≈ 31_915.07 MiB
+    assert.ok(m!.memoryTotalMb! > 31_900 && m!.memoryTotalMb! < 31_930, `unexpected memTotalMb: ${m!.memoryTotalMb}`);
+    assert.ok(m!.swapTotalMb! > 8_100 && m!.swapTotalMb! < 8_200, `unexpected swapTotalMb: ${m!.swapTotalMb}`);
+  });
+
+  it('getDiskMetrics returns the rootfs entry from /nodes/{node}/status', async () => {
+    const { transport } = fakeRestTransport(call => {
+      if (call.path === '/cluster/status') return CLUSTER_STATUS_REMOTE;
+      if (call.path === '/nodes/pve-01/status') {
+        return { rootfs: { total: 241_928_577_024, used: 229_581_828_096, avail: 1_729_884_160 } };
+      }
+      return [];
+    });
+    __setTestTransport(transport);
+    const r = new ProxmoxRuntime({ api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
+    await r.init();
+    const disks = await r.getDiskMetrics();
+    assert.ok(disks && disks.length === 1, 'expected one rootfs entry');
+    assert.equal(disks![0].mountPoint, '/');
+    assert.ok(disks![0].usedPercent > 90, `rootfs is 95% full per fixture, got ${disks![0].usedPercent}`);
+  });
+
+  it('getHostMetrics + getDiskMetrics return null in local-shell mode (so /proc wins)', async () => {
+    const { ProxmoxRuntime: PR } = require('../../agent/src/runtime/proxmox');
+    // No `api` config → local-shell transport → both methods short-circuit.
+    const r = new PR({ nodeName: 'pve-01' });
+    assert.equal(await r.getHostMetrics(), null);
+    assert.equal(await r.getDiskMetrics(), null);
+  });
+
   it('reports supportsActions=true regardless of allowActions (capability vs authorization)', () => {
     const r = new ProxmoxRuntime({ allowActions: false, api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     assert.equal(r.supportsActions, true);
