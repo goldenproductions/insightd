@@ -29,8 +29,20 @@ services:
         # rotate the credential and break already-enrolled agents.
         if [ ! -f /mosquitto/config/passwd ]; then
           if [ -z "$$INSIGHTD_MQTT_PASS" ]; then
-            echo "INSIGHTD_MQTT_PASS is empty — refusing to generate an empty-password mosquitto user." >&2
-            echo "Set INSIGHTD_MQTT_PASS in .env (the install script does this for you)." >&2
+            echo "" >&2
+            echo "  insightd: INSIGHTD_MQTT_PASS is empty — refusing to create an empty-password MQTT user." >&2
+            echo "" >&2
+            echo "  If you're running 'docker compose -f docker-compose.hub.yml up -d' by hand," >&2
+            echo "  create a .env file in this directory first:" >&2
+            echo "" >&2
+            echo "      printf 'INSIGHTD_MQTT_USER=insightd\\nINSIGHTD_MQTT_PASS=%s\\n' \\" >&2
+            echo "        \"\$(openssl rand -hex 24)\" > .env" >&2
+            echo "" >&2
+            echo "  Then re-run 'docker compose -f docker-compose.hub.yml up -d'." >&2
+            echo "" >&2
+            echo "  The hosted installer (https://insightd.org/install.sh) does this for you." >&2
+            echo "  Full walkthrough: https://docs.insightd.org/guides/quick-start/" >&2
+            echo "" >&2
             exit 1
           fi
           mosquitto_passwd -b -c /mosquitto/config/passwd \

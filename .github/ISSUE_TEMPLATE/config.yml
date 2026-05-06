@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or discussion
+    url: https://github.com/goldenproductions/insightd/discussions
+    about: For usage questions, design discussion, or general feedback — use Discussions instead of opening an issue.
+  - name: Security vulnerability
+    url: https://github.com/goldenproductions/insightd/security/advisories/new
+    about: Please report security issues privately via GitHub's vulnerability reporting flow, not in a public issue.
