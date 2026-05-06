@@ -132,10 +132,4 @@ Insightd is designed to be lightweight. Typical footprint on a homelab with ~10 
 - **SQLite** for storage — no external database needed
 - Raw snapshots auto-pruned after 30 days (configurable), with hourly rollups kept for 365 days for long-term trends
 
-## Security
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-## License
-
 MIT
