@@ -60,7 +60,7 @@ describe('ProxmoxRuntime.performAction — REST API mode', () => {
     await r.init();
     const beforeCalls = calls.length;
     await assert.rejects(
-      () => r.performAction('pve-01/200', 'start'),
+      () => r.performAction('pve-01/web', 'start'),
       /actions are disabled/i,
     );
     // No HTTP calls beyond the init's /cluster/status.
@@ -72,7 +72,7 @@ describe('ProxmoxRuntime.performAction — REST API mode', () => {
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ allowActions: true, api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
-    const result = await r.performAction('pve-01/200', 'start');
+    const result = await r.performAction('pve-01/web', 'start');
     const action = calls.find(c => c.kind === 'action');
     assert.ok(action);
     assert.equal(action!.method, 'POST');
@@ -86,7 +86,7 @@ describe('ProxmoxRuntime.performAction — REST API mode', () => {
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ allowActions: true, api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
-    await r.performAction('pve-01/103', 'stop');
+    await r.performAction('pve-01/db', 'stop');
     const action = calls.find(c => c.kind === 'action');
     // Graceful shutdown is the right semantic — `/stop` is a hard kill we
     // deliberately don't expose.
@@ -98,7 +98,7 @@ describe('ProxmoxRuntime.performAction — REST API mode', () => {
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ allowActions: true, api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
-    await r.performAction('pve-01/103', 'restart');
+    await r.performAction('pve-01/db', 'restart');
     const action = calls.find(c => c.kind === 'action');
     assert.equal(action!.path, '/nodes/pve-01/qemu/103/status/reboot');
   });
@@ -108,7 +108,7 @@ describe('ProxmoxRuntime.performAction — REST API mode', () => {
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ allowActions: true, api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
-    await r.performAction('pve-01/103', 'remove');
+    await r.performAction('pve-01/db', 'remove');
     const action = calls.find(c => c.kind === 'action');
     assert.equal(action!.method, 'DELETE');
     // No `/status/...` suffix — destroy is a top-level DELETE on the guest.
@@ -139,7 +139,7 @@ describe('ProxmoxRuntime.performAction — REST API mode', () => {
     const r = new ProxmoxRuntime({ allowActions: true, api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
     await assert.rejects(
-      () => r.performAction('pve-01/200', 'start'),
+      () => r.performAction('pve-01/web', 'start'),
       /Permission denied \(VM\.PowerMgmt\)/,
     );
   });
@@ -155,7 +155,7 @@ describe('ProxmoxRuntime.performAction — REST API mode', () => {
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ allowActions: true, api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
-    const result = await r.performAction('pve-01/200', 'start');
+    const result = await r.performAction('pve-01/web', 'start');
     assert.equal(result.status, 'success');
     assert.doesNotMatch(result.message, /UPID:/);
   });

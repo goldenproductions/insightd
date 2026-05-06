@@ -95,8 +95,9 @@ describe('ProxmoxRuntime — REST API mode', () => {
     const list = await r.listContainers();
     // pve-02's guest is filtered out, the template is filtered out.
     const names = list.map((c: any) => c.name).sort();
-    assert.deepEqual(names, ['pve-01/103', 'pve-01/200']);
+    assert.deepEqual(names, ['pve-01/db', 'pve-01/web']);
     const lxc = list.find((c: any) => c.guestVmid === 200);
+    assert.equal(lxc.name, 'pve-01/web');
     assert.equal(lxc.guestType, 'lxc');
     assert.equal(lxc.status, 'running');
     assert.equal(lxc.guestUptimeSeconds, 3600);
