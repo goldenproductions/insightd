@@ -268,6 +268,33 @@ describe('queries', () => {
       assert.equal(dash.diskWarnings, 1);
     });
 
+    it('excludes silenced alerts from activeAlertsList and activeAlerts count', () => {
+      // Dashboard "Needs Attention" should reflect what needs eyeballs *now*.
+      // Silenced active alerts are intentionally hidden by the user, so
+      // they're filtered out of both the count and the list.
+      seedHost(db, 'h1', recent);
+      seedContainerSnapshots(db, [
+        { hostId: 'h1', name: 'nginx', status: 'running', at: recent },
+      ]);
+
+      const oneHourAhead = ts(new Date(NOW.getTime() + 60 * 60 * 1000));
+      const oneHourAgo = ts(new Date(NOW.getTime() - 60 * 60 * 1000));
+      seedAlertState(db, [
+        // Loud alert — should appear.
+        { hostId: 'h1', type: 'container_down', target: 'nginx', triggeredAt: recent },
+        // Silenced for the next hour — should NOT appear.
+        { hostId: 'h1', type: 'high_cpu', target: 'nginx', triggeredAt: recent, silencedUntil: oneHourAhead },
+        // Silence already expired — should appear (back to loud).
+        { hostId: 'h1', type: 'high_memory', target: 'nginx', triggeredAt: recent, silencedUntil: oneHourAgo },
+      ]);
+
+      const dash = getDashboard(db, 10);
+      assert.equal(dash.activeAlerts, 2, 'count drops the 1 currently-silenced alert');
+      assert.equal(dash.activeAlertsList.length, 2, 'list drops the same alert');
+      const types = dash.activeAlertsList.map((a: { alert_type: string }) => a.alert_type).sort();
+      assert.deepEqual(types, ['container_down', 'high_memory']);
+    });
+
     it('classifies clean exit-0 one-shots as completed, not down', () => {
       seedHost(db, 'h1', recent);
       seedContainerSnapshots(db, [

@@ -427,7 +427,14 @@ async function handleContainerLogs(req: HandlerReq, res: ServerResponse, db: Dat
       res.statusCode = 501;
       return { error: 'Log fetching not available in this mode' };
     }
-    return { container: params.containerName, logs };
+    // The MQTT layer attaches `unavailable` to the array when the runtime
+    // throws LogsUnavailableError (PVE REST, QEMU from hypervisor). Surface
+    // it as a peer field so the frontend can render a calm empty state
+    // instead of a red error toast.
+    const unavailable = logs && typeof logs === 'object' ? (logs as any).unavailable : undefined;
+    return unavailable
+      ? { container: params.containerName, logs: [], unavailable }
+      : { container: params.containerName, logs };
   } catch (err) {
     res.statusCode = 504;
     return { error: (err as Error).message };

@@ -97,6 +97,27 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
 
       {error && <p className="text-sm text-danger">{error}</p>}
 
+      {/* Documented "no logs available here" hint — render as a calm muted
+          block, not as an error. Set when the runtime cannot fetch logs by
+          design (PVE REST mode, QEMU from hypervisor). */}
+      {logs?.unavailable && (
+        <div className="rounded-lg border border-border bg-bg-secondary px-4 py-3 text-sm text-secondary">
+          <p>{logs.unavailable}</p>
+          <p className="mt-2 text-xs text-muted">
+            See the{' '}
+            <a
+              href="https://docs.insightd.org/guides/proxmox/#logs-rest-mode-caveat"
+              className="text-accent hover:text-accent-dark"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Proxmox VE guide
+            </a>{' '}
+            for details.
+          </p>
+        </div>
+      )}
+
       {/* Search bar (only show after logs are loaded) */}
       {logs && logs.logs && logs.logs.length > 0 && (
         <LogSearch
@@ -109,8 +130,9 @@ export function LogViewer({ hostId, containerName, compact }: Props) {
         />
       )}
 
-      {/* Log output */}
-      {logs && (
+      {/* Log output — suppressed when the runtime reports `unavailable`,
+          since the hint block above already explains the empty state. */}
+      {logs && !logs.unavailable && (
         <div
           ref={logEndRef}
           className={`overflow-auto rounded-lg border border-border bg-bg p-3 font-mono text-xs leading-relaxed text-fg ${compact ? 'max-h-64' : 'max-h-96'}`}

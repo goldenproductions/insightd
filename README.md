@@ -1,6 +1,12 @@
 # Insightd
 
-**Server awareness without the overhead.** A self-hosted monitoring tool for homelabbers that watches your Docker containers, hosts, and HTTP endpoints across multiple servers — with a modern web dashboard, smart alerts, and weekly digests.
+**Server awareness without the overhead.** A self-hosted monitoring tool for homelabbers that watches your containers, hosts, and HTTP endpoints across Docker, Kubernetes, and Proxmox VE — with a modern web dashboard, smart alerts, and weekly digests.
+
+Most homelab monitors cover one runtime. Insightd treats Docker containers, Kubernetes pods (with full namespace topology and workload health), and Proxmox LXC/QEMU guests (with ZFS, backups, and quorum) as first-class citizens in the same UI. It runs predictive and correlation-based diagnosis to tell you *why* something looks wrong, not just *what* — and it stays calm by default with capacity-based thresholds, so you don't get woken up by 1.4% baseline noise. Privacy-first, SQLite-backed, one-command Docker install.
+
+<!-- TODO before launch: drop a dashboard screenshot or animated GIF here.
+     Recommended: 1280x720 PNG of the multi-host overview with at least one
+     active alert + one insight visible. -->
 
 ```
 Insightd — Week 14
@@ -14,9 +20,15 @@ Health Score: 92/100
 No critical issues. Good week.
 ```
 
+## Try it
+
+- [Live demo](https://demo.insightd.org) (coming soon)
+- [Quick Start guide](https://docs.insightd.org/guides/quick-start/) — Docker Compose walkthrough
+- Or jump straight to [single-server install](#single-server-standalone-mode) below
+
 ## Features
 
-- **Multi-host, multi-runtime monitoring** — deploy agents on each server reporting to a central hub via MQTT. Docker and Kubernetes/k3s (DaemonSet mode) are both first-class.
+- **Multi-host, multi-runtime monitoring** — deploy agents on each server reporting to a central hub via MQTT. Docker, Kubernetes/k3s (DaemonSet mode), and Proxmox VE (LXC + QEMU guests, ZFS pools, storage saturation, backup overdue, cluster quorum) are all first-class.
 - **Research-grounded diagnosis engine** — when a container is unhealthy, seven signal detectors fuse metrics, robust baselines, restart history, host state, and Drain-mined log patterns into a ranked explanation with correlated upstream services via Personalized PageRank. Based on Drain (ICWS 2017), MicroRCA (NOMS 2020), and Adtributor (NSDI 2014).
 - **Smart alerts with calibrated confidence** — 10 alert types with cooldowns, exponential reminder backoff, per-alert silencing, and webhook delivery (Slack, Discord, Telegram, ntfy, generic). Thumbs-up/down feedback on diagnosis cards recalibrates future confidence via a Beta posterior.
 - **Insights & anomaly detection** — time-of-day baselines, predictive alerts, trend detection, and Seasonal-Hybrid ESD on hourly rollups. A dedicated `/insights` page surfaces analytical signals separate from operational "Needs Attention" alerts.
@@ -50,6 +62,20 @@ curl -sSL https://insightd.org/install.sh | bash
 ```
 
 The script is ~40 lines of bash and [public on GitHub](https://github.com/goldenproductions/insightd.org/blob/main/public/install.sh) — audit before running if you prefer. See the [Quick Start guide](https://docs.insightd.org/guides/quick-start/) for the manual Docker Compose walkthrough.
+
+#### Manual Docker Compose
+
+If you'd rather clone the repo and run `docker compose` yourself, generate an MQTT password into `.env` **before** the first `compose up` — the bootstrap container refuses to create an empty-password broker user and will fail fast otherwise:
+
+```bash
+git clone https://github.com/goldenproductions/insightd.git
+cd insightd
+printf 'INSIGHTD_MQTT_USER=insightd\nINSIGHTD_MQTT_PASS=%s\n' \
+  "$(openssl rand -hex 24)" > .env
+docker compose -f docker-compose.hub.yml up -d
+```
+
+`.env` is the source of truth for your MQTT credentials — back it up. Re-running `compose up` is idempotent and won't rotate the password.
 
 ### Kubernetes / k3s
 
@@ -105,11 +131,5 @@ Insightd is designed to be lightweight. Typical footprint on a homelab with ~10 
 - **Mosquitto**: ~10 MB RAM
 - **SQLite** for storage — no external database needed
 - Raw snapshots auto-pruned after 30 days (configurable), with hourly rollups kept for 365 days for long-term trends
-
-## Security
-
-See [SECURITY.md](SECURITY.md) for vulnerability reporting.
-
-## License
 
 MIT

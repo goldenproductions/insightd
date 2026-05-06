@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import type { MouseEvent } from 'react';
 import type { Alert } from '@/types/api';
 import { useAuth } from '@/context/AuthContext';
@@ -53,6 +54,19 @@ export function AlertSilenceControls({
   const { isAuthenticated, authEnabled } = useAuth();
   const { silence, unsilence, isPending } = useSilenceAlert(alert.id, hostId, containerName);
 
+  // Optimistic intent so the row flips state on click instead of waiting for
+  // the API + refetch round-trip — kingduck's host detail response is large
+  // enough that the gap was visible and users would re-click. `intent` is
+  // cleared once the prop catches up (or it's manually overridden by another
+  // click). On mutation error, prop never updates and intent sticks; first
+  // click after a failure still works because it sets a fresh intent.
+  const [intent, setIntent] = useState<boolean | null>(null);
+  const propSilenced = alert.silenced_until != null;
+  useEffect(() => {
+    if (intent !== null && propSilenced === intent) setIntent(null);
+  }, [propSilenced, intent]);
+  const isSilenced = intent ?? propSilenced;
+
   // Nothing to silence on a resolved alert.
   if (alert.resolved_at != null) return null;
 
@@ -60,21 +74,25 @@ export function AlertSilenceControls({
   // buttons would just bounce off the 401 anyway.
   if (authEnabled && !isAuthenticated) return null;
 
-  const isSilenced = alert.silenced_until != null;
-
   // Stop click propagation so these controls don't bubble into any
   // whole-row onClick handlers (the AlertsPage row links to a detail page).
   const stop = (e: MouseEvent) => e.stopPropagation();
 
   if (isSilenced) {
+    // When optimistic intent is ahead of the prop, silenced_until is still
+    // null until the refetch lands — show a transient placeholder so we
+    // don't crash formatSilencedUntil(null).
+    const remaining = alert.silenced_until != null
+      ? formatSilencedUntil(alert.silenced_until)
+      : 'applying…';
     return (
       <div className="flex items-center gap-2 text-xs text-muted" onClick={stop}>
         <span title={alert.silenced_until ?? undefined}>
-          🔇 Silenced, {formatSilencedUntil(alert.silenced_until!)}
+          🔇 Silenced, {remaining}
         </span>
         <button
           type="button"
-          onClick={() => unsilence()}
+          onClick={() => { setIntent(false); unsilence(); }}
           disabled={isPending}
           className="rounded px-1.5 py-0.5 text-muted transition-colors hover:bg-bg-secondary hover:text-fg disabled:opacity-50"
         >
@@ -91,7 +109,7 @@ export function AlertSilenceControls({
         <button
           key={p.label}
           type="button"
-          onClick={() => silence(p.duration)}
+          onClick={() => { setIntent(true); silence(p.duration); }}
           disabled={isPending}
           title={p.title}
           className="rounded px-1.5 py-0.5 text-muted transition-colors hover:bg-bg-secondary hover:text-fg disabled:opacity-50"

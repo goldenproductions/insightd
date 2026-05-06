@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 const { ProxmoxRuntime } = require('../../agent/src/runtime/proxmox');
 const { __setTestTransport } = require('../../agent/src/runtime/pveApi');
+const { LogsUnavailableError } = require('../../agent/src/runtime/types');
 
 /**
  * REST-mode tests inject a fake Transport via the __setTestTransport hook
@@ -94,27 +95,34 @@ describe('ProxmoxRuntime — REST API mode', () => {
     const list = await r.listContainers();
     // pve-02's guest is filtered out, the template is filtered out.
     const names = list.map((c: any) => c.name).sort();
-    assert.deepEqual(names, ['pve-01/103', 'pve-01/200']);
+    assert.deepEqual(names, ['pve-01/db', 'pve-01/web']);
     const lxc = list.find((c: any) => c.guestVmid === 200);
+    assert.equal(lxc.name, 'pve-01/web');
     assert.equal(lxc.guestType, 'lxc');
     assert.equal(lxc.status, 'running');
     assert.equal(lxc.guestUptimeSeconds, 3600);
   });
 
-  it('fetchLogs throws the in-guest-agent message in REST mode (LXC and QEMU)', async () => {
+  it('fetchLogs throws LogsUnavailableError in REST mode (LXC and QEMU)', async () => {
     const { transport } = fakeRestTransport(() => CLUSTER_STATUS_REMOTE);
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
-    // Same error for both — the UI uses this to render the empty state.
-    await assert.rejects(
-      () => r.fetchLogs('lxc/200', { lines: 50 }),
-      /Logs are not available when insightd reads PVE via REST API.*Install insightd-agent inside the guest/i,
+    // The custom error type is what the MQTT dispatcher and UI key off to
+    // render a calm empty state instead of treating this as a fetch failure.
+    const lxcErr = await r.fetchLogs('lxc/200', { lines: 50 }).then(
+      () => null,
+      (e: Error) => e,
     );
-    await assert.rejects(
-      () => r.fetchLogs('qemu/103', { lines: 50 }),
-      /Install insightd-agent inside the guest/i,
+    assert.ok(lxcErr instanceof LogsUnavailableError, 'expected LogsUnavailableError for LXC');
+    assert.match(lxcErr!.message, /Logs are not available when insightd reads PVE via REST API.*Install insightd-agent inside the guest/i);
+
+    const qemuErr = await r.fetchLogs('qemu/103', { lines: 50 }).then(
+      () => null,
+      (e: Error) => e,
     );
+    assert.ok(qemuErr instanceof LogsUnavailableError, 'expected LogsUnavailableError for QEMU');
+    assert.match(qemuErr!.message, /Install insightd-agent inside the guest/i);
   });
 
   it('checkImageUpdates is a no-op array (same as local mode)', async () => {
@@ -122,6 +130,60 @@ describe('ProxmoxRuntime — REST API mode', () => {
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     assert.deepEqual(await r.checkImageUpdates(), []);
+  });
+
+  it('getHostMetrics maps /nodes/{node}/status into the override shape', async () => {
+    const { transport } = fakeRestTransport(call => {
+      if (call.path === '/cluster/status') return CLUSTER_STATUS_REMOTE;
+      if (call.path === '/nodes/pve-01/status') {
+        return {
+          uptime: 11_706_361,
+          cpu: 0.318103241296519,
+          loadavg: ['1.16', '1.46', '1.65'],
+          memory: { total: 33_465_860_096, used: 25_465_696_256, free: 1_052_426_240 },
+          swap:   { total:  8_589_930_496, used:  8_577_904_640 },
+          rootfs: { total: 241_928_577_024, used: 229_581_828_096, avail: 1_729_884_160 },
+        };
+      }
+      return [];
+    });
+    __setTestTransport(transport);
+    const r = new ProxmoxRuntime({ api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
+    await r.init();
+    const m = await r.getHostMetrics();
+    assert.ok(m, 'expected a metrics override in REST mode');
+    assert.equal(m!.uptimeSeconds, 11_706_361);
+    assert.equal(m!.cpuPercent, 31.81);
+    assert.equal(m!.load1, 1.16);
+    assert.equal(m!.load15, 1.65);
+    // 33_465_860_096 / 1024 / 1024 ≈ 31_915.07 MiB
+    assert.ok(m!.memoryTotalMb! > 31_900 && m!.memoryTotalMb! < 31_930, `unexpected memTotalMb: ${m!.memoryTotalMb}`);
+    assert.ok(m!.swapTotalMb! > 8_100 && m!.swapTotalMb! < 8_200, `unexpected swapTotalMb: ${m!.swapTotalMb}`);
+  });
+
+  it('getDiskMetrics returns the rootfs entry from /nodes/{node}/status', async () => {
+    const { transport } = fakeRestTransport(call => {
+      if (call.path === '/cluster/status') return CLUSTER_STATUS_REMOTE;
+      if (call.path === '/nodes/pve-01/status') {
+        return { rootfs: { total: 241_928_577_024, used: 229_581_828_096, avail: 1_729_884_160 } };
+      }
+      return [];
+    });
+    __setTestTransport(transport);
+    const r = new ProxmoxRuntime({ api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
+    await r.init();
+    const disks = await r.getDiskMetrics();
+    assert.ok(disks && disks.length === 1, 'expected one rootfs entry');
+    assert.equal(disks![0].mountPoint, '/');
+    assert.ok(disks![0].usedPercent > 90, `rootfs is 95% full per fixture, got ${disks![0].usedPercent}`);
+  });
+
+  it('getHostMetrics + getDiskMetrics return null in local-shell mode (so /proc wins)', async () => {
+    const { ProxmoxRuntime: PR } = require('../../agent/src/runtime/proxmox');
+    // No `api` config → local-shell transport → both methods short-circuit.
+    const r = new PR({ nodeName: 'pve-01' });
+    assert.equal(await r.getHostMetrics(), null);
+    assert.equal(await r.getDiskMetrics(), null);
   });
 
   it('reports supportsActions=true regardless of allowActions (capability vs authorization)', () => {

@@ -76,9 +76,17 @@ function PasswordStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => vo
         return;
       }
       // Log in with the password we just set so subsequent steps (EmailStep's
-      // PUT /api/settings) can authenticate. Without this the token is null
-      // and the email-save silently 401s.
-      try { await login(password); } catch { /* wizard still advances; email save will error and user can skip */ }
+      // PUT /api/settings) can authenticate, and so the user lands in the main
+      // app authenticated. If this fails (e.g. transient network blip between
+      // the two POSTs), surface it instead of silently advancing — without a
+      // token the user would hit "Authentication Required" on Settings later
+      // and not know why. They can press "Set Password" again to retry.
+      try {
+        await login(password);
+      } catch {
+        setError('Password saved, but auto-login failed. Please try again, or skip and log in manually after setup.');
+        return;
+      }
       setSaved(true);
       setTimeout(onNext, 1000);
     } catch { setError('Failed to save'); }

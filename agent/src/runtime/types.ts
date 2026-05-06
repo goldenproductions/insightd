@@ -9,6 +9,22 @@
 export type RuntimeName = 'docker' | 'containerd' | 'kubernetes' | 'proxmox';
 export type ContainerAction = 'start' | 'stop' | 'restart' | 'remove';
 
+/**
+ * Thrown by `fetchLogs` when the runtime *intentionally* does not support
+ * log fetch for this container — e.g. PVE in REST-API mode (no `/exec`
+ * permission), or QEMU guests viewed from the hypervisor. Distinguishes
+ * "documented limitation" from "fetch failed at runtime", so the MQTT
+ * dispatcher can downgrade the log level and the UI can render a calm
+ * empty state instead of a red error toast.
+ */
+export class LogsUnavailableError extends Error {
+  readonly unavailable = true as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'LogsUnavailableError';
+  }
+}
+
 export interface ContainerInfo {
   name: string;
   id: string;
@@ -175,6 +191,12 @@ export interface HostMetricsOverride {
   memoryUsedMb?: number | null;
   memoryAvailableMb?: number | null;
   memoryTotalMb?: number | null;
+  /** When the runtime can report swap (e.g. PVE node status), the scheduler
+   *  uses these values; when undefined (k8s — no per-node swap concept) the
+   *  scheduler zeros swap to avoid surfacing the underlying machine's
+   *  /proc/meminfo, which is misleading for the reported node. */
+  swapTotalMb?: number | null;
+  swapUsedMb?: number | null;
   load1?: number | null;
   load5?: number | null;
   load15?: number | null;

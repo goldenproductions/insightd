@@ -4,7 +4,9 @@ import { pveApi, pveAction, isRestMode, configurePveTransport, type PveApiConfig
 import type {
   ContainerRuntime, ContainerInfo, ContainerWithResources,
   LogEntry, LogOptions, ContainerAction, ActionResult, ImageUpdate,
+  HostMetricsOverride, DiskResult,
 } from './types';
+import { LogsUnavailableError } from './types';
 
 const VALID_ACTIONS: ContainerAction[] = ['start', 'stop', 'restart', 'remove'];
 const ACTION_TIMEOUT_MS = 30_000;
@@ -48,9 +50,16 @@ interface PveClusterStatusRow {
  *
  * Treats LXC containers and QEMU VMs as `ContainerInfo` rows so they show up
  * in the existing Hosts page / container UI without inventing a parallel
- * "guests" surface. The PVE host itself is a regular host_snapshot — `/proc`
- * collectors work natively on PVE (it's just Debian) so getHostMetrics is
- * not implemented.
+ * "guests" surface.
+ *
+ * Host-level metrics (CPU, memory, swap, load, uptime, rootfs disk):
+ * - **local-shell mode** (agent on the PVE box): /proc + /sys collectors are
+ *   the source of truth — `getHostMetrics` and `getDiskMetrics` return null so
+ *   the scheduler keeps those values.
+ * - **REST mode** (agent on a guest VM talking to PVE over HTTPS): /proc
+ *   reflects the guest, NOT the hypervisor we report under, so both methods
+ *   query `/nodes/{node}/status` and override the local readings. Without
+ *   this, the host detail page shows "Uptime unknown" + the guest's CPU/mem.
  *
  * Capabilities by PR:
  * - PR1: list + resource collection
@@ -142,11 +151,17 @@ export class ProxmoxRuntime implements ContainerRuntime {
       if (r.node !== this.nodeName) continue;
 
       this.resourceCache.set(r.id, r);
+      // Display-friendly identifier `<node>/<guest-name>` — readable on the
+      // host detail page and across the UI (was previously `<node>/<vmid>`,
+      // which forced users to memorise PVE numbers). Falls back to the VMID
+      // when PVE returns an empty name (rare but possible). The leading
+      // `<node>/` is load-bearing — `getProxmoxContainerMeta` in the hub
+      // splits on the first slash to find the PVE node, and the in-guest
+      // identity bridge does the same lookup keyed on `(node, vmid)` rather
+      // than the container name, so renames in PVE don't break the link.
+      const displayName = r.name && r.name.length > 0 ? r.name : String(r.vmid);
       guests.push({
-        // Stable cluster-wide identifier — matches the label format the
-        // in-guest agent stamps via INSIGHTD_PROXMOX_NODE/_VMID for the
-        // identity bridge in PR 4.
-        name: `${r.node}/${r.vmid}`,
+        name: `${r.node}/${displayName}`,
         id: r.id,                                                // "lxc/200"
         status: mapStatus(r.status),
         restartCount: 0,                                         // no concept on PVE
@@ -216,16 +231,17 @@ export class ProxmoxRuntime implements ContainerRuntime {
     if (isRestMode()) {
       // PVE's `/exec` REST endpoint is async/streaming and only useful with
       // VM.Console on the token — too much surface for a feature that's
-      // already best-effort on LXC and unavailable on QEMU. The UI catches
-      // this exact error and renders the in-guest-agent empty state.
-      throw new Error(
+      // already best-effort on LXC and unavailable on QEMU. Throws
+      // LogsUnavailableError so the MQTT dispatcher and UI treat this as a
+      // documented empty state rather than a fetch failure.
+      throw new LogsUnavailableError(
         'Logs are not available when insightd reads PVE via REST API. ' +
         'Install insightd-agent inside the guest to surface its logs here.'
       );
     }
 
     if (parsed.type === 'qemu') {
-      throw new Error(
+      throw new LogsUnavailableError(
         'Logs are not available for QEMU guests from the hypervisor. ' +
         'Install insightd-agent inside the VM to surface its logs here.'
       );
@@ -289,24 +305,29 @@ export class ProxmoxRuntime implements ContainerRuntime {
 
     const slash = containerName.indexOf('/');
     if (slash < 0) {
-      throw new Error(`Unrecognised PVE container name "${containerName}" — expected "<node>/<vmid>"`);
+      throw new Error(`Unrecognised PVE container name "${containerName}" — expected "<node>/<guest>"`);
     }
     const targetNode = containerName.slice(0, slash);
-    const vmidPart = containerName.slice(slash + 1);
-    const vmid = Number(vmidPart);
-    if (!Number.isInteger(vmid) || vmid <= 0) {
-      throw new Error(`Unrecognised PVE container name "${containerName}" — non-numeric vmid`);
-    }
+    const guestKey = containerName.slice(slash + 1);
     if (targetNode !== this.nodeName) {
-      throw new Error(`Guest ${vmid} lives on node "${targetNode}", not this agent's node "${this.nodeName}"`);
+      throw new Error(`Guest "${guestKey}" lives on node "${targetNode}", not this agent's node "${this.nodeName}"`);
     }
 
     // Look up the type fresh — caches go stale, action requests don't.
+    // Resolve the guest by display name first (the new identifier format
+    // since the rename PR), falling back to numeric VMID for any stale UI
+    // state still using the old `<node>/<vmid>` shape.
     const resources = await pveApi<PveResource[]>('/cluster/resources');
-    const guest = resources.find(r => r.vmid === vmid && r.node === targetNode && (r.type === 'lxc' || r.type === 'qemu'));
+    const candidates = resources.filter(r =>
+      r.node === targetNode && (r.type === 'lxc' || r.type === 'qemu')
+    );
+    const numericVmid = /^\d+$/.test(guestKey) ? Number(guestKey) : null;
+    const guest = candidates.find(r => r.name === guestKey)
+      ?? (numericVmid != null ? candidates.find(r => r.vmid === numericVmid) : undefined);
     if (!guest) {
-      throw new Error(`PVE guest vmid=${vmid} not found on node "${targetNode}"`);
+      throw new Error(`PVE guest "${guestKey}" not found on node "${targetNode}"`);
     }
+    const vmid = guest.vmid as number;
 
     const verb = pveActionVerb(action);
     const past = action === 'stop' ? 'shutdown initiated'
@@ -358,6 +379,83 @@ export class ProxmoxRuntime implements ContainerRuntime {
     // No "image" concept for VMs/LXC. Returning an empty array is the contract.
     return [];
   }
+
+  /**
+   * REST mode only: source PVE node CPU/memory/swap/load/uptime from
+   * `/nodes/{node}/status` instead of the agent container's local /proc.
+   * Returns null in local-shell mode so /proc keeps winning.
+   *
+   * Field map vs PVE response:
+   *   uptime          → uptimeSeconds (already seconds since boot)
+   *   cpu (0..1)      → cpuPercent (×100, 2dp)
+   *   memory.total/used/free (bytes) → memoryTotalMb/UsedMb/AvailableMb (bytes ÷ 1MiB)
+   *   swap.total/used (bytes)        → swapTotalMb/swapUsedMb
+   *   loadavg ['1.16','1.46','1.65'] → load1/5/15 (parseFloat each)
+   */
+  async getHostMetrics(): Promise<HostMetricsOverride | null> {
+    if (!isRestMode()) return null;
+    try {
+      const status = await pveApi<PveNodeStatus>(`/nodes/${encodeURIComponent(this.nodeName)}/status`);
+      const cpuPercent = typeof status.cpu === 'number'
+        ? Math.round(status.cpu * 100 * 100) / 100
+        : null;
+      const toMb = (b: number | undefined): number | null =>
+        typeof b === 'number' && Number.isFinite(b)
+          ? Math.round((b / 1024 / 1024) * 100) / 100
+          : null;
+      const [l1, l5, l15] = (status.loadavg || []).map(s => parseFloat(s));
+      return {
+        cpuPercent,
+        memoryTotalMb: toMb(status.memory?.total),
+        memoryUsedMb: toMb(status.memory?.used),
+        memoryAvailableMb: toMb(status.memory?.free),
+        swapTotalMb: toMb(status.swap?.total),
+        swapUsedMb: toMb(status.swap?.used),
+        load1: Number.isFinite(l1) ? l1 : null,
+        load5: Number.isFinite(l5) ? l5 : null,
+        load15: Number.isFinite(l15) ? l15 : null,
+        uptimeSeconds: typeof status.uptime === 'number' ? status.uptime : null,
+      };
+    } catch (err) {
+      logger.warn('proxmox', `getHostMetrics failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+
+  /**
+   * REST mode only: report the PVE node's rootfs from the same `/status`
+   * payload (PR2's `pve_storage_snapshots` covers the rest of the storages
+   * separately on the Storage tab). Returns null in local-shell mode so
+   * `collectDisk` keeps producing the full mount list from /proc/mounts.
+   */
+  async getDiskMetrics(): Promise<DiskResult[] | null> {
+    if (!isRestMode()) return null;
+    try {
+      const status = await pveApi<PveNodeStatus>(`/nodes/${encodeURIComponent(this.nodeName)}/status`);
+      const fs = status.rootfs;
+      if (!fs || typeof fs.total !== 'number' || fs.total <= 0) return [];
+      const usedBytes = typeof fs.used === 'number'
+        ? fs.used
+        : (typeof fs.avail === 'number' ? fs.total - fs.avail : NaN);
+      if (!Number.isFinite(usedBytes) || usedBytes < 0) return [];
+      const totalGb = Math.round((fs.total / 1e9) * 100) / 100;
+      const usedGb = Math.round((usedBytes / 1e9) * 100) / 100;
+      const usedPercent = totalGb > 0 ? Math.round((usedGb / totalGb) * 100 * 10) / 10 : 0;
+      return [{ mountPoint: '/', totalGb, usedGb, usedPercent }];
+    } catch (err) {
+      logger.warn('proxmox', `getDiskMetrics failed: ${(err as Error).message}`);
+      return null;
+    }
+  }
+}
+
+interface PveNodeStatus {
+  uptime?: number;
+  cpu?: number;
+  loadavg?: string[];
+  memory?: { total?: number; used?: number; free?: number };
+  swap?: { total?: number; used?: number };
+  rootfs?: { total?: number; used?: number; avail?: number; free?: number };
 }
 
 function parseGuestId(id: string): { type: 'qemu' | 'lxc'; vmid: number } | null {
