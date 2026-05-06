@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 const { ProxmoxRuntime } = require('../../agent/src/runtime/proxmox');
 const { __setTestTransport } = require('../../agent/src/runtime/pveApi');
+const { LogsUnavailableError } = require('../../agent/src/runtime/types');
 
 /**
  * REST-mode tests inject a fake Transport via the __setTestTransport hook
@@ -101,20 +102,26 @@ describe('ProxmoxRuntime — REST API mode', () => {
     assert.equal(lxc.guestUptimeSeconds, 3600);
   });
 
-  it('fetchLogs throws the in-guest-agent message in REST mode (LXC and QEMU)', async () => {
+  it('fetchLogs throws LogsUnavailableError in REST mode (LXC and QEMU)', async () => {
     const { transport } = fakeRestTransport(() => CLUSTER_STATUS_REMOTE);
     __setTestTransport(transport);
     const r = new ProxmoxRuntime({ api: { url: 'https://pve.lan:8006' }, nodeName: 'pve-01' });
     await r.init();
-    // Same error for both — the UI uses this to render the empty state.
-    await assert.rejects(
-      () => r.fetchLogs('lxc/200', { lines: 50 }),
-      /Logs are not available when insightd reads PVE via REST API.*Install insightd-agent inside the guest/i,
+    // The custom error type is what the MQTT dispatcher and UI key off to
+    // render a calm empty state instead of treating this as a fetch failure.
+    const lxcErr = await r.fetchLogs('lxc/200', { lines: 50 }).then(
+      () => null,
+      (e: Error) => e,
     );
-    await assert.rejects(
-      () => r.fetchLogs('qemu/103', { lines: 50 }),
-      /Install insightd-agent inside the guest/i,
+    assert.ok(lxcErr instanceof LogsUnavailableError, 'expected LogsUnavailableError for LXC');
+    assert.match(lxcErr!.message, /Logs are not available when insightd reads PVE via REST API.*Install insightd-agent inside the guest/i);
+
+    const qemuErr = await r.fetchLogs('qemu/103', { lines: 50 }).then(
+      () => null,
+      (e: Error) => e,
     );
+    assert.ok(qemuErr instanceof LogsUnavailableError, 'expected LogsUnavailableError for QEMU');
+    assert.match(qemuErr!.message, /Install insightd-agent inside the guest/i);
   });
 
   it('checkImageUpdates is a no-op array (same as local mode)', async () => {

@@ -2,6 +2,7 @@ import mqtt = require('mqtt');
 import logger = require('../../shared/utils/logger');
 import type { MqttClient, IClientOptions } from 'mqtt';
 import type { ContainerRuntime } from './runtime/types';
+import { LogsUnavailableError } from './runtime/types';
 import { DockerRuntime } from './runtime/docker';
 
 interface AgentConfig {
@@ -265,9 +266,18 @@ function connect(config: AgentConfig, runtime: ContainerRuntime): Promise<MqttCl
         const payload = JSON.stringify({ requestId: req.requestId, logs, error: null });
         client!.publish(responseTopic, payload, { qos: 1 });
       } catch (err) {
-        logger.error('mqtt', `Log request failed: ${(err as Error).message}`);
         const responseTopic = `insightd/${config.hostId}/logs/response`;
         const req = JSON.parse(message.toString());
+        // Documented "no logs here" cases (PVE REST mode, QEMU from hypervisor):
+        // ship the message to the hub as an `unavailable` hint so the UI can
+        // render a calm empty state, and log at info — these aren't failures.
+        if (err instanceof LogsUnavailableError) {
+          logger.info('mqtt', `Log request unavailable for ${req.containerId}: ${err.message}`);
+          const payload = JSON.stringify({ requestId: req.requestId, logs: [], unavailable: err.message, error: null });
+          client!.publish(responseTopic, payload, { qos: 1 });
+          return;
+        }
+        logger.error('mqtt', `Log request failed: ${(err as Error).message}`);
         const payload = JSON.stringify({ requestId: req.requestId, logs: null, error: (err as Error).message });
         client!.publish(responseTopic, payload, { qos: 1 });
       }

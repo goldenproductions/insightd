@@ -1005,6 +1005,10 @@ export interface LogResponse {
   container: string;
   logs: LogLine[];
   error?: string;
+  /** Set when the runtime intentionally cannot fetch logs (e.g. PVE in REST
+   *  mode, QEMU from the hypervisor). The UI should render a calm empty
+   *  state with this hint instead of treating it as a fetch failure. */
+  unavailable?: string;
 }
 
 // Webhooks
