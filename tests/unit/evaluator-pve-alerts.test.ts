@@ -189,13 +189,33 @@ describe('evaluateAlerts — Proxmox VE (PR2)', () => {
     assert.match(fired[0].message, /14d ago/);
   });
 
-  it('fires pve_backup_overdue with NEVER message for guests that have never been backed up', () => {
+  it('does NOT fire pve_backup_overdue for last_status=NEVER (host-scope insight covers it)', () => {
+    // Regression: a host with 14 unbackuped guests used to emit 14 simultaneous
+    // alerts (kingduck firestorm). NEVER state is now insight-only — the alert
+    // is reserved for "your backup pipeline broke" (aged-out OK rows), not
+    // "you never set one up".
     insertGuestSnapshot({ vmid: 200, name: 'pve-01/200' });
+    insertGuestSnapshot({ vmid: 201, name: 'pve-01/201' });
     upsertBackup({ vmid: 200, daysAgo: null, status: 'NEVER' });
+    upsertBackup({ vmid: 201, daysAgo: null, status: 'NEVER' });
     const { triggered } = evaluateAlerts(db, { alerts: { ...cfg, pveBackupAgeWarnDays: 7 } });
-    const fired = triggered.filter((a: any) => a.type === 'pve_backup_overdue');
-    assert.equal(fired.length, 1);
-    assert.match(fired[0].message, /never backed up/);
+    assert.equal(triggered.filter((a: any) => a.type === 'pve_backup_overdue').length, 0);
+  });
+
+  it('silently resolves a pre-existing pve_backup_overdue alert when the row is now NEVER', () => {
+    // Migration path: an alert created under the old NEVER-fires logic must
+    // auto-clear once the new code ships, without spamming a "resolved"
+    // notification per guest. isSilentResolution=true keeps it out of toSend.
+    insertGuestSnapshot({ vmid: 300, name: 'pve-01/300' });
+    upsertBackup({ vmid: 300, daysAgo: null, status: 'NEVER' });
+    db.prepare(`
+      INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, message)
+      VALUES ('pve-01', 'pve_backup_overdue', '300', datetime('now', '-1 day'), datetime('now', '-1 day'), 1, 'legacy')
+    `).run();
+    const { resolved } = evaluateAlerts(db, { alerts: { ...cfg, pveBackupAgeWarnDays: 7 } });
+    const matched = resolved.filter((a: any) => a.type === 'pve_backup_overdue' && a.target === '300');
+    assert.equal(matched.length, 1);
+    assert.equal(matched[0].isSilentResolution, true);
   });
 
   it('does not fire pve_backup_overdue when backup is within the warn window', () => {
@@ -207,7 +227,7 @@ describe('evaluateAlerts — Proxmox VE (PR2)', () => {
 
   it('disables pve_backup_overdue when pveBackupAgeWarnDays is 0', () => {
     insertGuestSnapshot({ vmid: 103 });
-    upsertBackup({ vmid: 103, daysAgo: null, status: 'NEVER' });
+    upsertBackup({ vmid: 103, daysAgo: 30, status: 'OK' });
     const { triggered } = evaluateAlerts(db, { alerts: { ...cfg, pveBackupAgeWarnDays: 0 } });
     assert.equal(triggered.filter((a: any) => a.type === 'pve_backup_overdue').length, 0);
   });

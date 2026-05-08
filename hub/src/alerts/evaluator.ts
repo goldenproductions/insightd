@@ -12,6 +12,9 @@ interface AlertItem {
   threshold?: any;
   triggeredAt?: string;
   isResolution?: boolean;
+  /** Resolve the alert in the DB but skip email/webhook notification. Used
+   *  when retiring an alert subtype so existing rows clear without spamming. */
+  isSilentResolution?: boolean;
   reminderNumber?: number;
 }
 
@@ -837,10 +840,13 @@ function checkPveStorageSaturation(db: Database.Database, threshold: number): Al
 
 /**
  * Fire `pve_backup_overdue` for any PVE guest whose last successful vzdump
- * is older than `warnDays` days, OR whose last_status is 'NEVER'. Target =
- * "<host_id>/<vmid>" so the alert dedups per-guest. Threshold of 0 disables
- * the check entirely (some homelabbers don't run vzdump and don't want the
- * noise).
+ * has aged past `warnDays`. Target = "<host_id>/<vmid>" so the alert dedups
+ * per-guest. Threshold of 0 disables the check entirely.
+ *
+ * `last_status='NEVER'` is *not* a per-guest alert — that's a config gap
+ * (the homelab never set up vzdump), not a runtime regression. It surfaces
+ * as a single host-scoped insight via proxmox-checks instead, so a host
+ * with 14 unbacked-up guests doesn't generate 14 simultaneous warnings.
  */
 function checkPveBackupOverdue(db: Database.Database, warnDays: number): AlertItem[] {
   if (warnDays <= 0) return [];
@@ -850,14 +856,13 @@ function checkPveBackupOverdue(db: Database.Database, warnDays: number): AlertIt
   // container_name in PR1) rather than just the bare vmid.
   const rows = db.prepare(`
     SELECT b.host_id, b.guest_vmid, b.last_backup_at, b.last_status,
-           CAST((strftime('%s','now') - strftime('%s', COALESCE(b.last_backup_at, '1970-01-01'))) / 86400 AS INTEGER) AS age_days,
+           CAST((strftime('%s','now') - strftime('%s', b.last_backup_at)) / 86400 AS INTEGER) AS age_days,
            (SELECT cs.container_name
               FROM container_snapshots cs
              WHERE cs.host_id = b.host_id AND cs.guest_vmid = b.guest_vmid
              ORDER BY cs.collected_at DESC LIMIT 1) AS guest_name
     FROM pve_guest_backups b
-    WHERE b.last_status = 'NEVER'
-       OR (b.last_backup_at IS NOT NULL AND b.last_backup_at < ${cutoffSql})
+    WHERE b.last_backup_at IS NOT NULL AND b.last_backup_at < ${cutoffSql}
   `).all() as Array<{
     host_id: string; guest_vmid: number; last_backup_at: string | null;
     last_status: string; age_days: number; guest_name: string | null;
@@ -865,14 +870,11 @@ function checkPveBackupOverdue(db: Database.Database, warnDays: number): AlertIt
 
   return rows.map(r => {
     const display = r.guest_name ?? `${r.host_id}/${r.guest_vmid}`;
-    const detail = r.last_status === 'NEVER'
-      ? 'never backed up'
-      : `last backup ${r.age_days}d ago (threshold ${warnDays}d)`;
     return {
       type: 'pve_backup_overdue',
       hostId: r.host_id,
       target: String(r.guest_vmid),
-      message: `Proxmox guest "${display}" — ${detail}.`,
+      message: `Proxmox guest "${display}" — last backup ${r.age_days}d ago (threshold ${warnDays}d).`,
       value: r.last_backup_at ?? 'never',
       threshold: `${warnDays}d`,
     };
@@ -1112,18 +1114,40 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
       // the warn window AND the status flipped to OK — so a fresh failure
       // (status='FAILED' even with old date) keeps the alert open. Or the
       // row vanished entirely (guest destroyed/migrated).
+      //
+      // last_status='NEVER' also resolves *silently*: the per-guest alert
+      // no longer fires for NEVER state (it surfaces as a host-scoped
+      // insight now), so any pre-existing NEVER alerts in alert_state
+      // should auto-clear on the next pass. Marked silent so a host with
+      // 14 legacy NEVER alerts doesn't blast 14 "resolved" emails.
       const warnDays = alertsConfig.pveBackupAgeWarnDays ?? 7;
       const cutoffSql = `datetime('now', '-${warnDays} days')`;
       const row = db.prepare(
         `SELECT last_backup_at, last_status FROM pve_guest_backups WHERE host_id = ? AND guest_vmid = ?`
       ).get(alert.host_id, Number(alert.target)) as { last_backup_at: string | null; last_status: string } | undefined;
+      let silent = false;
       if (!row) {
         isResolved = true;
+      } else if (row.last_status === 'NEVER') {
+        isResolved = true;
+        silent = true;
       } else if (row.last_status === 'OK' && row.last_backup_at) {
         const stillOld = (db.prepare(
           `SELECT (julianday(?) < julianday(${cutoffSql})) AS old`
         ).get(row.last_backup_at) as { old: number }).old === 1;
         isResolved = !stillOld;
+      }
+      if (isResolved && silent) {
+        resolved.push({
+          type: alert.alert_type,
+          hostId: alert.host_id,
+          target: alert.target,
+          message: getResolutionMessage(alert.alert_type, alert.target, alert.host_id),
+          triggeredAt: alert.triggered_at,
+          isResolution: true,
+          isSilentResolution: true,
+        });
+        continue;
       }
     } else if (alert.alert_type === 'pve_storage_saturation') {
       // Resolved when latest snapshot is back under the disk threshold, or
@@ -1263,6 +1287,7 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
     db.prepare(
       "UPDATE alert_state SET resolved_at = datetime('now') WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL"
     ).run(alert.hostId, alert.type, alert.target);
+    if (alert.isSilentResolution) continue;
     toSend.push(alert);
   }
 

@@ -123,9 +123,22 @@ describe('detector — Proxmox VE checks (PR3)', () => {
 
   // ── guest-scope: backups ───────────────────────────────────────────────────
 
-  it('emits a warning insight when a QEMU guest has never been backed up', () => {
+  // Per-guest backup insights only fire in the *mixed* case — host has some
+  // backed-up guests + a few forgotten ones. When the entire host has no
+  // backups, the host-scope "no automated backups configured" insight covers
+  // it (see "host-scope: no backups configured" suite below).
+  function upsertBackupWithDate(opts: { vmid: number; status: 'OK' | 'FAILED'; daysAgo: number; hostId?: string }) {
+    db.prepare(`
+      INSERT INTO pve_guest_backups (host_id, guest_vmid, last_backup_at, last_status)
+      VALUES (?, ?, datetime('now', '-${opts.daysAgo} days'), ?)
+    `).run(opts.hostId ?? 'pve-01', opts.vmid, opts.status);
+  }
+
+  it('emits a warning insight when a QEMU guest has never been backed up (mixed host)', () => {
     insertGuest({ vmid: 103, name: 'pve-01/103', type: 'qemu' });
+    insertGuest({ vmid: 104, name: 'pve-01/104', type: 'qemu' });
     upsertBackup({ vmid: 103, status: 'NEVER' });
+    upsertBackupWithDate({ vmid: 104, status: 'OK', daysAgo: 1 });
     generateInsights(db);
     const items = getInsightsByCategory('proxmox');
     const backup = items.find(i => i.title.includes('never been backed up'));
@@ -134,15 +147,38 @@ describe('detector — Proxmox VE checks (PR3)', () => {
     assert.match(backup!.message, /VM disk image/);
   });
 
-  it('emits info-level insight (not warning) for an LXC guest that has never been backed up', () => {
+  it('emits info-level insight (not warning) for an LXC guest that has never been backed up (mixed host)', () => {
     insertGuest({ vmid: 200, name: 'pve-01/200', type: 'lxc' });
+    insertGuest({ vmid: 201, name: 'pve-01/201', type: 'qemu' });
     upsertBackup({ vmid: 200, status: 'NEVER' });
+    upsertBackupWithDate({ vmid: 201, status: 'OK', daysAgo: 1 });
     generateInsights(db);
     const items = getInsightsByCategory('proxmox');
     const backup = items.find(i => i.title.includes('never been backed up'));
     assert.ok(backup);
     assert.equal(backup!.severity, 'info');
     assert.match(backup!.message, /LXC containers are cheap to rebuild/);
+  });
+
+  // ── host-scope: no backups configured ──────────────────────────────────────
+
+  it('emits one host-scope insight (not N per-guest insights) when ALL guests are NEVER', () => {
+    insertGuest({ vmid: 100, name: 'pve-01/100', type: 'qemu' });
+    insertGuest({ vmid: 101, name: 'pve-01/101', type: 'lxc' });
+    insertGuest({ vmid: 102, name: 'pve-01/102', type: 'qemu' });
+    upsertBackup({ vmid: 100, status: 'NEVER' });
+    upsertBackup({ vmid: 101, status: 'NEVER' });
+    upsertBackup({ vmid: 102, status: 'NEVER' });
+    generateInsights(db);
+    const items = getInsightsByCategory('proxmox');
+    const hostScope = items.filter(i => i.title.includes('no automated backups configured'));
+    assert.equal(hostScope.length, 1);
+    assert.equal(hostScope[0].entity_type, 'host');
+    assert.equal(hostScope[0].entity_id, 'pve-01');
+    assert.equal(hostScope[0].severity, 'warning');
+    assert.match(hostScope[0].message, /3 guests/);
+    assert.match(hostScope[0].message, /Datacenter → Backup/);
+    assert.equal(items.filter(i => i.title.includes('never been backed up')).length, 0);
   });
 
   // ── guest-scope: snapshot accumulation ─────────────────────────────────────
