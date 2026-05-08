@@ -525,6 +525,7 @@ const LEVEL_BY_ALERT_TYPE: Record<string, 'critical' | 'error' | 'warning' | 'in
   workload_unavailable: 'critical',
   pve_cluster_quorum_lost: 'critical',
   container_unhealthy: 'error',
+  image_pull_failure: 'error',
   restart_loop: 'error',
   disk_full: 'error',
   node_pressure: 'error',
@@ -556,6 +557,7 @@ const LEVEL_CASE_SQL = `
     WHEN 'workload_unavailable' THEN 'critical'
     WHEN 'pve_cluster_quorum_lost' THEN 'critical'
     WHEN 'container_unhealthy' THEN 'error'
+    WHEN 'image_pull_failure' THEN 'error'
     WHEN 'restart_loop' THEN 'error'
     WHEN 'disk_full' THEN 'error'
     WHEN 'node_pressure' THEN 'error'

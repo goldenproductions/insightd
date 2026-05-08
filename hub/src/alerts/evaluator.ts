@@ -31,6 +31,10 @@ interface AlertsConfig {
   hostOffline: boolean;
   hostOfflineMinutes: number;
   containerUnhealthy: boolean;
+  /** Distinct subtype for ImagePullBackOff/ErrImagePull/InvalidImageName/
+   *  CreateContainerConfigError. When false, those rows still count toward
+   *  containerUnhealthy. Default true. */
+  imagePullFailure?: boolean;
   excludeContainers: string;
   endpointDown: boolean | undefined;
   endpointFailureThreshold: number;
@@ -145,10 +149,28 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
     triggered.push(...checkHostOffline(db, alerts.hostOfflineMinutes));
   }
 
-  // Container health
+  // Container health.
+  //
+  // image_pull_failure runs first and *replaces* container_unhealthy for
+  // rows whose unhealthy reason is image-pull-related (ImagePullBackOff /
+  // ErrImagePull / InvalidImageName / CreateContainerConfigError). The
+  // generic container_unhealthy message ("container X is unhealthy —
+  // ImagePullBackOff: ...") is far less actionable than a dedicated alert
+  // type that names the cause and its remedy (image name typo, missing
+  // pull secret, registry unreachable). Splitting them lets webhooks/UX
+  // route the two failure modes differently without operators having to
+  // pattern-match on `health_check_output`.
+  //
+  // When imagePullFailure is disabled, image-pull rows fall back to the
+  // legacy container_unhealthy behaviour so users never end up with a
+  // silent failure mode.
+  const splitImagePull = alerts.imagePullFailure !== false;
   for (const { host_id } of hosts) {
+    if (splitImagePull) {
+      triggered.push(...checkImagePullFailure(db, host_id).filter(notExcluded));
+    }
     if (alerts.containerUnhealthy) {
-      triggered.push(...checkContainerUnhealthy(db, host_id).filter(notExcluded));
+      triggered.push(...checkContainerUnhealthy(db, host_id, splitImagePull).filter(notExcluded));
     }
   }
 
@@ -507,13 +529,91 @@ function checkHostOffline(db: Database.Database, thresholdMinutes: number): Aler
   }));
 }
 
-function checkContainerUnhealthy(db: Database.Database, hostId: string): AlertItem[] {
+/**
+ * Image-pull failure reasons surfaced by k8s through `state.waiting.reason`.
+ * The agent stamps these into `health_check_output` as `<reason>: <message>`
+ * (or just `<reason>`) when the container is unhealthy due to a pull problem.
+ *
+ * - `ImagePullBackOff` — kubelet is backing off after one or more failed pulls
+ * - `ErrImagePull`     — most recent pull attempt failed (auth/network/missing tag)
+ * - `InvalidImageName` — manifest references an image string the runtime can't parse
+ * - `CreateContainerConfigError` — usually a missing secret/configMap referenced
+ *   by the container; surfaces here because the user-actionable fix is the
+ *   same shape as a pull-secret problem
+ */
+const IMAGE_PULL_FAILURE_REASONS = [
+  'ImagePullBackOff',
+  'ErrImagePull',
+  'InvalidImageName',
+  'CreateContainerConfigError',
+] as const;
+
+function isImagePullFailureReason(healthCheckOutput: string | null): boolean {
+  if (!healthCheckOutput) return false;
+  const prefix = healthCheckOutput.split(':', 1)[0].trim();
+  return (IMAGE_PULL_FAILURE_REASONS as readonly string[]).includes(prefix);
+}
+
+/**
+ * Build the LIKE patterns used to filter `health_check_output` against the
+ * known image-pull reasons. `<Reason>` and `<Reason>: ...` both match.
+ */
+const IMAGE_PULL_LIKE_CLAUSE = IMAGE_PULL_FAILURE_REASONS
+  .map(() => '(health_check_output = ? OR health_check_output LIKE ?)')
+  .join(' OR ');
+const IMAGE_PULL_LIKE_PARAMS = IMAGE_PULL_FAILURE_REASONS.flatMap(r => [r, `${r}:%`]);
+
+function checkImagePullFailure(db: Database.Database, hostId: string): AlertItem[] {
+  const rows = db.prepare(`
+    SELECT container_name, health_check_output FROM container_snapshots
+    WHERE host_id = ? AND collected_at = (
+      SELECT MAX(collected_at) FROM container_snapshots WHERE host_id = ?
+    ) AND health_status = 'unhealthy'
+      AND (${IMAGE_PULL_LIKE_CLAUSE})
+  `).all(hostId, hostId, ...IMAGE_PULL_LIKE_PARAMS) as
+    { container_name: string; health_check_output: string | null }[];
+
+  return rows.map(r => {
+    const reason = (r.health_check_output ?? '').split(':', 1)[0].trim() || 'image pull failure';
+    const detail = r.health_check_output?.slice(0, 300);
+    const remedy = reason === 'CreateContainerConfigError'
+      ? 'Check that the referenced ConfigMap/Secret exists and the keys match.'
+      : 'Check the image name + tag, the registry is reachable, and any imagePullSecrets are correct.';
+    return {
+      type: 'image_pull_failure',
+      hostId,
+      target: r.container_name,
+      message: `Container "${r.container_name}" on ${hostId} can't pull its image — ${detail}. ${remedy}`,
+      value: reason,
+    };
+  });
+}
+
+function checkContainerUnhealthy(db: Database.Database, hostId: string, excludeImagePull: boolean): AlertItem[] {
+  // When the dedicated `image_pull_failure` alert is enabled (default),
+  // exclude image-pull rows here so a single root cause doesn't fan out
+  // into two alerts with conflicting suggested-action wording. When
+  // disabled, image-pull rows still surface as generic container_unhealthy.
+  //
+  // SQL trickiness: `health_check_output` is nullable, and `NOT (NULL = X
+  // OR NULL LIKE X)` evaluates to NULL — which WHERE treats as false and
+  // would silently drop every row whose output is NULL (i.e. the common
+  // case for a Docker liveness-probe failure). The `IS NULL OR …`
+  // disjunction keeps those rows in.
+  const exclusion = excludeImagePull
+    ? `AND (health_check_output IS NULL OR NOT (${IMAGE_PULL_LIKE_CLAUSE}))`
+    : '';
+  const params = excludeImagePull
+    ? [hostId, hostId, ...IMAGE_PULL_LIKE_PARAMS]
+    : [hostId, hostId];
   const rows = db.prepare(`
     SELECT container_name, health_status, health_check_output, last_oom_killed_at FROM container_snapshots
     WHERE host_id = ? AND collected_at = (
       SELECT MAX(collected_at) FROM container_snapshots WHERE host_id = ?
     ) AND health_status = 'unhealthy'
-  `).all(hostId, hostId) as { container_name: string; health_status: string; health_check_output: string | null; last_oom_killed_at: string | null }[];
+      ${exclusion}
+  `).all(...params) as
+    { container_name: string; health_status: string; health_check_output: string | null; last_oom_killed_at: string | null }[];
 
   return rows.map(r => {
     const base = `Container "${r.container_name}" on ${hostId} is unhealthy`;
@@ -913,6 +1013,7 @@ const CONTAINER_ALERT_TYPES = new Set<string>([
   'high_cpu',
   'high_memory',
   'container_unhealthy',
+  'image_pull_failure',
   'container_memory_saturation',
   'container_cpu_saturation',
 ]);
@@ -1023,6 +1124,22 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
     } else if (alert.alert_type === 'container_unhealthy') {
       const latest = db.prepare('SELECT health_status FROM container_snapshots WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target) as { health_status: string } | undefined;
       isResolved = !!latest && latest.health_status !== 'unhealthy';
+    } else if (alert.alert_type === 'image_pull_failure') {
+      // Resolved when the container is no longer unhealthy, OR the row
+      // is still unhealthy but the cause has flipped to something else
+      // (e.g. pull succeeded and the next failure mode is a CrashLoopBackOff).
+      // The CrashLoopBackOff would then trip container_unhealthy on the
+      // next pass, so it stays surfaced — just under the right alert type.
+      const latest = db.prepare(
+        'SELECT health_status, health_check_output FROM container_snapshots ' +
+        'WHERE host_id = ? AND container_name = ? ORDER BY collected_at DESC LIMIT 1'
+      ).get(alert.host_id, alert.target) as
+        { health_status: string; health_check_output: string | null } | undefined;
+      if (!latest || latest.health_status !== 'unhealthy') {
+        isResolved = true;
+      } else {
+        isResolved = !isImagePullFailureReason(latest.health_check_output);
+      }
     } else if (alert.alert_type === 'endpoint_down') {
       // If the endpoint was deleted or disabled, the http-monitor stops
       // probing it — no new is_up=1 check is ever going to roll in. Treat
@@ -1218,6 +1335,7 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
     case 'high_load': return `Host${on} load back to normal`;
     case 'host_offline': return `Host "${hostId}" is back online`;
     case 'container_unhealthy': return `Container "${target}"${on} is healthy again`;
+    case 'image_pull_failure': return `Container "${target}"${on} pulled its image successfully`;
     case 'endpoint_down': return `Endpoint "${target}" is reachable again`;
     case 'node_pressure': return `Node${on} ${target} cleared`;
     case 'node_not_ready': return `Node "${hostId}" is Ready again`;

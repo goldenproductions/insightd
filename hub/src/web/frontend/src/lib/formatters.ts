@@ -76,6 +76,7 @@ export function fmtDurationMs(ms: number): string {
 const ALERT_TYPE_LABELS: Record<string, string> = {
   container_down: 'Container stopped',
   container_unhealthy: 'Container unhealthy',
+  image_pull_failure: 'Image pull failed',
   restart_loop: 'Restart loop',
   high_cpu: 'Container CPU high',
   high_memory: 'Container memory high',

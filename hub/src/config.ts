@@ -77,6 +77,7 @@ const config = Object.freeze({
     hostOffline: process.env.INSIGHTD_ALERT_HOST_OFFLINE !== 'false',
     hostOfflineMinutes: parseInt(process.env.INSIGHTD_ALERT_HOST_OFFLINE_MINUTES || '15', 10),
     containerUnhealthy: process.env.INSIGHTD_ALERT_UNHEALTHY !== 'false',
+    imagePullFailure: process.env.INSIGHTD_ALERT_IMAGE_PULL_FAILURE !== 'false',
     excludeContainers: process.env.INSIGHTD_ALERT_EXCLUDE || '',
     endpointDown: process.env.INSIGHTD_ALERT_ENDPOINT_DOWN !== 'false',
     endpointFailureThreshold: parseInt(process.env.INSIGHTD_ALERT_ENDPOINT_FAILURES || '3', 10),
