@@ -41,7 +41,12 @@ export function generateProxmoxInsights(db: Database.Database, insert: InsightIn
   let count = 0;
   count += hostQuorumLostInsight(db, insert);
   count += hostZfsDegradedInsights(db, insert);
-  count += guestNoBackupInsights(db, insert);
+  // The host-scope check runs first and returns the set of host_ids that
+  // got a "no backups configured at all" insight. The per-guest check then
+  // skips those hosts so a 14-guest homelab gets one warning, not 14.
+  const noBackupHosts = hostNoBackupsConfiguredInsights(db, insert);
+  count += noBackupHosts.size;
+  count += guestNoBackupInsights(db, insert, noBackupHosts);
   count += guestSnapshotAccumulationInsights(db, insert);
   return count;
 }
@@ -97,13 +102,50 @@ function hostZfsDegradedInsights(db: Database.Database, insert: InsightInsert): 
 }
 
 /**
- * Per-guest "never backed up" / "very stale backup" insights. Bumped to
- * warning for QEMU (full VMs — losing a disk image is a recovery
- * project), info for LXC (rebuilding from a Debian template is cheap by
- * comparison). Skipped when a backup matching alerts.pveBackupAgeWarnDays
- * exists — at that point the alert covers it.
+ * One host-scoped insight per PVE host with no automated backups at all
+ * (every tracked guest reports last_status='NEVER'). Replaces what used to
+ * be an N-row firestorm of per-guest "never backed up" insights *and* a
+ * matching N-row alert blast — when the entire host is unbackuped the
+ * actionable answer is the same for every guest ("set up vzdump"), so
+ * a single warning at host scope is the right granularity.
+ *
+ * Returns the set of host_ids covered so the per-guest check can skip
+ * them and avoid duplication.
  */
-function guestNoBackupInsights(db: Database.Database, insert: InsightInsert): number {
+function hostNoBackupsConfiguredInsights(db: Database.Database, insert: InsightInsert): Set<string> {
+  const rows = db.prepare(`
+    SELECT host_id,
+           COUNT(*) AS total,
+           SUM(CASE WHEN last_status = 'NEVER' THEN 1 ELSE 0 END) AS never_count,
+           SUM(CASE WHEN last_status = 'OK' THEN 1 ELSE 0 END) AS ok_count
+    FROM pve_guest_backups
+    GROUP BY host_id
+    HAVING ok_count = 0 AND never_count > 0
+  `).all() as Array<{ host_id: string; total: number; never_count: number; ok_count: number }>;
+
+  const covered = new Set<string>();
+  for (const r of rows) {
+    insert.run(
+      'host', r.host_id, 'proxmox', 'warning',
+      `Proxmox host "${r.host_id}" has no automated backups configured`,
+      `${r.never_count} guest${r.never_count === 1 ? '' : 's'} would be unrecoverable on disk loss. ` +
+      `Configure vzdump under Datacenter → Backup.`,
+      'guests_without_backup', r.never_count, null, null,
+    );
+    covered.add(r.host_id);
+  }
+  return covered;
+}
+
+/**
+ * Per-guest "never backed up" insight for the *mixed* case — host has
+ * some guests on a backup schedule but a few are missing. That's a
+ * forgot-this-one signal, distinct from the host-scope "no backups at
+ * all" case (which `hostNoBackupsConfiguredInsights` covers and passes
+ * down via `skipHosts`). Severity tracks recovery cost: warning for QEMU
+ * full VMs, info for LXC.
+ */
+function guestNoBackupInsights(db: Database.Database, insert: InsightInsert, skipHosts: Set<string>): number {
   const rows = db.prepare(`
     SELECT b.host_id, b.guest_vmid, b.last_backup_at, b.last_status,
            cs.container_name AS guest_name,
@@ -123,7 +165,9 @@ function guestNoBackupInsights(db: Database.Database, insert: InsightInsert): nu
     WHERE b.last_status = 'NEVER'
   `).all() as BackupRow[];
 
+  let inserted = 0;
   for (const r of rows) {
+    if (skipHosts.has(r.host_id)) continue;
     const name = r.guest_name ?? `${r.host_id}/${r.guest_vmid}`;
     const sev: 'warning' | 'info' = r.guest_type === 'qemu' ? 'warning' : 'info';
     const recovery = r.guest_type === 'qemu'
@@ -135,8 +179,9 @@ function guestNoBackupInsights(db: Database.Database, insert: InsightInsert): nu
       `${recovery}`,
       'backup_age_days', null, null, null,
     );
+    inserted++;
   }
-  return rows.length;
+  return inserted;
 }
 
 /**
