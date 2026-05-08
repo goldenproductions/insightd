@@ -61,6 +61,7 @@ interface AlertsConfig {
   hostOffline: boolean;
   hostOfflineMinutes: number;
   containerUnhealthy: boolean;
+  imagePullFailure: boolean;
   excludeContainers: string;
   endpointDown: boolean;
   endpointFailureThreshold: number;
@@ -124,6 +125,7 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'alerts.hostOffline', env: 'INSIGHTD_ALERT_HOST_OFFLINE', type: 'bool', category: 'Alerts', label: 'Host Offline Alerts', hotReload: true, default: 'true', description: 'Fire an alert when an agent stops reporting (host down, crashed, network partition).' },
   { key: 'alerts.hostOfflineMinutes', env: 'INSIGHTD_ALERT_HOST_OFFLINE_MINUTES', type: 'int', category: 'Alerts', label: 'Host Offline Threshold (minutes)', hotReload: true, default: '15', description: 'Minutes without a report before the host is considered offline. Agents publish every 5 min by default.' },
   { key: 'alerts.containerUnhealthy', env: 'INSIGHTD_ALERT_UNHEALTHY', type: 'bool', category: 'Alerts', label: 'Unhealthy Container Alerts', hotReload: true, default: 'true' },
+  { key: 'alerts.imagePullFailure', env: 'INSIGHTD_ALERT_IMAGE_PULL_FAILURE', type: 'bool', category: 'Alerts', label: 'Image Pull Failure Alerts', hotReload: true, default: 'true', description: 'Fire a dedicated alert for ImagePullBackOff/ErrImagePull/InvalidImageName/CreateContainerConfigError instead of the generic container_unhealthy. Disable to fall back to container_unhealthy for these.' },
   { key: 'alerts.excludeContainers', env: 'INSIGHTD_ALERT_EXCLUDE', type: 'string', category: 'Alerts', label: 'Exclude Containers (patterns)', hotReload: true, default: '', description: 'Comma-separated patterns. Use * as wildcard. E.g. dev-*,test-*,insightd-*' },
   { key: 'alerts.endpointDown', env: 'INSIGHTD_ALERT_ENDPOINT_DOWN', type: 'bool', category: 'Alerts', label: 'Endpoint Down Alerts', hotReload: true, default: 'true' },
   { key: 'alerts.endpointFailureThreshold', env: 'INSIGHTD_ALERT_ENDPOINT_FAILURES', type: 'int', category: 'Alerts', label: 'Endpoint Failure Threshold', hotReload: true, default: '3', description: 'Consecutive failures before alerting' },
@@ -291,6 +293,7 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       hostOffline: get('alerts.hostOffline'),
       hostOfflineMinutes: get('alerts.hostOfflineMinutes') || baseConfig.alerts?.hostOfflineMinutes || 15,
       containerUnhealthy: get('alerts.containerUnhealthy'),
+      imagePullFailure: get('alerts.imagePullFailure') ?? baseConfig.alerts?.imagePullFailure ?? true,
       excludeContainers: get('alerts.excludeContainers') || baseConfig.alerts?.excludeContainers || '',
       endpointDown: get('alerts.endpointDown'),
       endpointFailureThreshold: get('alerts.endpointFailureThreshold') || baseConfig.alerts?.endpointFailureThreshold || 3,
