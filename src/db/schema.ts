@@ -53,6 +53,8 @@ function bootstrap(db: Database.Database): void {
       -- v48: Proxmox VE guest identity. NULL for Docker.
       guest_type      TEXT,
       guest_vmid      INTEGER,
+      guest_uuid      TEXT,
+      guest_primary_mac TEXT,
       guest_uptime_seconds INTEGER,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );

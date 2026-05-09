@@ -77,6 +77,8 @@ interface CollectionPayload {
     /** v48 — Proxmox VE guest identity. NULL for Docker/k8s. */
     guest_type?: 'lxc' | 'qemu' | null;
     guest_vmid?: number | null;
+    guest_uuid?: string | null;
+    guest_primary_mac?: string | null;
     guest_uptime_seconds?: number | null;
   }>;
   disk?: Array<{
@@ -382,6 +384,8 @@ export function payloadContainerToSnapshot(c: NonNullable<CollectionPayload['con
     podConditions: c.pod_conditions ?? null,
     guestType: c.guest_type ?? null,
     guestVmid: c.guest_vmid ?? null,
+    guestUuid: c.guest_uuid ?? null,
+    guestPrimaryMac: c.guest_primary_mac ?? null,
     guestUptimeSeconds: c.guest_uptime_seconds ?? null,
   };
 }
