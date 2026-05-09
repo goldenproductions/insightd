@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 50;
+const SCHEMA_VERSION = 51;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -21,8 +21,16 @@ function bootstrap(db: Database.Database): void {
       -- v48: free-form labels the agent reports about itself. Currently used
       -- only by the Proxmox identity bridge so the in-guest agent's host can
       -- be linked to its hypervisor's view (label key 'insightd.proxmox.guest').
-      host_labels   TEXT
+      host_labels   TEXT,
+      -- v51: Proxmox host correlation — link the Proxmox hypervisor to its
+      -- guests via VMID. cluster_id + vmid form the foreign key to locate
+      -- a guest in pve_guest_snapshots. node is the Proxmox node name.
+      proxmox_cluster_id TEXT,
+      proxmox_node TEXT,
+      proxmox_vmid INTEGER,
+      proxmox_guest_type TEXT
     );
+
 
     CREATE TABLE IF NOT EXISTS container_snapshots (
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,6 +73,10 @@ function bootstrap(db: Database.Database): void {
       guest_type      TEXT,        -- 'lxc' | 'qemu' | NULL
       guest_vmid      INTEGER,     -- PVE numeric VMID
       guest_uptime_seconds INTEGER, -- per-guest uptime; host_snapshots.uptime_seconds is the hypervisor's
+      -- v51: Proxmox guest network identity for in-guest agent correlation.
+      -- UUID is the guest's internal ID; mac is eth0's link-local if present.
+      guest_uuid      TEXT,
+      guest_primary_mac TEXT,
       collected_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
@@ -753,6 +765,15 @@ function bootstrap(db: Database.Database): void {
       logger.info('schema', `Database at schema version ${row.value}`);
     }
   }
+
+  // Create v51 indexes after all migrations have run (so columns exist)
+  try {
+    db.exec(`CREATE INDEX IF NOT EXISTS hosts_proxmox_link
+             ON hosts (proxmox_cluster_id, proxmox_vmid)
+             WHERE proxmox_vmid IS NOT NULL`);
+  } catch {
+    // Index already exists
+  }
 }
 
 function migrate(db: Database.Database, fromVersion: number): void {
@@ -1349,6 +1370,20 @@ function migrate(db: Database.Database, fromVersion: number): void {
         PRIMARY KEY (host_id, guest_vmid)
       );
     `);
+  }
+  if (fromVersion < 51) {
+    // v51: Proxmox guest <-> host correlation
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_cluster_id TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_node TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_vmid INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_guest_type TEXT'); } catch { /* already exists */ }
+    try {
+      db.exec(`CREATE INDEX IF NOT EXISTS hosts_proxmox_link
+               ON hosts (proxmox_cluster_id, proxmox_vmid)
+               WHERE proxmox_vmid IS NOT NULL`);
+    } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uuid TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_primary_mac TEXT'); } catch { /* already exists */ }
   }
 }
 
