@@ -369,6 +369,16 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     ? queries.getPveGuestExtras(db, params.hostId, params.containerName)
     : null;
 
+  // Task 11: top-level linkedHostId so frontend can redirect to the in-guest
+  // agent's host detail page without drilling into pve_guest_extras.
+  // Uses the direct proxmox_node+proxmox_vmid match (hosts table) as primary
+  // lookup; falls back to the label-based linkedInGuestHostId already computed
+  // in pve_guest_extras (which uses the insightd.proxmox.guest label bridge).
+  const linkedHostId: string | null =
+    queries.getContainerLinkedHostId(db, latest.container_id) ??
+    pve_guest_extras?.linkedInGuestHostId ??
+    null;
+
   return {
     ...latest,
     host_id: params.hostId,
@@ -382,6 +392,7 @@ function handleContainerDetail(req: HandlerReq, res: ServerResponse, db: Databas
     anomalies,
     logTemplates,
     pve_guest_extras,
+    linkedHostId,
   };
 }
 

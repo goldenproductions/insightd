@@ -296,6 +296,66 @@ function getHosts(db: Database.Database, onlineThresholdMinutes: number): HostRo
   `).all(onlineThresholdMinutes) as HostRow[];
 }
 
+export interface ProxmoxBlock {
+  cluster_id: string | null;
+  node: string;
+  vmid: number;
+  guest_type: string | null;
+  snapshots_count: number;
+  last_backup_at: string | null;
+}
+
+/**
+ * Build the `proxmox` block for a host detail response. Returns null when
+ * the host has no proxmox_vmid set (i.e. it isn't a bridged in-guest agent).
+ * Pure — no side effects, safe to call from unit tests directly.
+ */
+export function getHostProxmoxBlock(db: Database.Database, hostId: string): ProxmoxBlock | null {
+  const row = db.prepare(
+    `SELECT proxmox_cluster_id, proxmox_node, proxmox_vmid, proxmox_guest_type
+     FROM hosts WHERE host_id = ?`
+  ).get(hostId) as { proxmox_cluster_id: string | null; proxmox_node: string | null; proxmox_vmid: number | null; proxmox_guest_type: string | null } | undefined;
+  if (!row || row.proxmox_vmid == null || row.proxmox_node == null) return null;
+
+  const snap = db.prepare(
+    `SELECT snapshot_count FROM pve_guest_snapshots WHERE host_id = ? AND guest_vmid = ?`
+  ).get(row.proxmox_node, row.proxmox_vmid) as { snapshot_count: number } | undefined;
+
+  const backup = db.prepare(
+    `SELECT last_backup_at FROM pve_guest_backups WHERE host_id = ? AND guest_vmid = ?`
+  ).get(row.proxmox_node, row.proxmox_vmid) as { last_backup_at: string | null } | undefined;
+
+  return {
+    cluster_id: row.proxmox_cluster_id,
+    node: row.proxmox_node,
+    vmid: row.proxmox_vmid,
+    guest_type: row.proxmox_guest_type,
+    snapshots_count: snap?.snapshot_count ?? 0,
+    last_backup_at: backup?.last_backup_at ?? null,
+  };
+}
+
+/**
+ * Resolve the host_id of the in-guest agent for a PVE container, identified
+ * by its container_id (e.g. "pve1/108"). Returns null when no host has set
+ * proxmox_node + proxmox_vmid that matches this guest's reporter + vmid.
+ * Pure — safe to call from unit tests directly.
+ */
+export function getContainerLinkedHostId(db: Database.Database, containerId: string): string | null {
+  // container_id for PVE guests is "<pveNode>/<vmid>" — parse to match hosts table.
+  const snap = db.prepare(
+    `SELECT host_id, guest_vmid FROM container_snapshots
+     WHERE container_id = ? AND guest_vmid IS NOT NULL
+     ORDER BY collected_at DESC LIMIT 1`
+  ).get(containerId) as { host_id: string; guest_vmid: number } | undefined;
+  if (!snap) return null;
+
+  const linked = db.prepare(
+    `SELECT host_id FROM hosts WHERE proxmox_node = ? AND proxmox_vmid = ? LIMIT 1`
+  ).get(snap.host_id, snap.guest_vmid) as { host_id: string } | undefined;
+  return linked?.host_id ?? null;
+}
+
 function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMinutes: number): any {
   const host = db.prepare(`
     SELECT host_id, first_seen, last_seen, runtime_type,
@@ -313,6 +373,15 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
   // bridge points at a PVE host that observes this guest. Null for hosts
   // whose agent doesn't have INSIGHTD_PROXMOX_NODE/_VMID set.
   const hypervisor = !isPve ? findHypervisorHostId(db, hostId) : null;
+  // Task 11: proxmox block for bridged in-guest agents (non-PVE hosts that
+  // have proxmox_vmid set via the bridge env vars). Best-effort — returns
+  // null when columns don't exist (standalone schema) or host isn't linked.
+  let proxmox = null;
+  try {
+    proxmox = getHostProxmoxBlock(db, hostId);
+  } catch {
+    // Standalone schema lacks proxmox_* columns — degrade gracefully.
+  }
   return {
     ...host,
     containers: getLatestContainers(db, hostId, onlineThresholdMinutes),
@@ -330,6 +399,7 @@ function getHostDetail(db: Database.Database, hostId: string, onlineThresholdMin
     pveZfsPools: isPve ? getPveZfsPools(db, hostId) : [],
     pveClusterStatus: isPve ? getPveClusterStatus(db, hostId) : null,
     pveHypervisor: hypervisor,  // null on non-bridged hosts
+    proxmox,  // null for non-bridged hosts; block with PVE link details when bridged
   };
 }
 
@@ -3465,4 +3535,4 @@ function getLogBursts(
   `).all(hostId, containerName, fromIso, toIso, limit) as any[];
 }
 
-module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview, getLogBursts, getLogPatternsForContainer, getPveGuestExtras };
+module.exports = { getHealth, getHosts, getHostDetail, getLatestContainers, getLatestContainer, getContainerImage, getLatestDisk, getLatestUpdates, getAlerts, getAlertsExplore, LEVEL_BY_ALERT_TYPE, getDashboard, getContainerHistory, getContainerAlerts, getLatestHostMetrics, getHostMetricsHistory, getContainerId, getHostRuntimeType, getUptimeTimeline, getResourceRankings, getTrends, getEvents, getDiskForecast, getDisksOverview, getVolumesOverview, getPvsOverview, getAllImageUpdates, getContainerDowntime, getK8sEventsForHost, getPodEvents, getNodeConditionsForHost, getClusterIdForHost, getRcaNeighbors, getNamespaceTopology, getClusterOverview, getLogBursts, getLogPatternsForContainer, getPveGuestExtras, getHostProxmoxBlock, getContainerLinkedHostId };
