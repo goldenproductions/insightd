@@ -8,6 +8,18 @@ import type {
 } from './types';
 import { LogsUnavailableError } from './types';
 
+export function parseQemuSmbios(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const m = raw.match(/(?:^|,)uuid=([0-9a-fA-F-]{36})/);
+  return m ? m[1].toLowerCase() : null;
+}
+
+export function parseLxcNet0Hwaddr(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const m = raw.match(/(?:^|,)hwaddr=([0-9a-fA-F:]{17})/i);
+  return m ? m[1].toLowerCase() : null;
+}
+
 const VALID_ACTIONS: ContainerAction[] = ['start', 'stop', 'restart', 'remove'];
 const ACTION_TIMEOUT_MS = 30_000;
 const LOG_TIMEOUT_MS = 10_000;
@@ -160,6 +172,25 @@ export class ProxmoxRuntime implements ContainerRuntime {
       // identity bridge does the same lookup keyed on `(node, vmid)` rather
       // than the container name, so renames in PVE don't break the link.
       const displayName = r.name && r.name.length > 0 ? r.name : String(r.vmid);
+
+      let guestUuid: string | null = null;
+      let guestPrimaryMac: string | null = null;
+      try {
+        if (r.type === 'qemu') {
+          const cfg = await pveApi<Record<string, unknown>>(
+            `/nodes/${encodeURIComponent(r.node)}/qemu/${r.vmid}/config`,
+          );
+          guestUuid = parseQemuSmbios(cfg?.smbios1 as string | undefined ?? null);
+        } else if (r.type === 'lxc') {
+          const cfg = await pveApi<Record<string, unknown>>(
+            `/nodes/${encodeURIComponent(r.node)}/lxc/${r.vmid}/config`,
+          );
+          guestPrimaryMac = parseLxcNet0Hwaddr(cfg?.net0 as string | undefined ?? null);
+        }
+      } catch (err) {
+        logger.info('proxmox', `Failed to fetch ${r.type} config for ${r.node}/${r.vmid}: ${(err as Error).message}`);
+      }
+
       guests.push({
         name: `${r.node}/${displayName}`,
         id: r.id,                                                // "lxc/200"
@@ -171,6 +202,8 @@ export class ProxmoxRuntime implements ContainerRuntime {
         guestType: r.type === 'qemu' ? 'qemu' : 'lxc',
         guestVmid: r.vmid ?? null,
         guestUptimeSeconds: r.uptime ?? null,
+        guestUuid,
+        guestPrimaryMac,
       });
     }
     return guests;
