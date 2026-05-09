@@ -754,6 +754,8 @@ function bootstrap(db: Database.Database): void {
   const row = db.prepare('SELECT value FROM meta WHERE key = ?').get('schema_version') as { value: string } | undefined;
   if (!row) {
     db.prepare('INSERT INTO meta (key, value) VALUES (?, ?)').run('schema_version', String(SCHEMA_VERSION));
+    // Run migrations for fresh installs too (fromVersion=0) to create indexes and other schema enhancements
+    migrate(db, 0);
     logger.info('schema', `Database bootstrapped at schema version ${SCHEMA_VERSION}`);
   } else {
     const currentVersion = parseInt(row.value, 10);
@@ -764,15 +766,6 @@ function bootstrap(db: Database.Database): void {
     } else {
       logger.info('schema', `Database at schema version ${row.value}`);
     }
-  }
-
-  // Create v51 indexes after all migrations have run (so columns exist)
-  try {
-    db.exec(`CREATE INDEX IF NOT EXISTS hosts_proxmox_link
-             ON hosts (proxmox_cluster_id, proxmox_vmid)
-             WHERE proxmox_vmid IS NOT NULL`);
-  } catch {
-    // Index already exists
   }
 }
 
