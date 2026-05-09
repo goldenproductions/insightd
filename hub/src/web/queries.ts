@@ -16,6 +16,8 @@ interface HostRow {
   host_group: string | null;
   host_group_override: string | null;
   is_online: number;
+  /** Lightweight proxmox identity — null when host isn't a bridged guest. */
+  proxmox?: { node: string; vmid: number; guest_type: string | null } | null;
 }
 
 interface HostDetailRow {
@@ -286,14 +288,39 @@ function getHealth(db: Database.Database): { status: string; uptime: number; ver
 }
 
 function getHosts(db: Database.Database, onlineThresholdMinutes: number): HostRow[] {
-  return db.prepare(`
-    SELECT host_id, first_seen, last_seen, agent_version, runtime_type,
-      COALESCE(host_group_override, host_group) AS host_group,
-      host_group_override,
-      CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
-        THEN 1 ELSE 0 END as is_online
-    FROM hosts ORDER BY host_id
-  `).all(onlineThresholdMinutes) as HostRow[];
+  // Try the extended query with proxmox identity columns (added in the
+  // proxmox-guest-host-correlation feature). Falls back to the base query on
+  // older schemas (e.g. standalone or test DBs that predate the migration).
+  try {
+    const rows = db.prepare(`
+      SELECT host_id, first_seen, last_seen, agent_version, runtime_type,
+        COALESCE(host_group_override, host_group) AS host_group,
+        host_group_override,
+        CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
+          THEN 1 ELSE 0 END as is_online,
+        proxmox_node, proxmox_vmid, proxmox_guest_type
+      FROM hosts ORDER BY host_id
+    `).all(onlineThresholdMinutes) as (HostRow & { proxmox_node: string | null; proxmox_vmid: number | null; proxmox_guest_type: string | null })[];
+    return rows.map(r => {
+      const { proxmox_node, proxmox_vmid, proxmox_guest_type, ...rest } = r;
+      return {
+        ...rest,
+        proxmox: (proxmox_node != null && proxmox_vmid != null)
+          ? { node: proxmox_node, vmid: proxmox_vmid, guest_type: proxmox_guest_type }
+          : null,
+      };
+    });
+  } catch {
+    // Older schema without proxmox_* columns — degrade gracefully.
+    return db.prepare(`
+      SELECT host_id, first_seen, last_seen, agent_version, runtime_type,
+        COALESCE(host_group_override, host_group) AS host_group,
+        host_group_override,
+        CASE WHEN datetime(last_seen, '+' || ? || ' minutes') > datetime('now')
+          THEN 1 ELSE 0 END as is_online
+      FROM hosts ORDER BY host_id
+    `).all(onlineThresholdMinutes) as HostRow[];
+  }
 }
 
 export interface ProxmoxBlock {

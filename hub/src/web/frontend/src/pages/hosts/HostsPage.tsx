@@ -373,7 +373,14 @@ function HostRow({ host, draggable, onDragStart, onDragEnd, onClick }: HostRowPr
       )}
       <StatusDot status={host.is_online ? 'online' : 'offline'} size="sm" />
       <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-semibold text-fg">{host.host_id}</div>
+        <div className="flex items-center gap-1.5 truncate">
+          <span className="truncate text-sm font-semibold text-fg">{host.host_id}</span>
+          {host.proxmox && (
+            <span className="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 font-mono text-[10px] text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+              {host.proxmox.node}:{host.proxmox.vmid}
+            </span>
+          )}
+        </div>
         <div className="truncate font-mono text-[11px] text-muted">
           {host.runtime_type ?? 'host'} · {host.is_online ? `seen ${timeAgo(host.last_seen)}` : `offline ${timeAgo(host.last_seen)}`}
         </div>

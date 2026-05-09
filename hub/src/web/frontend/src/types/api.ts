@@ -66,6 +66,12 @@ export interface Rankings {
 }
 
 // Hosts
+export interface HostProxmoxList {
+  node: string;
+  vmid: number;
+  guest_type: 'qemu' | 'lxc' | string | null;
+}
+
 export interface Host {
   host_id: string;
   first_seen: string;
@@ -75,6 +81,8 @@ export interface Host {
   runtime_type?: string;
   host_group?: string | null;
   host_group_override?: string | null;
+  /** Lightweight proxmox identity block for list views. Null when not bridged. */
+  proxmox?: HostProxmoxList | null;
 }
 
 export interface HostMetrics {
@@ -663,6 +671,15 @@ export interface PodEventsResponse {
   events: PodEvent[];
 }
 
+export interface HostProxmoxDetail {
+  cluster_id: string | null;
+  node: string;
+  vmid: number;
+  guest_type: 'qemu' | 'lxc' | string | null;
+  snapshots_count: number;
+  last_backup_at: string | null;
+}
+
 export interface HostDetail extends Host {
   containers: ContainerSnapshot[];
   disk: DiskSnapshot[];
@@ -684,6 +701,8 @@ export interface HostDetail extends Host {
    *  set, the host_id of the PVE hypervisor that observes this guest.
    *  Null on hosts without the bridge label. */
   pveHypervisor?: { pveHostId: string; containerName: string } | null;
+  /** Task 13 — full proxmox block for bridged in-guest hosts. Null when not bridged. */
+  proxmox?: HostProxmoxDetail | null;
 }
 
 export interface PveStoragePool {

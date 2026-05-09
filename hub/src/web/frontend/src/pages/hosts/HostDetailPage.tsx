@@ -27,6 +27,7 @@ import { BaselinesViewer } from '@/components/BaselinesViewer';
 import { ExploreDrawer } from '@/components/ExploreDrawer';
 import { HostUptimeHero } from '@/components/HostUptimeHero';
 import { TopologyLinkCard } from '@/components/TopologyLinkCard';
+import { HypervisorInfoCard } from '@/components/HypervisorInfoCard';
 import { getContainerNamespace } from '@/lib/containers';
 
 export function HostDetailPage() {
@@ -154,6 +155,14 @@ export function HostDetailPage() {
       </div>
 
       <HostUptimeHero data={data} timeline={timeline} />
+
+      {data.proxmox && data.pveHypervisor && (
+        <HypervisorInfoCard
+          proxmox={data.proxmox}
+          pveHostId={data.pveHypervisor.pveHostId}
+          containerName={data.pveHypervisor.containerName}
+        />
+      )}
 
       <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
 
