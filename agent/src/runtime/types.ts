@@ -86,6 +86,10 @@ export interface ContainerInfo {
   guestType?: 'lxc' | 'qemu' | null;
   /** PVE numeric VMID — stable cluster-wide identifier. */
   guestVmid?: number | null;
+  /** qemu only — SMBIOS system UUID */
+  guestUuid?: string | null;
+  /** qemu or lxc — first NIC MAC from PVE config */
+  guestPrimaryMac?: string | null;
   /** Per-guest uptime in seconds, from PVE. host_snapshots.uptime_seconds is
    *  the hypervisor's own uptime, not any individual guest's. */
   guestUptimeSeconds?: number | null;
