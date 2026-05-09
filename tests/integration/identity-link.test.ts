@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
-import { bootstrap } from '../../hub/src/db/schema';
-import { handleIdentityHint, rememberIdentityHint, rematchAllPendingHints } from '../../hub/src/mqtt';
+const { bootstrap } = require('../../hub/src/db/schema');
+const { handleIdentityHint, rememberIdentityHint, rematchAllPendingHints } = require('../../hub/src/mqtt');
 
 function seedHost(db: any, id: string, opts: { proxmoxClusterId?: string } = {}) {
   db.prepare(`INSERT INTO hosts (host_id, proxmox_cluster_id) VALUES (?, ?)`).run(id, opts.proxmoxClusterId ?? null);
