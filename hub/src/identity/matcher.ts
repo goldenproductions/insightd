@@ -8,14 +8,14 @@ export type IdentityHint = {
 };
 
 export type IdentityMatch = {
-  cluster_id: string;
+  cluster_id: string | null;
   node: string;
   vmid: number;
   guest_type: 'qemu' | 'lxc';
 };
 
 type GuestRow = {
-  cluster_id: string;
+  cluster_id: string | null;
   node: string;
   vmid: number;
   guest_type: 'qemu' | 'lxc';
@@ -43,9 +43,8 @@ function latestGuestSnapshots(db: Database.Database): GuestRow[] {
       cs.guest_primary_mac,
       cs.container_name
     FROM container_snapshots cs
-    JOIN hosts h ON h.host_id = cs.host_id
+    LEFT JOIN hosts h ON h.host_id = cs.host_id
     WHERE cs.guest_vmid IS NOT NULL
-      AND h.proxmox_cluster_id IS NOT NULL
       AND cs.collected_at = (
         SELECT MAX(cs2.collected_at)
           FROM container_snapshots cs2
