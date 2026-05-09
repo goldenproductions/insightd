@@ -34,23 +34,22 @@ type GuestRow = {
  */
 function latestGuestSnapshots(db: Database.Database): GuestRow[] {
   return db.prepare(`
-    SELECT
-      h.proxmox_cluster_id  AS cluster_id,
-      cs.host_id            AS node,
-      cs.guest_vmid         AS vmid,
-      cs.guest_type,
-      cs.guest_uuid,
-      cs.guest_primary_mac,
-      cs.container_name
-    FROM container_snapshots cs
-    LEFT JOIN hosts h ON h.host_id = cs.host_id
-    WHERE cs.guest_vmid IS NOT NULL
-      AND cs.collected_at = (
-        SELECT MAX(cs2.collected_at)
-          FROM container_snapshots cs2
-         WHERE cs2.host_id = cs.host_id
-           AND cs2.guest_vmid = cs.guest_vmid
+    SELECT cluster_id, node, vmid, guest_type, guest_uuid, guest_primary_mac, container_name
+      FROM (
+        SELECT
+          h.proxmox_cluster_id  AS cluster_id,
+          cs.host_id            AS node,
+          cs.guest_vmid         AS vmid,
+          cs.guest_type,
+          cs.guest_uuid,
+          cs.guest_primary_mac,
+          cs.container_name,
+          ROW_NUMBER() OVER (PARTITION BY cs.host_id, cs.guest_vmid ORDER BY cs.collected_at DESC) AS rn
+        FROM container_snapshots cs
+        LEFT JOIN hosts h ON h.host_id = cs.host_id
+        WHERE cs.guest_vmid IS NOT NULL
       )
+     WHERE rn = 1
   `).all() as GuestRow[];
 }
 
