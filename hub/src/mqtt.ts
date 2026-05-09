@@ -4,6 +4,8 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
+import { matchIdentityHint, type IdentityHint } from './identity/matcher';
+
 const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster, ingestPveGuestSnapshots, ingestPveBackups } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
@@ -276,6 +278,10 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         if (err) logger.error('mqtt', 'Failed to subscribe to pve-backups topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/pve-backups');
       });
+      client!.subscribe('insightd/+/identity-hint', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to identity-hint topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/identity-hint');
+      });
 
       if (!connected) {
         connected = true;
@@ -320,6 +326,8 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
           handlePveGuestSnapshots(db, hostId, payload);
         } else if (type === 'pve-backups') {
           handlePveBackups(db, hostId, payload);
+        } else if (type === 'identity-hint') {
+          handleIdentityHint(db, hostId, payload);
         } else if (type === 'logs' && parts[3] === 'response') {
           handleLogResponse(payload);
         } else if (type === 'update' && parts[3] === 'response') {
@@ -853,6 +861,35 @@ function handlePveBackups(db: Database.Database, hostId: string, payload: PveBac
   logger.info('mqtt', `Ingested ${items.length} PVE guest backup summaries from ${hostId}`);
 }
 
+export function handleIdentityHint(db: Database.Database, hostId: string, hint: IdentityHint): void {
+  // Bare = no-op. Don't clear last-known link; agent on bare metal might be
+  // misdetecting transiently, and preserving the link is safer than churn.
+  if (hint.virt_type === 'bare') return;
+
+  const result = matchIdentityHint(db, hostId, hint);
+
+  if (result) {
+    db.prepare(`UPDATE hosts
+                   SET proxmox_cluster_id = ?,
+                       proxmox_node       = ?,
+                       proxmox_vmid       = ?,
+                       proxmox_guest_type = ?
+                 WHERE host_id = ?`).run(result.cluster_id, result.node, result.vmid, result.guest_type, hostId);
+    logger.info('identity', `Linked host=${hostId} -> ${result.node}/${result.vmid} (${result.guest_type})`);
+  } else {
+    const existing = db.prepare(`SELECT proxmox_vmid FROM hosts WHERE host_id = ?`).get(hostId) as { proxmox_vmid: number | null } | undefined;
+    if (existing?.proxmox_vmid != null) {
+      db.prepare(`UPDATE hosts
+                     SET proxmox_cluster_id = NULL,
+                         proxmox_node       = NULL,
+                         proxmox_vmid       = NULL,
+                         proxmox_guest_type = NULL
+                   WHERE host_id = ?`).run(hostId);
+      logger.info('identity', `Cleared link for host=${hostId} (no PVE match)`);
+    }
+  }
+}
+
 function handleUpdates(db: Database.Database, hostId: string, payload: UpdatesPayload): void {
   const updates = (payload.updates || []).map(u => ({
     containerName: u.container_name,
@@ -1048,4 +1085,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot, handleIdentityHint };
