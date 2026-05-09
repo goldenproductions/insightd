@@ -316,6 +316,35 @@ const ENTRIES: GlossaryEntry[] = [
       ),
     ),
   },
+  {
+    id: 'hypervisor-link',
+    title: 'Hypervisor link',
+    category: 'Detectors',
+    blurb: 'This host runs as a VM/container on a Proxmox VE node — insightd sees both sides',
+    related: ['rca-neighbors'],
+    body: Group(
+      Para(
+        'When a host agent sets ',
+        Code('INSIGHTD_PROXMOX_NODE'),
+        ' and ',
+        Code('INSIGHTD_PROXMOX_VMID'),
+        ', insightd knows that this machine is actually a virtual machine or LXC container managed by a Proxmox VE hypervisor. The hypervisor info card shows the node, VM/CT ID, guest type, snapshot count, and last backup time — all pulled from the PVE side.',
+      ),
+      H('Why it matters'),
+      Para(
+        'You get two views of the same workload: ',
+        Strong('in-guest metrics'), ' (CPU, memory, load from inside the OS) and ',
+        Strong('hypervisor-side metadata'), ' (snapshots, backups, resource allocation). ',
+        'Correlating the two helps you distinguish a CPU spike caused by the workload itself from one caused by noisy-neighbour VM contention on the host.',
+      ),
+      H('How the link is established'),
+      List([
+        'The agent sets the bridge env vars at startup.',
+        'The hub matches them against PVE container snapshots already ingested from the hypervisor agent.',
+        'Once matched, the host detail page shows the hypervisor info card and a "View hypervisor view" link.',
+      ]),
+    ),
+  },
 ];
 
 export const GLOSSARY: Map<string, GlossaryEntry> = new Map(ENTRIES.map(e => [e.id, e]));

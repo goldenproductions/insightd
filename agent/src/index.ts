@@ -30,11 +30,16 @@ const { config, validate } = require('./config') as {
     pveVerifyTls: boolean;
     pveCaBundle: string;
     pveNode: string;
+    /** PR4 — in-guest identity bridge (set on the guest VM agent). */
+    proxmoxNode: string;
+    proxmoxVmid: string;
   };
   validate: () => string[];
 };
-const { connect, disconnect } = require('./mqtt') as { connect: (config: any, runtime: ContainerRuntime) => Promise<any>; disconnect: () => void };
-const { startAgentScheduler } = require('./scheduler') as { startAgentScheduler: (runtime: ContainerRuntime, config: any) => void };
+const { connect, disconnect, publishIdentityHint } = require('./mqtt') as { connect: (config: any, runtime: ContainerRuntime) => Promise<any>; disconnect: () => void; publishIdentityHint: (hostId: string, hint: any) => Promise<void> };
+const { collectIdentityHint } = require('./collectors/identity-hint') as { collectIdentityHint: () => any };
+const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
+const { startAgentScheduler, setLastIdentityHint } = require('./scheduler') as { startAgentScheduler: (runtime: ContainerRuntime, config: any) => void; setLastIdentityHint: (h: any) => void };
 
 async function main(): Promise<void> {
   logger.info('agent', `Starting insightd agent (host: ${config.hostId})...`);
@@ -77,6 +82,13 @@ async function main(): Promise<void> {
   if (runtime instanceof DockerRuntime) {
     const { cleanupOldContainers } = require('./updater') as { cleanupOldContainers: (docker: any) => Promise<void> };
     await cleanupOldContainers(runtime.getClient());
+  }
+
+  // Publish identity hint on startup (skip when manual Proxmox bridge override is set)
+  if (!config.proxmoxNode || !config.proxmoxVmid) {
+    const hint = collectIdentityHint();
+    await safeCollect('identity-hint', () => publishIdentityHint(config.hostId, hint));
+    setLastIdentityHint(hint);
   }
 
   // Start collection scheduler

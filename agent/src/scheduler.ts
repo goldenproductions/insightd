@@ -2,9 +2,10 @@ import fs = require('fs');
 import cron = require('node-cron');
 import logger = require('../../shared/utils/logger');
 import type { ContainerRuntime } from './runtime/types';
+import type { IdentityHint } from './collectors/identity-hint';
 
 const { safeCollect } = require('../../shared/utils/errors') as { safeCollect: <T>(label: string, fn: () => Promise<T>) => Promise<T | null> };
-const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, publishPveGuestSnapshots, publishPveBackups } = require('./mqtt') as {
+const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, publishPveGuestSnapshots, publishPveBackups, publishIdentityHint } = require('./mqtt') as {
   publishCollection: (hostId: string, data: any) => Promise<void>;
   publishUpdates: (hostId: string, updates: any[]) => Promise<void>;
   publishPvs: (clusterId: string, publisherHostId: string, pvs: any[]) => Promise<void>;
@@ -20,7 +21,19 @@ const { publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvent
   publishPveCluster: (hostId: string, status: any) => Promise<void>;
   publishPveGuestSnapshots: (hostId: string, items: any[]) => Promise<void>;
   publishPveBackups: (hostId: string, items: any[]) => Promise<void>;
+  publishIdentityHint: (hostId: string, hint: IdentityHint) => Promise<void>;
 };
+
+let lastIdentityHint: IdentityHint | null = null;
+
+export function setLastIdentityHint(h: IdentityHint): void { lastIdentityHint = h; }
+
+function identityHintChanged(a: IdentityHint, b: IdentityHint): boolean {
+  return a.virt_type !== b.virt_type
+      || a.system_uuid !== b.system_uuid
+      || a.hostname !== b.hostname
+      || a.primary_mac !== b.primary_mac;
+}
 
 interface SchedulerConfig {
   hostId: string;
@@ -188,6 +201,16 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
       }
     }
 
+    // Re-publish identity hint if it changed since startup (skip when manual override set)
+    if (!config.proxmoxNode || !config.proxmoxVmid) {
+      const { collectIdentityHint } = require('./collectors/identity-hint') as { collectIdentityHint: () => IdentityHint };
+      const current = collectIdentityHint();
+      if (lastIdentityHint && identityHintChanged(lastIdentityHint, current)) {
+        await safeCollect('identity-hint', () => publishIdentityHint(config.hostId, current));
+        lastIdentityHint = current;
+      }
+    }
+
     logger.info('scheduler', 'Collection cycle complete');
 
     // Publish to MQTT
@@ -265,4 +288,4 @@ function startAgentScheduler(runtime: ContainerRuntime, config: SchedulerConfig)
   }
 }
 
-module.exports = { startAgentScheduler };
+module.exports = { startAgentScheduler, setLastIdentityHint };

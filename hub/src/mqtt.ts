@@ -4,6 +4,9 @@ import logger = require('../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
+import { matchIdentityHint, type IdentityHint } from './identity/matcher';
+import { extractProxmoxLink } from './identity/labelExtractor';
+
 const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster, ingestPveGuestSnapshots, ingestPveBackups } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
   ingestDisk: (db: Database.Database, hostId: string, disk: any[]) => void;
@@ -77,6 +80,8 @@ interface CollectionPayload {
     /** v48 — Proxmox VE guest identity. NULL for Docker/k8s. */
     guest_type?: 'lxc' | 'qemu' | null;
     guest_vmid?: number | null;
+    guest_uuid?: string | null;
+    guest_primary_mac?: string | null;
     guest_uptime_seconds?: number | null;
   }>;
   disk?: Array<{
@@ -166,6 +171,21 @@ interface ActionResponsePayload {
 
 let client: MqttClient | null = null;
 const pendingLogRequests = new Map<string, PendingRequest<any[]>>();
+
+// Deferred identity hints: agents that publish before PVE inventory arrives land here.
+// On hub restart, retained MQTT messages will re-deliver the hints and refill this map.
+const pendingHints = new Map<string, IdentityHint>();
+
+export function rememberIdentityHint(hostId: string, hint: IdentityHint): void {
+  if (hint.virt_type === 'bare') { pendingHints.delete(hostId); return; }
+  pendingHints.set(hostId, hint);
+}
+
+export function rematchAllPendingHints(db: Database.Database): void {
+  for (const [hostId, hint] of pendingHints.entries()) {
+    handleIdentityHint(db, hostId, hint);
+  }
+}
 
 function startSubscriber(db: Database.Database, config: MqttConfig): Promise<MqttClient> {
   return new Promise((resolve, reject) => {
@@ -274,6 +294,10 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         if (err) logger.error('mqtt', 'Failed to subscribe to pve-backups topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/pve-backups');
       });
+      client!.subscribe('insightd/+/identity-hint', { qos: 1 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to identity-hint topic');
+        else logger.info('mqtt', 'Subscribed to insightd/+/identity-hint');
+      });
 
       if (!connected) {
         connected = true;
@@ -318,6 +342,9 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
           handlePveGuestSnapshots(db, hostId, payload);
         } else if (type === 'pve-backups') {
           handlePveBackups(db, hostId, payload);
+        } else if (type === 'identity-hint') {
+          rememberIdentityHint(hostId, payload);
+          handleIdentityHint(db, hostId, payload);
         } else if (type === 'logs' && parts[3] === 'response') {
           handleLogResponse(payload);
         } else if (type === 'update' && parts[3] === 'response') {
@@ -382,6 +409,8 @@ export function payloadContainerToSnapshot(c: NonNullable<CollectionPayload['con
     podConditions: c.pod_conditions ?? null,
     guestType: c.guest_type ?? null,
     guestVmid: c.guest_vmid ?? null,
+    guestUuid: c.guest_uuid ?? null,
+    guestPrimaryMac: c.guest_primary_mac ?? null,
     guestUptimeSeconds: c.guest_uptime_seconds ?? null,
   };
 }
@@ -429,8 +458,47 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
   }));
 
   upsertHost(db, hostId, payload.agent_version || null, payload.runtime_type || 'docker', payload.host_group ?? null, payload.host_labels ?? null);
+
+  // Manual Proxmox bridge: if the agent published label `insightd.proxmox.guest`
+  // (set via env vars INSIGHTD_PROXMOX_NODE + INSIGHTD_PROXMOX_VMID), populate
+  // proxmox_* columns directly — the auto-detect identity-hint path is skipped
+  // for these hosts (Task 6), so this is the only way they get linked.
+  const manualLink = extractProxmoxLink(payload.host_labels ?? null);
+  if (manualLink) {
+    const nodeRow = db.prepare(
+      `SELECT h.proxmox_cluster_id,
+              (SELECT cs.guest_type FROM container_snapshots cs
+               WHERE cs.host_id = ? AND cs.guest_vmid = ?
+               ORDER BY cs.collected_at DESC LIMIT 1) AS guest_type
+       FROM hosts h
+       WHERE h.host_id = ?`,
+    ).get(manualLink.node, manualLink.vmid, manualLink.node) as
+      | { proxmox_cluster_id: string | null; guest_type: string | null }
+      | undefined;
+    db.prepare(`UPDATE hosts
+                   SET proxmox_cluster_id = ?,
+                       proxmox_node       = ?,
+                       proxmox_vmid       = ?,
+                       proxmox_guest_type = ?
+                 WHERE host_id = ?`).run(
+      nodeRow?.proxmox_cluster_id ?? null,
+      manualLink.node,
+      manualLink.vmid,
+      nodeRow?.guest_type ?? null,
+      hostId,
+    );
+    logger.info('identity', `Manual label link host=${hostId} -> ${manualLink.node}/${manualLink.vmid}`);
+  }
+
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
+
+    // If this batch contained PVE guest rows, re-run any pending identity hints
+    // that were stored before PVE inventory was available.
+    const incomingHasGuestVmid = containers.some(c => c.guestVmid != null);
+    if (incomingHasGuestVmid) {
+      rematchAllPendingHints(db);
+    }
 
     // Fire background log fetches for containers that just went unhealthy
     if (unhealthyTransitions.length > 0) {
@@ -849,6 +917,35 @@ function handlePveBackups(db: Database.Database, hostId: string, payload: PveBac
   logger.info('mqtt', `Ingested ${items.length} PVE guest backup summaries from ${hostId}`);
 }
 
+export function handleIdentityHint(db: Database.Database, hostId: string, hint: IdentityHint): void {
+  // Bare = no-op. Don't clear last-known link; agent on bare metal might be
+  // misdetecting transiently, and preserving the link is safer than churn.
+  if (hint.virt_type === 'bare') return;
+
+  const result = matchIdentityHint(db, hostId, hint);
+
+  if (result) {
+    db.prepare(`UPDATE hosts
+                   SET proxmox_cluster_id = ?,
+                       proxmox_node       = ?,
+                       proxmox_vmid       = ?,
+                       proxmox_guest_type = ?
+                 WHERE host_id = ?`).run(result.cluster_id, result.node, result.vmid, result.guest_type, hostId);
+    logger.info('identity', `Linked host=${hostId} -> ${result.node}/${result.vmid} (${result.guest_type})`);
+  } else {
+    const existing = db.prepare(`SELECT proxmox_vmid FROM hosts WHERE host_id = ?`).get(hostId) as { proxmox_vmid: number | null } | undefined;
+    if (existing?.proxmox_vmid != null) {
+      db.prepare(`UPDATE hosts
+                     SET proxmox_cluster_id = NULL,
+                         proxmox_node       = NULL,
+                         proxmox_vmid       = NULL,
+                         proxmox_guest_type = NULL
+                   WHERE host_id = ?`).run(hostId);
+      logger.info('identity', `Cleared link for host=${hostId} (no PVE match)`);
+    }
+  }
+}
+
 function handleUpdates(db: Database.Database, hostId: string, payload: UpdatesPayload): void {
   const updates = (payload.updates || []).map(u => ({
     containerName: u.container_name,
@@ -1044,4 +1141,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot, handleIdentityHint, rememberIdentityHint, rematchAllPendingHints };
