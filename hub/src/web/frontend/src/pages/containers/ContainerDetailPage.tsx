@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
@@ -140,6 +140,8 @@ export function ContainerDetailPage() {
   const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState('overview');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const bypassRedirect = searchParams.get('bypass_redirect') === '1';
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
 
@@ -249,6 +251,22 @@ export function ContainerDetailPage() {
     disabled: !nextName,
     onTrigger: () => { if (nextName) goToSibling(nextName); },
   });
+
+  // Redirect PVE guests that have a linked host agent — show the richer host
+  // detail page instead. Skipped when bypass_redirect=1 (set by HostDetailPage's
+  // "View on hypervisor" link so users can always reach the raw PVE view).
+  useEffect(() => {
+    if (!data) return;
+    if (bypassRedirect) return;
+    if (data.linkedHostId && data.status === 'running') {
+      navigate(`/hosts/${encodeURIComponent(data.linkedHostId)}`, { replace: true });
+    }
+  }, [data, bypassRedirect, navigate]);
+
+  // Early return prevents flash of the PVE container UI before the redirect fires.
+  if (data?.linkedHostId && data.status === 'running' && !bypassRedirect) {
+    return null;
+  }
 
   if (error) return (
     <div className="space-y-4">

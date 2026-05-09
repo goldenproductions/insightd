@@ -621,6 +621,9 @@ export interface ContainerDetail extends ContainerSnapshot {
   runtime_type?: 'docker' | 'kubernetes' | 'proxmox' | string;
   /** v50 — backup + snapshot summary for PVE guests. Null for Docker/k8s. */
   pve_guest_extras?: PveGuestExtras | null;
+  /** Task 11 — host_id of the in-guest insightd agent for this PVE guest, when
+   *  one is registered and running. Null for Docker/k8s and unlinked PVE guests. */
+  linkedHostId: string | null;
   /** Latest image string from update_checks; null when the agent hasn't
    *  reported one yet. */
   image: string | null;
