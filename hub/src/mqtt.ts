@@ -5,6 +5,7 @@ import type Database from 'better-sqlite3';
 import type { MqttClient, IClientOptions } from 'mqtt';
 
 import { matchIdentityHint, type IdentityHint } from './identity/matcher';
+import { extractProxmoxLink } from './identity/labelExtractor';
 
 const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, ingestEvents, ingestIngresses, ingestServices, ingestPendingPods, ingestPodVolumes, ingestWorkloadRollouts, ingestNodeConditions, ingestUpdates, upsertHost, ingestHost, ingestPveStorage, ingestPveZfs, ingestPveCluster, ingestPveGuestSnapshots, ingestPveBackups } = require('./ingest') as {
   ingestContainers: (db: Database.Database, hostId: string, containers: any[]) => void;
@@ -441,6 +442,38 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
   }));
 
   upsertHost(db, hostId, payload.agent_version || null, payload.runtime_type || 'docker', payload.host_group ?? null, payload.host_labels ?? null);
+
+  // Manual Proxmox bridge: if the agent published label `insightd.proxmox.guest`
+  // (set via env vars INSIGHTD_PROXMOX_NODE + INSIGHTD_PROXMOX_VMID), populate
+  // proxmox_* columns directly — the auto-detect identity-hint path is skipped
+  // for these hosts (Task 6), so this is the only way they get linked.
+  const manualLink = extractProxmoxLink(payload.host_labels ?? null);
+  if (manualLink) {
+    const nodeRow = db.prepare(
+      `SELECT h.proxmox_cluster_id,
+              (SELECT cs.guest_type FROM container_snapshots cs
+               WHERE cs.host_id = ? AND cs.guest_vmid = ?
+               ORDER BY cs.collected_at DESC LIMIT 1) AS guest_type
+       FROM hosts h
+       WHERE h.host_id = ?`,
+    ).get(manualLink.node, manualLink.vmid, manualLink.node) as
+      | { proxmox_cluster_id: string | null; guest_type: string | null }
+      | undefined;
+    db.prepare(`UPDATE hosts
+                   SET proxmox_cluster_id = ?,
+                       proxmox_node       = ?,
+                       proxmox_vmid       = ?,
+                       proxmox_guest_type = ?
+                 WHERE host_id = ?`).run(
+      nodeRow?.proxmox_cluster_id ?? null,
+      manualLink.node,
+      manualLink.vmid,
+      nodeRow?.guest_type ?? null,
+      hostId,
+    );
+    logger.info('identity', `Manual label link host=${hostId} -> ${manualLink.node}/${manualLink.vmid}`);
+  }
+
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
 
