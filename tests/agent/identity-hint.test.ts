@@ -80,3 +80,51 @@ test('skips loopback and zero-MAC interfaces and docker bridges', () => {
 
   mock.restoreAll();
 });
+
+test('honors INSIGHTD_HOST_ROOT for LXC detection (agent in docker on host LXC)', () => {
+  // Container's /proc/1/environ doesn't have container=lxc (it's the agent
+  // process), but the host LXC's /proc/1/environ does. Reading via /host
+  // succeeds.
+  mockReadFile({
+    '/proc/1/environ': 'PATH=/usr/bin\0AGENT=insightd\0',           // agent container's PID 1
+    '/host/proc/1/environ': 'container=lxc\0HOME=/root\0',          // host LXC's PID 1
+    '/host/etc/hostname': 'AdGuard\n',                              // host LXC hostname
+  });
+  mock.method(os, 'hostname', () => 'docker-container-id-abc123');
+  mock.method(os, 'networkInterfaces', () => ({}));
+
+  const prev = process.env.INSIGHTD_HOST_ROOT;
+  process.env.INSIGHTD_HOST_ROOT = '/host';
+  try {
+    const hint = collectIdentityHint();
+    assert.equal(hint.virt_type, 'lxc');
+    assert.equal(hint.hostname, 'AdGuard');
+  } finally {
+    if (prev === undefined) delete process.env.INSIGHTD_HOST_ROOT;
+    else process.env.INSIGHTD_HOST_ROOT = prev;
+    mock.restoreAll();
+  }
+});
+
+test('honors INSIGHTD_HOST_ROOT for qemu UUID (agent in docker on host VM)', () => {
+  mockReadFile({
+    '/host/sys/class/dmi/id/sys_vendor': 'QEMU\n',
+    '/host/sys/class/dmi/id/product_uuid': 'aabbccdd-eeff-0011-2233-445566778899\n',
+    '/host/etc/hostname': 'n8n\n',
+  });
+  mock.method(os, 'hostname', () => 'docker-container-id-xyz');
+  mock.method(os, 'networkInterfaces', () => ({}));
+
+  const prev = process.env.INSIGHTD_HOST_ROOT;
+  process.env.INSIGHTD_HOST_ROOT = '/host';
+  try {
+    const hint = collectIdentityHint();
+    assert.equal(hint.virt_type, 'qemu');
+    assert.equal(hint.system_uuid, 'aabbccdd-eeff-0011-2233-445566778899');
+    assert.equal(hint.hostname, 'n8n');
+  } finally {
+    if (prev === undefined) delete process.env.INSIGHTD_HOST_ROOT;
+    else process.env.INSIGHTD_HOST_ROOT = prev;
+    mock.restoreAll();
+  }
+});
