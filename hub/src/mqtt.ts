@@ -172,6 +172,21 @@ interface ActionResponsePayload {
 let client: MqttClient | null = null;
 const pendingLogRequests = new Map<string, PendingRequest<any[]>>();
 
+// Deferred identity hints: agents that publish before PVE inventory arrives land here.
+// On hub restart, retained MQTT messages will re-deliver the hints and refill this map.
+const pendingHints = new Map<string, IdentityHint>();
+
+export function rememberIdentityHint(hostId: string, hint: IdentityHint): void {
+  if (hint.virt_type === 'bare') { pendingHints.delete(hostId); return; }
+  pendingHints.set(hostId, hint);
+}
+
+export function rematchAllPendingHints(db: Database.Database): void {
+  for (const [hostId, hint] of pendingHints.entries()) {
+    handleIdentityHint(db, hostId, hint);
+  }
+}
+
 function startSubscriber(db: Database.Database, config: MqttConfig): Promise<MqttClient> {
   return new Promise((resolve, reject) => {
     const opts: IClientOptions = {
@@ -328,6 +343,7 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         } else if (type === 'pve-backups') {
           handlePveBackups(db, hostId, payload);
         } else if (type === 'identity-hint') {
+          rememberIdentityHint(hostId, payload);
           handleIdentityHint(db, hostId, payload);
         } else if (type === 'logs' && parts[3] === 'response') {
           handleLogResponse(payload);
@@ -476,6 +492,13 @@ function handleCollection(db: Database.Database, hostId: string, payload: Collec
 
   if (containers.length > 0) {
     ingestContainers(db, hostId, containers);
+
+    // If this batch contained PVE guest rows, re-run any pending identity hints
+    // that were stored before PVE inventory was available.
+    const incomingHasGuestVmid = containers.some(c => c.guestVmid != null);
+    if (incomingHasGuestVmid) {
+      rematchAllPendingHints(db);
+    }
 
     // Fire background log fetches for containers that just went unhealthy
     if (unhealthyTransitions.length > 0) {
@@ -1118,4 +1141,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot, handleIdentityHint };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot, handleIdentityHint, rememberIdentityHint, rematchAllPendingHints };
