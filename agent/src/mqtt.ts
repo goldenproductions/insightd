@@ -4,6 +4,7 @@ import type { MqttClient, IClientOptions } from 'mqtt';
 import type { ContainerRuntime } from './runtime/types';
 import { LogsUnavailableError } from './runtime/types';
 import { DockerRuntime } from './runtime/docker';
+import type { IdentityHint } from './collectors/identity-hint';
 
 interface AgentConfig {
   hostId: string;
@@ -1023,6 +1024,32 @@ function publishUpdates(hostId: string, updates: UpdateData[]): Promise<void> {
   });
 }
 
+export function buildIdentityHintTopic(hostId: string): string {
+  return `insightd/${hostId}/identity-hint`;
+}
+
+export function buildIdentityHintPayload(hint: IdentityHint): string | null {
+  if (hint.virt_type === 'bare') return null;
+  return JSON.stringify(hint);
+}
+
+function publishIdentityHint(hostId: string, hint: IdentityHint): Promise<void> {
+  const payload = buildIdentityHintPayload(hint);
+  if (payload === null) return Promise.resolve();
+  const topic = buildIdentityHintTopic(hostId);
+  return new Promise((resolve, reject) => {
+    client!.publish(topic, payload, { qos: 1, retain: true }, (err) => {
+      if (err) {
+        logger.error('mqtt', `Failed to publish ${topic}: ${err.message}`);
+        reject(err);
+      } else {
+        logger.info('mqtt', `Published identity hint (${payload.length} bytes)`);
+        resolve();
+      }
+    });
+  });
+}
+
 function disconnect(): void {
   if (client) {
     client.end();
@@ -1030,4 +1057,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, publishPveGuestSnapshots, publishPveBackups, disconnect, containerInfoToPayload };
+module.exports = { connect, publishCollection, publishUpdates, publishPvs, publishPvcs, publishEvents, publishIngresses, publishPendingPods, publishServices, publishPodVolumes, publishWorkloadRollouts, publishPveStorage, publishPveZfs, publishPveCluster, publishPveGuestSnapshots, publishPveBackups, publishIdentityHint, disconnect, containerInfoToPayload, buildIdentityHintTopic, buildIdentityHintPayload };
