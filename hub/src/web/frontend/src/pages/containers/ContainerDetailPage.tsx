@@ -293,9 +293,10 @@ export function ContainerDetailPage() {
     if (!data) return;
     if (bypassRedirect) return;
     if (data.linkedHostId && data.status === 'running') {
-      navigate(`/hosts/${encodeURIComponent(data.linkedHostId)}`, { replace: true });
+      const qs = searchParams.toString();
+      navigate(`/hosts/${encodeURIComponent(data.linkedHostId)}${qs ? `?${qs}` : ''}`, { replace: true });
     }
-  }, [data, bypassRedirect, navigate]);
+  }, [data, bypassRedirect, navigate, searchParams]);
 
   // Early return prevents flash of the PVE container UI before the redirect fires.
   if (data?.linkedHostId && data.status === 'running' && !bypassRedirect) {
