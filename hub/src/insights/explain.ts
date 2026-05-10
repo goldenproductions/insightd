@@ -70,4 +70,124 @@ function buildSummary(insight: InsightRow): ExplanationSummary {
   return { lead, reasons, confidence: insight.confidence };
 }
 
-module.exports = { buildSummary };
+type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars';
+
+interface ChartPoint { ts: string; value: number }
+
+interface ChartData {
+  kind: ChartKind;
+  points: ChartPoint[];
+  compare?: ChartPoint[];
+  forecast?: { ts: string; lower: number; upper: number; mid: number }[];
+  uptime?: { from: string; to: string; up: boolean }[];
+  threshold?: number;
+  thresholdLabel?: string;
+  yLabel?: string;
+}
+
+function chartKindForCategory(category: string): ChartKind {
+  switch (category) {
+    case 'trend':        return 'week_overlay';
+    case 'prediction':   return 'forecast';
+    case 'availability': return 'uptime_bars';
+    default:             return 'sparkline';
+  }
+}
+
+function yLabelForMetric(metric: string | null): string | undefined {
+  if (!metric) return undefined;
+  if (metric.includes('percent')) return '%';
+  if (metric.includes('mb') || metric.includes('memory')) return 'MB';
+  if (metric.includes('load')) return 'load';
+  return undefined;
+}
+
+function thresholdLabelForCategory(category: string): string | undefined {
+  if (category === 'prediction') return 'Threshold (P90)';
+  if (category === 'trend')      return 'Last week';
+  if (category === 'availability') return 'Target';
+  return 'Baseline (P95)';
+}
+
+function fetchHostMetricSeries(
+  db: Database.Database, hostId: string, metric: string, fromIso: string, toIso: string,
+): ChartPoint[] {
+  if (metric === 'host.memory_percent') {
+    return db.prepare(`
+      SELECT collected_at AS ts,
+             CASE WHEN memory_total_mb > 0 THEN (memory_used_mb * 100.0 / memory_total_mb) ELSE NULL END AS value
+      FROM host_snapshots
+      WHERE host_id = ? AND collected_at BETWEEN ? AND ?
+      ORDER BY collected_at ASC
+    `).all(hostId, fromIso, toIso) as ChartPoint[];
+  }
+  const column = (() => {
+    if (metric === 'host.cpu_percent') return 'cpu_percent';
+    if (metric === 'host.load_5')      return 'load_5';
+    return null;
+  })();
+  if (!column) return [];
+  return db.prepare(`
+    SELECT collected_at AS ts, ${column} AS value
+    FROM host_snapshots
+    WHERE host_id = ? AND collected_at BETWEEN ? AND ? AND ${column} IS NOT NULL
+    ORDER BY collected_at ASC
+  `).all(hostId, fromIso, toIso) as ChartPoint[];
+}
+
+function fetchContainerMetricSeries(
+  db: Database.Database, entityId: string, metric: string, fromIso: string, toIso: string,
+): ChartPoint[] {
+  const [hostId, ...nameParts] = entityId.split('/');
+  const containerName = nameParts.join('/');
+  const column = (() => {
+    if (metric === 'container.cpu_percent') return 'cpu_percent';
+    if (metric === 'container.memory_mb')   return 'memory_mb';
+    return null;
+  })();
+  if (!column) return [];
+  return db.prepare(`
+    SELECT collected_at AS ts, ${column} AS value
+    FROM container_snapshots
+    WHERE host_id = ? AND container_name = ? AND collected_at BETWEEN ? AND ? AND ${column} IS NOT NULL
+    ORDER BY collected_at ASC
+  `).all(hostId, containerName, fromIso, toIso) as ChartPoint[];
+}
+
+function fetchSeries(
+  db: Database.Database, insight: InsightRow, fromIso: string, toIso: string,
+): ChartPoint[] {
+  if (!insight.metric) return [];
+  if (insight.entity_type === 'host') {
+    return fetchHostMetricSeries(db, insight.entity_id, insight.metric, fromIso, toIso);
+  }
+  if (insight.entity_type === 'container') {
+    return fetchContainerMetricSeries(db, insight.entity_id, insight.metric, fromIso, toIso);
+  }
+  return [];
+}
+
+function tsAt(date: Date): string {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function offsetIso(baseIso: string, hoursDelta: number): string {
+  const t = new Date(baseIso.replace(' ', 'T') + 'Z');
+  return tsAt(new Date(t.getTime() + hoursDelta * 60 * 60 * 1000));
+}
+
+function buildChart(db: Database.Database, insight: InsightRow): ChartData {
+  const kind = chartKindForCategory(insight.category);
+  const yLabel = yLabelForMetric(insight.metric);
+  const thresholdLabel = thresholdLabelForCategory(insight.category);
+  const threshold = insight.baseline_value ?? undefined;
+
+  if (kind === 'sparkline') {
+    const fromIso = offsetIso(insight.computed_at, -24);
+    const points = fetchSeries(db, insight, fromIso, insight.computed_at);
+    return { kind, points, threshold, thresholdLabel, yLabel };
+  }
+  return { kind, points: [], threshold, thresholdLabel, yLabel };
+}
+
+module.exports = { buildSummary, buildChart };

@@ -55,6 +55,43 @@ describe('insights explain', () => {
     db.close();
   });
 
+  describe('buildChart', () => {
+    it('returns a sparkline for a performance host insight', () => {
+      const insertSnap = db.prepare(`
+        INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, load_5, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (let i = 24; i >= 0; i--) {
+        const t = new Date(NOW.getTime() - i * 60 * 60 * 1000);
+        insertSnap.run('h1', 50 + i, 8000, 4000, 1.0, tsAt(t));
+      }
+      const insight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1', category: 'performance',
+        metric: 'host.cpu_percent', current_value: 74, baseline_value: 70,
+        title: 'High CPU', message: 'm', computed_at: tsAt(NOW),
+      });
+
+      const chart = explain.buildChart(db, insight);
+
+      assert.equal(chart.kind, 'sparkline');
+      assert.ok(chart.points.length > 0, 'expected non-empty points');
+      assert.equal(chart.threshold, 70);
+      assert.equal(chart.yLabel, '%');
+    });
+
+    it('returns sparkline kind for health and right_sizing', () => {
+      for (const category of ['health', 'right_sizing'] as const) {
+        const insight = seedInsight(db, {
+          entity_type: 'host', entity_id: 'h1', category,
+          metric: 'host.cpu_percent', title: 't', message: 'm',
+          computed_at: tsAt(NOW),
+        });
+        const chart = explain.buildChart(db, insight);
+        assert.equal(chart.kind, 'sparkline', `category=${category}`);
+      }
+    });
+  });
+
   describe('buildSummary', () => {
     it('synthesizes a summary for a capacity-based performance insight', () => {
       const insight = seedInsight(db, {
