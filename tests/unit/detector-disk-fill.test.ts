@@ -150,4 +150,24 @@ describe('detector — disk-fill ETA insights', () => {
     generateInsights(db);
     assert.equal(getDiskFillInsights().length, 0);
   });
+
+  it('fires a warning insight when disk fills in 8 days at 5 GB/day on a 100 GB disk at 60%', () => {
+    // 60 GB used today, growing 5 GB/day. Remaining = 40 GB → 8 days. Warning band.
+    // 7 daily samples spanning days 0..6, last - first = 6 * dailyGrowth.
+    // For dailyGrowth=5 we need startGb such that day-6 = 60. startGb = 60 - 5*6 = 30.
+    seedDisk({ totalGb: 100, startGb: 30, dailyGrowthGb: 5 });
+
+    generateInsights(db);
+
+    const insights = getDiskFillInsights();
+    assert.equal(insights.length, 1, `expected one disk-fill insight, got: ${JSON.stringify(insights)}`);
+    const i = insights[0]!;
+    assert.equal(i.entity_type, 'host');
+    assert.equal(i.entity_id, 'node-1');
+    assert.equal(i.severity, 'warning');
+    assert.equal(i.metric, 'disk_used_percent');
+    assert.match(i.title, /Disk "\/" on node-1 filling up/);
+    assert.match(i.message, /full in ~8 days/);
+    assert.equal(i.confidence, 'medium');
+  });
 });

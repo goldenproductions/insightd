@@ -8,14 +8,14 @@ import type Database from 'better-sqlite3';
  * category 'prediction'.
  */
 
+const FLOOR_USED_PERCENT = 50;
+const HORIZON_DAYS = 14;
+const CRITICAL_DAYS = 3;
+const MIN_DISK_GROWTH_GB = 0.05;       // 50 MB/day
+const MIN_PVE_GROWTH_BYTES = 50 * 1024 * 1024; // 50 MB/day
+
 export interface DailyAvg { day: string; avg: number }
 
-/**
- * Compute a daily-averaged growth slope from rows already grouped by
- * day and ordered ascending by day. Returns null when the trend fails any
- * of the consistency / minimum-growth filters. Mirrors the rejection
- * conditions of detector.ts::computeMetricTrend.
- */
 export function dailyTrend(
   daily: DailyAvg[],
   minAbsoluteGrowth: number,
@@ -39,9 +39,107 @@ export function dailyTrend(
   return { current: last, dailyGrowth, dayCount: daily.length };
 }
 
+interface DiskInsightInsert {
+  run(
+    entityType: string,
+    entityId: string,
+    category: string,
+    severity: 'critical' | 'warning' | 'info',
+    title: string,
+    message: string,
+    metric: string | null,
+    currentValue: number | null,
+    baselineValue: number | null,
+    evidence: string | null,
+    suggestedAction: string | null,
+    confidence: string | null,
+  ): { changes: number };
+}
+
+interface DiskRow { host_id: string; mount_point: string; total_gb: number; used_gb: number; used_percent: number }
+interface DailyDiskRow { day: string; avg: number | null }
+
+function generateDiskInsights(db: Database.Database, insert: DiskInsightInsert): number {
+  // Hoist all prepared statements outside the loop — compile once, run many.
+  const latestStmt = db.prepare(`
+    SELECT host_id, mount_point, total_gb, used_gb, used_percent
+    FROM disk_snapshots ds
+    WHERE collected_at = (
+      SELECT MAX(collected_at) FROM disk_snapshots
+      WHERE host_id = ds.host_id AND mount_point = ds.mount_point
+    )
+  `);
+  const dailyStmt = db.prepare(`
+    SELECT DATE(collected_at) AS day, AVG(used_gb) AS avg
+    FROM disk_snapshots
+    WHERE host_id = ? AND mount_point = ?
+      AND collected_at >= datetime('now', '-7 days')
+    GROUP BY DATE(collected_at)
+    ORDER BY day
+  `);
+  const alertStmt = db.prepare(`
+    SELECT 1 FROM alert_state
+    WHERE alert_type = ? AND host_id = ? AND target = ? AND resolved_at IS NULL
+    LIMIT 1
+  `);
+
+  let count = 0;
+  const latest = latestStmt.all() as DiskRow[];
+
+  for (const row of latest) {
+    if (!row.total_gb || row.total_gb <= 0) continue;
+    if (row.used_percent < FLOOR_USED_PERCENT) continue;
+    if (row.used_gb >= row.total_gb) continue;
+    if (alertStmt.get('disk_full', row.host_id, row.mount_point)) continue;
+
+    const daily = dailyStmt.all(row.host_id, row.mount_point) as DailyDiskRow[];
+    const cleaned = daily.filter((r): r is { day: string; avg: number } => r.avg != null);
+
+    const trend = dailyTrend(cleaned, MIN_DISK_GROWTH_GB);
+    if (!trend || trend.dailyGrowth <= 0) continue;
+
+    const remainingGb = row.total_gb - trend.current;
+    const daysUntil = Math.round(remainingGb / trend.dailyGrowth);
+    if (daysUntil <= 0 || daysUntil > HORIZON_DAYS) continue;
+
+    const severity: 'critical' | 'warning' = daysUntil <= CRITICAL_DAYS ? 'critical' : 'warning';
+    const dayWord = daysUntil === 1 ? 'day' : 'days';
+    const usedPct = round1((trend.current / row.total_gb) * 100);
+    const evidence = JSON.stringify({
+      mount_point: row.mount_point,
+      used_gb: round1(trend.current),
+      total_gb: round1(row.total_gb),
+      daily_growth_gb: round2(trend.dailyGrowth),
+      day_count: trend.dayCount,
+    });
+
+    insert.run(
+      'host', row.host_id, 'prediction', severity,
+      `Disk "${row.mount_point}" on ${row.host_id} filling up`,
+      `${row.mount_point} at ${usedPct}% (${round1(trend.current)}/${round1(row.total_gb)} GB), growing ${round2(trend.dailyGrowth)} GB/day — full in ~${daysUntil} ${dayWord}`,
+      'disk_used_percent', usedPct, 100, evidence,
+      `Check largest consumers: \`du -h ${row.mount_point} | sort -h | tail -20\`. Common causes: log rotation broken, container volumes, package cache.`,
+      'medium',
+    );
+    count++;
+  }
+  return count;
+}
+
+function round1(n: number): number { return Math.round(n * 10) / 10; }
+function round2(n: number): number { return Math.round(n * 100) / 100; }
+
 export function generateDiskFillInsights(db: Database.Database): number {
-  void db;
-  return 0;
+  const insert: DiskInsightInsert = db.prepare(`
+    INSERT INTO insights
+      (entity_type, entity_id, category, severity, title, message,
+       metric, current_value, baseline_value, evidence,
+       suggested_action, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `) as unknown as DiskInsightInsert;
+  let count = 0;
+  count += generateDiskInsights(db, insert);
+  return count;
 }
 
 module.exports = { generateDiskFillInsights, dailyTrend };
