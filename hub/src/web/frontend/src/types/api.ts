@@ -1117,6 +1117,60 @@ export interface InsightFeedback {
   created_at: string;
 }
 
+export type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars';
+
+export interface ExplainChartPoint {
+  ts: string;
+  value: number;
+}
+
+export interface ExplainForecastPoint {
+  ts: string;
+  lower: number;
+  upper: number;
+  mid: number;
+}
+
+export interface ExplainUptimeInterval {
+  from: string;
+  to: string;
+  up: boolean;
+}
+
+export interface ExplainChart {
+  kind: ChartKind;
+  points: ExplainChartPoint[];
+  compare?: ExplainChartPoint[];
+  forecast?: ExplainForecastPoint[];
+  uptime?: ExplainUptimeInterval[];
+  threshold?: number;
+  thresholdLabel?: string;
+  yLabel?: string;
+}
+
+export type TimelineKind = 'log_burst' | 'alert_fired' | 'restart' | 'threshold_cross' | 'event';
+
+export interface ExplainTimelineMarker {
+  ts: string;
+  kind: TimelineKind;
+  label: string;
+  detail?: string;
+  severity?: 'critical' | 'warning' | 'info';
+  href?: string;
+}
+
+export interface ExplainSummary {
+  lead: string;
+  reasons: string[];
+  confidence: 'high' | 'medium' | 'low' | null;
+}
+
+export interface InsightExplanation {
+  summary: ExplainSummary;
+  chart: ExplainChart;
+  timeline: ExplainTimelineMarker[];
+}
+
 /** Percentile subset used by analogies and ratings (no metadata fields) */
 export type BaselinePercentiles = Pick<BaselineRow, 'p50' | 'p75' | 'p90' | 'p95' | 'p99'>;
 
