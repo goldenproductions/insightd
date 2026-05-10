@@ -3,18 +3,22 @@ import assert from 'node:assert/strict';
 const { buildPveInstallCommand } = require('../../hub/src/web/frontend/src/pages/add-agent/builders/pve');
 
 describe('buildPveInstallCommand', () => {
-  it('emits a curl-pipe-bash one-liner with required env vars', () => {
+  it('emits a curl-pipe-bash one-liner with required env vars after the pipe', () => {
     const out = buildPveInstallCommand({
       identifier: 'proxmox-01',
       broker: { url: 'mqtt://hub:1883' },
       permissions: { allowUpdates: true, allowActions: true },
       advanced: {},
     });
-    assert.match(out, /curl -fsSL https:\/\/get\.insightd\.org\/install/);
-    assert.match(out, /INSIGHTD_HOST_ID=proxmox-01/);
-    assert.match(out, /INSIGHTD_MQTT_URL=mqtt:\/\/hub:1883/);
-    assert.match(out, /INSIGHTD_ALLOW_UPDATES=true/);
-    assert.match(out, /\| bash$/);
+    const pipeIdx = out.indexOf('| ');
+    assert.ok(pipeIdx > 0, 'output must contain a pipe');
+    const before = out.slice(0, pipeIdx);
+    const after  = out.slice(pipeIdx);
+    assert.match(before, /^curl -fsSL https:\/\/get\.insightd\.org\/install /);
+    assert.match(after,  /INSIGHTD_HOST_ID=proxmox-01/);
+    assert.match(after,  /INSIGHTD_MQTT_URL=mqtt:\/\/hub:1883/);
+    assert.match(after,  /INSIGHTD_ALLOW_UPDATES=true/);
+    assert.match(after,  /bash$/);
   });
 
   it('omits MQTT_USER and MQTT_PASS when not provided', () => {

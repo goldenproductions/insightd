@@ -30,7 +30,7 @@ export function buildPveInstallCommand(i: PveCommandInputs): string {
   pushAdvanced(envs, 'INSIGHTD_LOG_LINES',           a.logLines,        '100');
   pushAdvanced(envs, 'INSIGHTD_LOG_MAX_LINES',       a.logMaxLines,     '1000');
   if (a.image) envs.push(`INSIGHTD_IMAGE=${a.image}`);
-  return `${envs.join(' ')} curl -fsSL https://get.insightd.org/install | bash`;
+  return `curl -fsSL https://get.insightd.org/install | ${envs.join(' ')} bash`;
 }
 
 function pushAdvanced(envs: string[], name: string, value: string | undefined, defaultValue: string): void {
