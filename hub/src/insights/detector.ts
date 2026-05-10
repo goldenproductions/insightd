@@ -386,6 +386,9 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
   const { generateProxmoxInsights } = require('./proxmox-checks') as typeof import('./proxmox-checks');
   count += generateProxmoxInsights(db, insert);
 
+  const { generateDiskFillInsights } = require('./disk-fill') as typeof import('./disk-fill');
+  count += generateDiskFillInsights(db);
+
   // --- Correlation enrichment ---
   enrichInsightsWithCorrelations(db);
 
