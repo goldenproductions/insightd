@@ -4,7 +4,7 @@
 // types in src/types/api.ts (hand-copied; no shared module across the CJS
 // backend / ESM frontend boundary, matching the existing pattern).
 
-export type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars';
+export type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars' | 'restart_histogram';
 
 export interface ChartPoint {
   ts: string;     // ISO-ish "YYYY-MM-DD HH:MM:SS" (matches snapshot collected_at)

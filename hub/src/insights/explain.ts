@@ -70,7 +70,7 @@ function buildSummary(insight: InsightRow): ExplanationSummary {
   return { lead, reasons, confidence: insight.confidence };
 }
 
-type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars';
+type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars' | 'restart_histogram';
 
 interface ChartPoint { ts: string; value: number }
 
@@ -262,6 +262,22 @@ function parseForecastMeta(evidence: string | null): { horizon_hours: number; mi
   return null;
 }
 
+function bucketRestartsByHour(deltas: { ts: string; delta: number }[], fromIso: string, toIso: string): ChartPoint[] {
+  const fromMs = new Date(fromIso.replace(' ', 'T') + 'Z').getTime();
+  const toMs   = new Date(toIso.replace(' ', 'T') + 'Z').getTime();
+  const hours = Math.max(1, Math.ceil((toMs - fromMs) / 3_600_000));
+  const buckets = new Array(hours).fill(0);
+  for (const d of deltas) {
+    const tMs = new Date(d.ts.replace(' ', 'T') + 'Z').getTime();
+    const idx = Math.min(hours - 1, Math.max(0, Math.floor((tMs - fromMs) / 3_600_000)));
+    buckets[idx] += d.delta;
+  }
+  return buckets.map((value, i) => ({
+    ts: tsAt(new Date(fromMs + i * 3_600_000)),
+    value,
+  }));
+}
+
 function buildChart(db: Database.Database, insight: InsightRow): ChartData {
   const kind = chartKindForCategory(insight.category);
   const yLabel = yLabelForMetric(insight.metric);
@@ -283,6 +299,15 @@ function buildChart(db: Database.Database, insight: InsightRow): ChartData {
   }
   if (kind === 'uptime_bars') {
     const fromIso = offsetIso(insight.computed_at, -24);
+    if (insight.entity_type === 'container') {
+      const [hostId, ...nameParts] = insight.entity_id.split('/');
+      const containerName = nameParts.join('/');
+      const deltas = fetchContainerRestartDeltas(db, hostId, containerName, fromIso, insight.computed_at);
+      if (deltas.length > 0) {
+        const points = bucketRestartsByHour(deltas, fromIso, insight.computed_at);
+        return { kind: 'restart_histogram', points };
+      }
+    }
     const uptime = buildUptimeIntervals(db, insight.entity_id, fromIso, insight.computed_at);
     return { kind, points: [], uptime, thresholdLabel: 'Target' };
   }

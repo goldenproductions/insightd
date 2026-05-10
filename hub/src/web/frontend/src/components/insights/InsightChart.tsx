@@ -6,12 +6,14 @@ import { Sparkline } from './charts/Sparkline';
 import { WeekOverlay } from './charts/WeekOverlay';
 import { Forecast } from './charts/Forecast';
 import { UptimeBars } from './charts/UptimeBars';
+import { RestartHistogram } from './charts/RestartHistogram';
 
 export default function InsightChart({ chart }: { chart: ExplainChart }) {
   switch (chart.kind) {
-    case 'sparkline':    return <Sparkline   chart={chart} />;
-    case 'week_overlay': return <WeekOverlay chart={chart} />;
-    case 'forecast':     return <Forecast    chart={chart} />;
-    case 'uptime_bars':  return <UptimeBars  chart={chart} />;
+    case 'sparkline':          return <Sparkline          chart={chart} />;
+    case 'week_overlay':       return <WeekOverlay        chart={chart} />;
+    case 'forecast':           return <Forecast           chart={chart} />;
+    case 'uptime_bars':        return <UptimeBars         chart={chart} />;
+    case 'restart_histogram':  return <RestartHistogram   chart={chart} />;
   }
 }
