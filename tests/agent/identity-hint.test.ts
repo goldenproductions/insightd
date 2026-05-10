@@ -128,3 +128,51 @@ test('honors INSIGHTD_HOST_ROOT for qemu UUID (agent in docker on host VM)', () 
     mock.restoreAll();
   }
 });
+
+test('falls back to LXC via hostname-diff when /host/proc/1/environ is unreadable (unprivileged LXC namespace)', () => {
+  // In docker-on-unprivileged-PVE-LXC, /host/proc/1/environ returns EACCES
+  // because the docker container's "root" doesn't match the host LXC's "root"
+  // in the user-namespace mapping. DMI shows the bare-metal hypervisor (e.g.
+  // FUJITSU), not QEMU. But /host/etc/hostname IS world-readable.
+  mockReadFile({
+    '/sys/class/dmi/id/sys_vendor': 'FUJITSU\n',
+    '/host/sys/class/dmi/id/sys_vendor': 'FUJITSU\n',
+    // /host/proc/1/environ deliberately omitted -> ENOENT (mocks EACCES)
+    '/host/etc/hostname': 'AdGuard\n',
+  });
+  mock.method(os, 'hostname', () => 'docker-container-id-abc');
+  mock.method(os, 'networkInterfaces', () => ({}));
+
+  const prev = process.env.INSIGHTD_HOST_ROOT;
+  process.env.INSIGHTD_HOST_ROOT = '/host';
+  try {
+    const hint = collectIdentityHint();
+    assert.equal(hint.virt_type, 'lxc');
+    assert.equal(hint.hostname, 'AdGuard');
+  } finally {
+    if (prev === undefined) delete process.env.INSIGHTD_HOST_ROOT;
+    else process.env.INSIGHTD_HOST_ROOT = prev;
+    mock.restoreAll();
+  }
+});
+
+test('hostname-diff fallback does NOT trigger when host hostname matches container hostname (bare metal with /host=/) ', () => {
+  mockReadFile({
+    '/sys/class/dmi/id/sys_vendor': 'FUJITSU\n',
+    '/host/sys/class/dmi/id/sys_vendor': 'FUJITSU\n',
+    '/host/etc/hostname': 'samebox\n',
+  });
+  mock.method(os, 'hostname', () => 'samebox');
+  mock.method(os, 'networkInterfaces', () => ({}));
+
+  const prev = process.env.INSIGHTD_HOST_ROOT;
+  process.env.INSIGHTD_HOST_ROOT = '/host';
+  try {
+    const hint = collectIdentityHint();
+    assert.equal(hint.virt_type, 'bare');
+  } finally {
+    if (prev === undefined) delete process.env.INSIGHTD_HOST_ROOT;
+    else process.env.INSIGHTD_HOST_ROOT = prev;
+    mock.restoreAll();
+  }
+});
