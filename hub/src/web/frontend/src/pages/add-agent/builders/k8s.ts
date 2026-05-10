@@ -43,17 +43,26 @@ metadata:
   name: insightd-agent
 rules:
   - apiGroups: [""]
-    resources: ["nodes", "nodes/stats", "nodes/proxy", "pods", "events", "persistentvolumes", "persistentvolumeclaims", "services"]
+    resources: ["pods", "pods/log"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes/metrics", "nodes/stats", "nodes/proxy"]
+    verbs: ["get"]
   - apiGroups: ["apps"]
-    resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+    resources: ["replicasets", "deployments", "statefulsets", "daemonsets"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["jobs", "cronjobs"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes", "persistentvolumeclaims", "services"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -63,6 +72,30 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: insightd-agent
+subjects:
+  - kind: ServiceAccount
+    name: insightd-agent
+    namespace: insightd
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: insightd-agent-lease
+  namespace: insightd
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: insightd-agent-lease
+  namespace: insightd
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: insightd-agent-lease
 subjects:
   - kind: ServiceAccount
     name: insightd-agent
@@ -108,8 +141,7 @@ spec:
               value: ${identifier}
             - name: INSIGHTD_MQTT_URL
               value: ${broker.url}
-${extraEnv.map(s => '            ' + s.replace(/\n/g, '\n            ')).join('\n')}
-EOF`;
+${extraEnv.length === 0 ? '' : extraEnv.map(s => '            ' + s.replace(/\n/g, '\n            ')).join('\n') + '\n'}EOF`;
 
   return `kubectl apply -f - <<EOF
 ${manifest}`;

@@ -71,4 +71,17 @@ describe('buildK8sManifest', () => {
     assert.match(out, /name: TZ\s*\n\s*value: Europe\/Oslo/);
     assert.doesNotMatch(out, /INSIGHTD_DISK_WARN_THRESHOLD/);
   });
+
+  it('includes pods/log, nodes/metrics, replicasets, and leader-election lease role', () => {
+    const out = buildK8sManifest({
+      identifier: 'c', broker: { url: 'mqtt://h:1883' },
+      permissions: { allowActions: true }, advanced: {},
+    });
+    assert.match(out, /resources:.*pods\/log/);
+    assert.match(out, /resources:.*nodes\/metrics/);
+    assert.match(out, /resources:.*replicasets/);
+    assert.match(out, /name: insightd-agent-lease/);
+    assert.match(out, /apiGroups:.*coordination\.k8s\.io/);
+    assert.match(out, /resources:.*leases/);
+  });
 });
