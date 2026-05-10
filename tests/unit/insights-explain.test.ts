@@ -173,6 +173,52 @@ describe('insights explain', () => {
     });
   });
 
+  describe('buildTimeline', () => {
+    it('merges log bursts, alert fires, restart deltas, and threshold crossings, sorted oldest→newest, capped at 25', () => {
+      const burstTs = tsAt(new Date(NOW.getTime() - 30 * 60 * 1000));
+      const insight = seedInsight(db, {
+        entity_type: 'container', entity_id: 'h1/api',
+        category: 'performance', metric: 'container.cpu_percent',
+        current_value: 95, baseline_value: 70,
+        evidence: JSON.stringify({
+          lines: ['m'],
+          log_bursts: [{
+            id: 1, template_id: 1, template: 'oom kill',
+            semantic_tag: 'oom', ts: burstTs, batch_count: 3,
+            baseline_rate: 0.1, intensity: 30,
+          }],
+        }),
+        title: 't', message: 'm', computed_at: tsAt(NOW),
+      });
+      db.prepare(`
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, resolved_at)
+        VALUES ('h1', 'container_high_cpu', 'h1/api', ?, NULL)
+      `).run(tsAt(new Date(NOW.getTime() - 10 * 60 * 1000)));
+      const insertSnap = db.prepare(`
+        INSERT INTO container_snapshots
+          (host_id, container_name, container_id, status, cpu_percent, restart_count, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      insertSnap.run('h1', 'api', 'abc', 'running', 50, 0, tsAt(new Date(NOW.getTime() - 60 * 60 * 1000)));
+      insertSnap.run('h1', 'api', 'abc', 'running', 95, 1, tsAt(new Date(NOW.getTime() - 50 * 60 * 1000)));
+      const points = [
+        { ts: tsAt(new Date(NOW.getTime() - 40 * 60 * 1000)), value: 60 },
+        { ts: tsAt(new Date(NOW.getTime() - 30 * 60 * 1000)), value: 80 },
+      ];
+
+      const tl = explain.buildTimeline(db, insight, points);
+
+      const kinds = tl.map((m: any) => m.kind);
+      assert.ok(kinds.includes('log_burst'), `kinds=${kinds.join(',')}`);
+      assert.ok(kinds.includes('alert_fired'), `kinds=${kinds.join(',')}`);
+      assert.ok(kinds.includes('restart'), `kinds=${kinds.join(',')}`);
+      assert.ok(kinds.includes('threshold_cross'), `kinds=${kinds.join(',')}`);
+      const tsList = tl.map((m: any) => m.ts);
+      assert.deepEqual([...tsList].sort(), tsList);
+      assert.ok(tl.length <= 25, `cap exceeded: ${tl.length}`);
+    });
+  });
+
   describe('buildSummary', () => {
     it('synthesizes a summary for a capacity-based performance insight', () => {
       const insight = seedInsight(db, {

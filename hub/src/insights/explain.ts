@@ -280,4 +280,96 @@ function buildChart(db: Database.Database, insight: InsightRow): ChartData {
   return { kind, points: [], threshold, thresholdLabel, yLabel };
 }
 
-module.exports = { buildSummary, buildChart };
+type TimelineKind = 'log_burst' | 'alert_fired' | 'restart' | 'threshold_cross' | 'event';
+
+interface TimelineMarker {
+  ts: string;
+  kind: TimelineKind;
+  label: string;
+  detail?: string;
+  severity?: 'critical' | 'warning' | 'info';
+  href?: string;
+}
+
+function parseLogBursts(evidence: string | null): { ts: string; template: string; semantic_tag: string | null; batch_count: number }[] {
+  if (!evidence) return [];
+  try {
+    const p = JSON.parse(evidence);
+    if (p && typeof p === 'object' && Array.isArray(p.log_bursts)) return p.log_bursts;
+  } catch { /* ignore */ }
+  return [];
+}
+
+function fetchAlertFires(db: Database.Database, target: string, fromIso: string, toIso: string) {
+  return db.prepare(`
+    SELECT alert_type, triggered_at AS ts
+    FROM alert_state
+    WHERE target = ? AND triggered_at BETWEEN ? AND ?
+    ORDER BY triggered_at ASC
+  `).all(target, fromIso, toIso) as { alert_type: string; ts: string }[];
+}
+
+function fetchContainerRestartDeltas(
+  db: Database.Database, hostId: string, containerName: string, fromIso: string, toIso: string,
+): { ts: string; delta: number }[] {
+  const rows = db.prepare(`
+    SELECT collected_at AS ts, restart_count
+    FROM container_snapshots
+    WHERE host_id = ? AND container_name = ? AND collected_at BETWEEN ? AND ?
+    ORDER BY collected_at ASC
+  `).all(hostId, containerName, fromIso, toIso) as { ts: string; restart_count: number }[];
+  const out: { ts: string; delta: number }[] = [];
+  for (let i = 1; i < rows.length; i++) {
+    const delta = rows[i].restart_count - rows[i - 1].restart_count;
+    if (delta > 0) out.push({ ts: rows[i].ts, delta });
+  }
+  return out;
+}
+
+function thresholdCrossings(points: ChartPoint[], threshold: number | undefined): ChartPoint[] {
+  if (threshold == null || points.length < 2) return [];
+  const out: ChartPoint[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1].value;
+    const curr = points[i].value;
+    if ((prev <= threshold && curr > threshold) || (prev >= threshold && curr < threshold)) {
+      out.push(points[i]);
+    }
+  }
+  return out;
+}
+
+function buildTimeline(
+  db: Database.Database, insight: InsightRow, chartPoints: ChartPoint[],
+): TimelineMarker[] {
+  const fromIso = offsetIso(insight.computed_at, -24);
+  const toIso = insight.computed_at;
+  const markers: TimelineMarker[] = [];
+
+  for (const b of parseLogBursts(insight.evidence)) {
+    markers.push({
+      ts: b.ts, kind: 'log_burst',
+      label: b.semantic_tag ?? 'Log spike',
+      detail: `${b.template} ×${b.batch_count}`,
+      severity: 'warning',
+    });
+  }
+  for (const a of fetchAlertFires(db, insight.entity_id, fromIso, toIso)) {
+    markers.push({ ts: a.ts, kind: 'alert_fired', label: a.alert_type, severity: 'critical' });
+  }
+  if (insight.entity_type === 'container') {
+    const [hostId, ...rest] = insight.entity_id.split('/');
+    const containerName = rest.join('/');
+    for (const r of fetchContainerRestartDeltas(db, hostId, containerName, fromIso, toIso)) {
+      markers.push({ ts: r.ts, kind: 'restart', label: `+${r.delta} restart${r.delta > 1 ? 's' : ''}`, severity: 'warning' });
+    }
+  }
+  for (const c of thresholdCrossings(chartPoints, insight.baseline_value ?? undefined)) {
+    markers.push({ ts: c.ts, kind: 'threshold_cross', label: 'Crossed threshold', severity: 'info' });
+  }
+
+  markers.sort((a, b) => a.ts.localeCompare(b.ts));
+  return markers.length > 25 ? markers.slice(markers.length - 25) : markers;
+}
+
+module.exports = { buildSummary, buildChart, buildTimeline };
