@@ -23,7 +23,7 @@ const EndpointDetailPage = lazy(() => import('@/pages/EndpointDetailPage').then(
 const EndpointFormPage = lazy(() => import('@/pages/EndpointFormPage').then(m => ({ default: m.EndpointFormPage })));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage').then(m => ({ default: m.SettingsPage })));
 const LoginPage = lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
-const AddAgentPage = lazy(() => import('@/pages/AddAgentPage').then(m => ({ default: m.AddAgentPage })));
+const AddAgentPage = lazy(() => import('@/pages/add-agent/AddAgentPage').then(m => ({ default: m.AddAgentPage })));
 const LogSplitPage = lazy(() => import('@/pages/LogSplitPage').then(m => ({ default: m.LogSplitPage })));
 const WebhooksPage = lazy(() => import('@/pages/WebhooksPage').then(m => ({ default: m.WebhooksPage })));
 const UpdatesPage = lazy(() => import('@/pages/updates/UpdatesPage').then(m => ({ default: m.UpdatesPage })));

@@ -146,3 +146,6 @@ data/
 *.db-shm
 mosquitto-passwd
 insightd.dev/
+
+# Superpowers brainstorming session artifacts
+.superpowers/
