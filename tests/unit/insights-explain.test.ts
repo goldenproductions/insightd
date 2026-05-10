@@ -75,5 +75,49 @@ describe('insights explain', () => {
         `expected current value in reasons; got ${JSON.stringify(summary.reasons)}`,
       );
     });
+
+    it('preserves diagnosis-engine evidence order when present', () => {
+      const evidenceObj = {
+        lines: ['OOM kills detected in last 30m', 'Memory above 95% for 3h', 'Restart loop pattern'],
+        log_bursts: [],
+      };
+      const insight = seedInsight(db, {
+        entity_type: 'container', entity_id: 'h1/api',
+        category: 'health', title: 'Container unhealthy', message: 'fails health check',
+        evidence: JSON.stringify(evidenceObj), confidence: 'high',
+        computed_at: tsAt(NOW),
+      });
+
+      const summary = explain.buildSummary(insight);
+
+      assert.deepEqual(summary.reasons, evidenceObj.lines);
+      assert.equal(summary.confidence, 'high');
+    });
+
+    it('tolerates legacy string-array evidence shape', () => {
+      const insight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1', category: 'health',
+        title: 't', message: 'm',
+        evidence: JSON.stringify(['legacy reason 1', 'legacy reason 2']),
+        computed_at: tsAt(NOW),
+      });
+
+      const summary = explain.buildSummary(insight);
+
+      assert.deepEqual(summary.reasons, ['legacy reason 1', 'legacy reason 2']);
+    });
+
+    it('falls back to synthesis when evidence JSON is malformed', () => {
+      const insight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1', category: 'performance',
+        metric: 'host.cpu_percent', current_value: 80,
+        evidence: 'not-json',
+        title: 't', message: 'm', computed_at: tsAt(NOW),
+      });
+
+      const summary = explain.buildSummary(insight);
+
+      assert.ok(summary.reasons.some((r: string) => r.includes('80')));
+    });
   });
 });

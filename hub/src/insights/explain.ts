@@ -38,8 +38,28 @@ function fmt(n: number | null, metric: string | null): string {
   return String(Math.round(n * 10) / 10);
 }
 
+function parseEvidenceLines(evidence: string | null): string[] | null {
+  if (!evidence) return null;
+  try {
+    const parsed = JSON.parse(evidence);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((s): s is string => typeof s === 'string');
+    }
+    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.lines)) {
+      return parsed.lines.filter((s: unknown): s is string => typeof s === 'string');
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function buildSummary(insight: InsightRow): ExplanationSummary {
   const lead = `${insight.title} on ${entityLabel(insight)}`;
+  const evidenceLines = parseEvidenceLines(insight.evidence);
+  if (evidenceLines && evidenceLines.length > 0) {
+    return { lead, reasons: evidenceLines.slice(0, 5), confidence: insight.confidence };
+  }
   const reasons: string[] = [];
   if (insight.current_value != null) {
     reasons.push(`Current ${insight.metric ?? 'value'} is ${fmt(insight.current_value, insight.metric)}`);
