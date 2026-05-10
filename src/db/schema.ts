@@ -1238,8 +1238,6 @@ function migrate(db: Database.Database, fromVersion: number): void {
                ON hosts (proxmox_cluster_id, proxmox_vmid)
                WHERE proxmox_vmid IS NOT NULL`);
     } catch { /* already exists */ }
-    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uuid TEXT'); } catch { /* already exists */ }
-    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_primary_mac TEXT'); } catch { /* already exists */ }
   }
 }
 
