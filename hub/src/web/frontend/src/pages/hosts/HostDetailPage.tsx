@@ -1,7 +1,7 @@
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, apiAuth } from '@/lib/api';
-import type { HostDetail, HostMetricsSnapshot, Host, TimelineResponse, Trends, EventItem, HostBaselinesResponse } from '@/types/api';
+import type { HostDetail, HostMetricsSnapshot, Host, TimelineResponse, Trends, EventItem, HostBaselinesResponse, InsightRow } from '@/types/api';
 import { StatusDot } from '@/components/StatusDot';
 import { Badge } from '@/components/Badge';
 import { NodeConditionBadges } from '@/components/NodeConditionBadges';
@@ -29,15 +29,36 @@ import { HostUptimeHero } from '@/components/HostUptimeHero';
 import { TopologyLinkCard } from '@/components/TopologyLinkCard';
 import { HypervisorInfoCard } from '@/components/HypervisorInfoCard';
 import { getContainerNamespace } from '@/lib/containers';
+import { InsightsTabPanel } from '@/components/insights/InsightsTabPanel';
 
 export function HostDetailPage() {
   const { hostId } = useParams();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAuthenticated } = useAuth();
   const hid = encodeURIComponent(hostId!);
-  const [activeTab, setActiveTab] = useState('overview');
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['host', hostId]], confirm);
+
+  const { data: insights } = useQuery({
+    queryKey: queryKeys.hostInsights(hostId),
+    queryFn: () => api<InsightRow[]>(`/hosts/${hid}/insights`).catch(() => []),
+    refetchInterval: 60_000,
+  });
+
+  // Initialise active tab from the ?tab= URL param. We allow 'insights' in
+  // the set regardless of whether data has loaded yet — if insights turn out
+  // to be empty when data arrives the conditional tab list will exclude the
+  // tab and the body render will just be skipped.
+  const tabParam = searchParams.get('tab');
+  const validTabs = ['overview', 'resources', 'alerts', 'insights', 'k8s-events', 'pve'];
+  const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview';
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  const handleTabChange = (id: string) => {
+    setActiveTab(id);
+    setSearchParams({ tab: id }, { replace: true });
+  };
 
   const { data } = useQuery({ queryKey: queryKeys.host(hostId), queryFn: () => api<HostDetail>(`/hosts/${hid}`), refetchInterval: 30_000 });
   const { data: timeline } = useQuery({ queryKey: queryKeys.timeline(hostId), queryFn: () => api<TimelineResponse>(`/hosts/${hid}/timeline?days=7`).catch(() => ({ host: null, containers: [] }) as TimelineResponse) });
@@ -58,11 +79,14 @@ export function HostDetailPage() {
   const nextHost = currentIdx >= 0 && currentIdx < hostIds.length - 1 ? hostIds[currentIdx + 1] : null;
   const goToHost = (id: string) => navigate(`/hosts/${encodeURIComponent(id)}`);
 
+  const hasInsights = (insights ?? []).length > 0;
+
   // Keyboard shortcuts — registered unconditionally (Rules of Hooks).
-  useKeyboardShortcut({ keys: '1', description: 'Overview tab', scope: 'Host detail', onTrigger: () => setActiveTab('overview') });
-  useKeyboardShortcut({ keys: '2', description: 'Resources tab', scope: 'Host detail', onTrigger: () => setActiveTab('resources') });
-  useKeyboardShortcut({ keys: '3', description: 'Alerts tab', scope: 'Host detail', onTrigger: () => setActiveTab('alerts') });
-  useKeyboardShortcut({ keys: '4', description: 'K8s Events / Proxmox tab', scope: 'Host detail', onTrigger: () => setActiveTab(data?.runtime_type === 'proxmox' ? 'pve' : 'k8s-events') });
+  useKeyboardShortcut({ keys: '1', description: 'Overview tab', scope: 'Host detail', onTrigger: () => handleTabChange('overview') });
+  useKeyboardShortcut({ keys: '2', description: 'Resources tab', scope: 'Host detail', onTrigger: () => handleTabChange('resources') });
+  useKeyboardShortcut({ keys: '3', description: 'Alerts tab', scope: 'Host detail', onTrigger: () => handleTabChange('alerts') });
+  useKeyboardShortcut({ keys: '4', description: 'Insights tab', scope: 'Host detail', disabled: !hasInsights, onTrigger: () => handleTabChange('insights') });
+  useKeyboardShortcut({ keys: '5', description: 'K8s Events / Proxmox tab', scope: 'Host detail', onTrigger: () => handleTabChange(data?.runtime_type === 'proxmox' ? 'pve' : 'k8s-events') });
   useKeyboardShortcut({ keys: 'b', description: 'Back to hosts', scope: 'Host detail', onTrigger: () => navigate('/hosts') });
   useKeyboardShortcut({ keys: '[', description: 'Previous host', scope: 'Host detail', disabled: !prevHost, onTrigger: () => { if (prevHost) goToHost(prevHost); } });
   useKeyboardShortcut({ keys: ']', description: 'Next host', scope: 'Host detail', disabled: !nextHost, onTrigger: () => { if (nextHost) goToHost(nextHost); } });
@@ -82,10 +106,14 @@ export function HostDetailPage() {
     { id: 'overview', label: 'Overview', shortcut: '1' },
     { id: 'resources', label: 'Resources', shortcut: '2' },
     { id: 'alerts', label: 'Alerts', count: data.alerts.length, shortcut: '3' },
-    ...(isK8s ? [{ id: 'k8s-events', label: 'Events', shortcut: '4' }] : []),
+    ...(hasInsights
+      ? [{ id: 'insights', label: 'Insights', count: (insights ?? []).length, shortcut: '4' }]
+      : []
+    ),
+    ...(isK8s ? [{ id: 'k8s-events', label: 'Events', shortcut: '5' }] : []),
     // Distinct shortcut from k8s events since the two are mutually exclusive
-    // by runtime — '4' on a PVE host opens this tab; on k8s opens Events.
-    ...(isPve ? [{ id: 'pve', label: 'Proxmox', shortcut: '4' }] : []),
+    // by runtime — '5' on a PVE host opens this tab; on k8s opens Events.
+    ...(isPve ? [{ id: 'pve', label: 'Proxmox', shortcut: '5' }] : []),
   ];
 
   return (
@@ -164,7 +192,7 @@ export function HostDetailPage() {
         />
       )}
 
-      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+      <Tabs tabs={tabs} active={activeTab} onChange={handleTabChange} />
 
       <ActionResult result={actionResult} />
 
@@ -196,6 +224,10 @@ export function HostDetailPage() {
 
       {activeTab === 'pve' && isPve && (
         <HostPveTab data={data} />
+      )}
+
+      {activeTab === 'insights' && hasInsights && (
+        <InsightsTabPanel insights={insights ?? []} emptyMessage="No insights for this host." />
       )}
 
       {(() => {
