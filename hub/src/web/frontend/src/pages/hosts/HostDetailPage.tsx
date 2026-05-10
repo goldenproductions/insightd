@@ -15,7 +15,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useContainerAction } from '@/hooks/useContainerAction';
 import { useConfirm } from '@/hooks/useConfirm';
 import { useKeyboardShortcut } from '@/hooks/useKeyboardShortcut';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { queryKeys } from '@/lib/queryKeys';
 import { HostOverviewTab } from './HostOverviewTab';
 import { HostResourcesTab } from './HostResourcesTab';
@@ -80,6 +80,15 @@ export function HostDetailPage() {
   const goToHost = (id: string) => navigate(`/hosts/${encodeURIComponent(id)}`);
 
   const hasInsights = (insights ?? []).length > 0;
+
+  // Fall back to overview if user landed via ?tab=insights but this host
+  // has no insights (cross-entity redirect can leave a stale tab param).
+  useEffect(() => {
+    if (insights && activeTab === 'insights' && !hasInsights) {
+      setActiveTab('overview');
+      setSearchParams({}, { replace: true });
+    }
+  }, [insights, activeTab, hasInsights, setSearchParams]);
 
   // Keyboard shortcuts — registered unconditionally (Rules of Hooks).
   useKeyboardShortcut({ keys: '1', description: 'Overview tab', scope: 'Host detail', onTrigger: () => handleTabChange('overview') });

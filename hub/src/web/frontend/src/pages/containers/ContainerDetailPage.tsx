@@ -199,6 +199,15 @@ export function ContainerDetailPage() {
   );
   const hasContainerInsights = containerInsights.length > 0;
 
+  // Fall back to overview if user landed via ?tab=insights but this container
+  // has no insights (cross-entity redirect can leave a stale tab param).
+  useEffect(() => {
+    if (hostInsightsAll && activeTab === 'insights' && !hasContainerInsights) {
+      setActiveTab('overview');
+      setSearchParams({}, { replace: true });
+    }
+  }, [hostInsightsAll, activeTab, hasContainerInsights, setSearchParams]);
+
   // Pod-scoped k8s events. Fetched unconditionally — the endpoint returns
   // an empty list for non-k8s containers, so the gating happens at render.
   const { data: podEvents } = useQuery({
