@@ -202,4 +202,18 @@ describe('detector — disk-fill ETA insights', () => {
     generateInsights(db);
     assert.equal(getDiskFillInsights().length, 0);
   });
+
+  it('does not fire when used_percent < 50% (floor)', () => {
+    // 30 GB used today, growing 5 GB/day, 100 GB total → ETA 14 days, but below floor.
+    seedDisk({ totalGb: 100, startGb: 0, dailyGrowthGb: 5 });
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 0);
+  });
+
+  it('does not fire with fewer than 4 days of data', () => {
+    // Only 3 days seeded, all above floor.
+    seedDisk({ totalGb: 100, startGb: 60, dailyGrowthGb: 5, days: 3 });
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 0);
+  });
 });
