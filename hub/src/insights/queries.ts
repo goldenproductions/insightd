@@ -31,7 +31,7 @@ interface HealthScoreRow {
   computed_at: string;
 }
 
-interface InsightRow {
+export interface InsightRow {
   id: number;
   entity_type: string;
   entity_id: string;
@@ -42,6 +42,9 @@ interface InsightRow {
   metric: string | null;
   current_value: number | null;
   baseline_value: number | null;
+  evidence: string | null;
+  suggested_action: string | null;
+  confidence: 'high' | 'medium' | 'low' | null;
   computed_at: string;
 }
 
@@ -103,4 +106,8 @@ function getHostInsights(db: Database.Database, hostId: string): InsightRow[] {
   `).all(hostId, `${hostId}/%`) as InsightRow[];
 }
 
-module.exports = { getBaselines, getBaselinesWithMad, getHostBaselines, getAllHealthScores, getHealthScore, getInsights, getEntityInsights, getHostInsights };
+function getInsightById(db: Database.Database, id: number): InsightRow | null {
+  return db.prepare(`SELECT * FROM insights WHERE id = ?`).get(id) as InsightRow | undefined || null;
+}
+
+module.exports = { getBaselines, getBaselinesWithMad, getHostBaselines, getAllHealthScores, getHealthScore, getInsights, getEntityInsights, getHostInsights, getInsightById };
