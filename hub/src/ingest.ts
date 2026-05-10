@@ -846,6 +846,9 @@ function ingestPveZfs(db: Database.Database, hostId: string, items: PveZfsRecord
  * every PVE node publishes the same row each cycle and last write wins.
  * Hub stores nothing on standalone PVE installs (publishPveCluster
  * short-circuits when the agent's collectClusterStatus returns null).
+ *
+ * Also seeds hosts.proxmox_cluster_id on the publishing PVE node host
+ * so the identity matcher can resolve cluster_id for linked guests.
  */
 function ingestPveCluster(db: Database.Database, hostId: string, status: PveClusterRecord): void {
   const upsertCluster = db.prepare(`
