@@ -91,6 +91,35 @@ describe('insights explain', () => {
       }
     });
 
+    it('returns uptime_bars for an availability insight', () => {
+      db.prepare(`
+        INSERT INTO container_snapshots
+          (host_id, container_name, container_id, status, collected_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run('h1', 'api', 'abc', 'running', tsAt(NOW));
+
+      db.prepare(`
+        INSERT INTO alert_state
+          (host_id, alert_type, target, triggered_at, resolved_at)
+        VALUES (?, 'container_down', ?, ?, ?)
+      `).run('h1', 'h1/api',
+        tsAt(new Date(NOW.getTime() - 5 * 60 * 60 * 1000)),
+        tsAt(new Date(NOW.getTime() - 4 * 60 * 60 * 1000)),
+      );
+
+      const insight = seedInsight(db, {
+        entity_type: 'container', entity_id: 'h1/api',
+        category: 'availability', metric: null,
+        title: 'Downtime', message: 'm', computed_at: tsAt(NOW),
+      });
+
+      const chart = explain.buildChart(db, insight);
+
+      assert.equal(chart.kind, 'uptime_bars');
+      assert.ok(chart.uptime && chart.uptime.length > 0, 'expected uptime intervals');
+      assert.ok(chart.uptime!.some(iv => iv.up === false), 'expected at least one down interval');
+    });
+
     it('returns forecast cone for a disk_fill prediction insight', () => {
       const insertDisk = db.prepare(`
         INSERT INTO disk_snapshots (host_id, mount_point, total_gb, used_gb, used_percent, collected_at)

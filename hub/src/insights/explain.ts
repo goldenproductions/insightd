@@ -191,6 +191,32 @@ function offsetIso(baseIso: string, hoursDelta: number): string {
   return tsAt(new Date(t.getTime() + hoursDelta * 60 * 60 * 1000));
 }
 
+function buildUptimeIntervals(
+  db: Database.Database, entityId: string, fromIso: string, toIso: string,
+): { from: string; to: string; up: boolean }[] {
+  const rows = db.prepare(`
+    SELECT triggered_at AS triggered, COALESCE(resolved_at, ?) AS resolved
+    FROM alert_state
+    WHERE alert_type = 'container_down'
+      AND target = ?
+      AND triggered_at <= ?
+      AND (resolved_at IS NULL OR resolved_at >= ?)
+    ORDER BY triggered_at ASC
+  `).all(toIso, entityId, toIso, fromIso) as { triggered: string; resolved: string }[];
+
+  const intervals: { from: string; to: string; up: boolean }[] = [];
+  let cursor = fromIso;
+  for (const r of rows) {
+    const downStart = r.triggered < fromIso ? fromIso : r.triggered;
+    const downEnd   = r.resolved   > toIso   ? toIso   : r.resolved;
+    if (cursor < downStart) intervals.push({ from: cursor, to: downStart, up: true });
+    intervals.push({ from: downStart, to: downEnd, up: false });
+    cursor = downEnd;
+  }
+  if (cursor < toIso) intervals.push({ from: cursor, to: toIso, up: true });
+  return intervals;
+}
+
 function parseForecastMeta(evidence: string | null): { horizon_hours: number; mid: number; lower: number; upper: number } | null {
   if (!evidence) return null;
   try {
@@ -222,6 +248,11 @@ function buildChart(db: Database.Database, insight: InsightRow): ChartData {
     const points  = fetchSeries(db, insight, thisFrom, insight.computed_at);
     const compare = fetchSeries(db, insight, lastFrom, lastTo);
     return { kind, points, compare, threshold, thresholdLabel, yLabel };
+  }
+  if (kind === 'uptime_bars') {
+    const fromIso = offsetIso(insight.computed_at, -24);
+    const uptime = buildUptimeIntervals(db, insight.entity_id, fromIso, insight.computed_at);
+    return { kind, points: [], uptime, thresholdLabel: 'Target' };
   }
   if (kind === 'forecast') {
     const fromIso = offsetIso(insight.computed_at, -24 * 14);
