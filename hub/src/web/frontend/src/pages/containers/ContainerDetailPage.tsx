@@ -310,7 +310,8 @@ export function ContainerDetailPage() {
   }, [data, bypassRedirect, navigate, searchParams]);
 
   // Early return prevents flash of the PVE container UI before the redirect fires.
-  if (data?.linkedHostId && data.status === 'running' && !bypassRedirect) {
+  // Skip when ?tab= is set — same reasoning as the redirect skip above.
+  if (data?.linkedHostId && data.status === 'running' && !bypassRedirect && !searchParams.get('tab')) {
     return null;
   }
 
