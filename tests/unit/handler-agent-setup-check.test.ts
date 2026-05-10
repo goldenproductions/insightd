@@ -80,4 +80,15 @@ describe('handleAgentSetupCheck', () => {
     const r = handleAgentSetupCheck(fakeReq('/api/agent-setup/check?identifier=homelab&target=k8s'), fakeRes, db, cfg) as Result;
     assert.equal(r.status, 'waiting');
   });
+
+  it('returns waiting for empty identifier', () => {
+    const r = handleAgentSetupCheck(fakeReq('/api/agent-setup/check?identifier=&target=docker'), fakeRes, db, cfg) as Result;
+    assert.equal(r.status, 'waiting');
+  });
+
+  it('returns waiting for invalid target value', () => {
+    db.prepare(`INSERT INTO hosts (host_id, first_seen, last_seen, runtime_type) VALUES ('nas-01', 't1', 't2', 'docker')`).run();
+    const r = handleAgentSetupCheck(fakeReq('/api/agent-setup/check?identifier=nas-01&target=bad'), fakeRes, db, cfg) as Result;
+    assert.equal(r.status, 'waiting');
+  });
 });
