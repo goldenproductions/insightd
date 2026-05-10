@@ -182,10 +182,10 @@ describe('dailyTrend helper', () => {
   it('returns null when fewer than half of day pairs agree with positive trend', () => {
     const daily = [
       { day: 'd1', avg: 50 },
-      { day: 'd2', avg: 60 },
-      { day: 'd3', avg: 55 },
+      { day: 'd2', avg: 50 },
+      { day: 'd3', avg: 50 },
       { day: 'd4', avg: 50 },
-      { day: 'd5', avg: 60 },  // last - first = 10, but only 2/4 days are increasing
+      { day: 'd5', avg: 60 },  // last - first = 10, but only 1/4 pairs are increasing
     ];
     const out = dailyTrend(daily, 0.05);
     assert.equal(out, null);
