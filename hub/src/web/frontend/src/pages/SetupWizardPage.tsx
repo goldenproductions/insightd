@@ -7,6 +7,7 @@ import { FormField } from '@/components/FormField';
 import { AlertBanner } from '@/components/AlertBanner';
 import { CommandBlock } from '@/components/CommandBlock';
 import type { Host, ContainerSnapshot, AgentSetup } from '@/types/api';
+import { buildDockerCommand } from '@/pages/add-agent/builders/docker';
 
 interface Props {
   onComplete: () => void;
@@ -174,19 +175,17 @@ function AgentStep({ mode, onNext, onSkip }: { mode: string; onNext: () => void;
     );
   }
 
-  const command = [
-    'docker run -d \\',
-    '  --name insightd-agent \\',
-    '  --restart unless-stopped \\',
-    `  -v /var/run/docker.sock:/var/run/docker.sock${allowUpdates ? '' : ':ro'} \\`,
-    '  -v /:/host:ro \\',
-    `  -e INSIGHTD_HOST_ID=${hostId || '<host-id>'} \\`,
-    `  -e INSIGHTD_MQTT_URL=${defaults?.mqttUrl || 'mqtt://<hub-ip>:1883'} \\`,
-    defaults?.mqttUser ? `  -e INSIGHTD_MQTT_USER=${defaults.mqttUser} \\` : null,
-    defaults?.mqttPass ? `  -e INSIGHTD_MQTT_PASS=${defaults.mqttPass} \\` : null,
-    allowUpdates ? '  -e INSIGHTD_ALLOW_UPDATES=true \\' : null,
-    `  ${defaults?.image || 'andreas404/insightd-agent:latest'}`,
-  ].filter(Boolean).join('\n');
+  const command = buildDockerCommand({
+    identifier: hostId || '<host-id>',
+    broker: {
+      url: defaults?.mqttUrl || 'mqtt://<hub-ip>:1883',
+      user: defaults?.mqttUser,
+      pass: defaults?.mqttPass,
+    },
+    permissions: { allowUpdates, allowActions: false },
+    advanced: {},
+    image: defaults?.image || 'andreas404/insightd-agent:latest',
+  });
 
   return (
     <div>
