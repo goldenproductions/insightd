@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 const { dailyTrend } = require('../../hub/src/insights/disk-fill');
 
@@ -50,5 +50,104 @@ describe('dailyTrend helper', () => {
     assert.equal(out!.dayCount, 7);
     assert.equal(out!.current, 56);
     assert.equal(Math.round(out!.dailyGrowth * 100) / 100, 1);
+  });
+});
+
+const { createTestDb } = require('../helpers/db');
+const { suppressConsole } = require('../helpers/mocks');
+const { generateInsights } = require('../../hub/src/insights/detector');
+
+interface InsightRow {
+  entity_type: string; entity_id: string; category: string; severity: string;
+  title: string; message: string; metric: string | null;
+  current_value: number | null; baseline_value: number | null;
+  evidence: string | null; suggested_action: string | null; confidence: string | null;
+}
+
+describe('detector — disk-fill ETA insights', () => {
+  let db: any;
+  let restore: () => void;
+
+  beforeEach(() => {
+    restore = suppressConsole();
+    db = createTestDb();
+    db.prepare(`INSERT INTO hosts (host_id, first_seen, last_seen) VALUES ('node-1', datetime('now'), datetime('now'))`).run();
+  });
+
+  afterEach(() => {
+    db.close();
+    restore();
+  });
+
+  /**
+   * Seed N days of disk snapshots, one per day at noon, with linear growth.
+   * day 0 = 7 days ago. day 6 = today. usedAtDayN = startGb + dailyGrowthGb * N.
+   */
+  function seedDisk(opts: {
+    hostId?: string;
+    mount?: string;
+    totalGb: number;
+    startGb: number;
+    dailyGrowthGb: number;
+    days?: number;
+  }): void {
+    const hostId = opts.hostId ?? 'node-1';
+    const mount = opts.mount ?? '/';
+    const totalGb = opts.totalGb;
+    const days = opts.days ?? 7;
+    for (let d = 0; d < days; d++) {
+      const usedGb = opts.startGb + opts.dailyGrowthGb * d;
+      const usedPct = (usedGb / totalGb) * 100;
+      const at = `datetime('now', '-${days - 1 - d} days')`;
+      db.prepare(`
+        INSERT INTO disk_snapshots (host_id, mount_point, total_gb, used_gb, used_percent, collected_at)
+        VALUES (?, ?, ?, ?, ?, ${at})
+      `).run(hostId, mount, totalGb, usedGb, usedPct);
+    }
+  }
+
+  /**
+   * Seed N days of pve_storage snapshots in bytes. Mirrors seedDisk shape.
+   */
+  function seedPveStorage(opts: {
+    hostId?: string;
+    storageName?: string;
+    storageType?: string;
+    totalBytes: number;
+    startBytes: number;
+    dailyGrowthBytes: number;
+    days?: number;
+    active?: number;
+  }): void {
+    const hostId = opts.hostId ?? 'node-1';
+    const storageName = opts.storageName ?? 'local-zfs';
+    const storageType = opts.storageType ?? 'zfspool';
+    const days = opts.days ?? 7;
+    const active = opts.active ?? 1;
+    for (let d = 0; d < days; d++) {
+      const used = opts.startBytes + opts.dailyGrowthBytes * d;
+      const at = `datetime('now', '-${days - 1 - d} days')`;
+      db.prepare(`
+        INSERT INTO pve_storage_snapshots (host_id, storage_name, storage_type, total_bytes, used_bytes, active, shared, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?, 0, ${at})
+      `).run(hostId, storageName, storageType, opts.totalBytes, used, active);
+    }
+  }
+
+  function getDiskFillInsights(): InsightRow[] {
+    return db.prepare(
+      `SELECT entity_type, entity_id, category, severity, title, message, metric,
+              current_value, baseline_value, evidence, suggested_action, confidence
+       FROM insights
+       WHERE category = 'prediction'
+         AND (metric = 'disk_used_percent' OR metric = 'pve_storage_used_percent')`
+    ).all() as InsightRow[];
+  }
+
+  // Tests will be added in subsequent tasks — start with a smoke test that
+  // confirms the no-op module runs cleanly inside generateInsights.
+  it('runs cleanly with no disk data', () => {
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 0);
   });
 });
