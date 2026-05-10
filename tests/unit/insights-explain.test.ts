@@ -131,11 +131,12 @@ describe('insights explain', () => {
         insertDisk.run('h1', '/', 1000, Math.round(pct * 10) / 10, pct, tsAt(t));
       }
       const insight = seedInsight(db, {
-        entity_type: 'disk', entity_id: 'h1//',
-        category: 'prediction', metric: 'disk.percent',
+        entity_type: 'host', entity_id: 'h1',
+        category: 'prediction', metric: 'disk_used_percent',
         current_value: 80, baseline_value: 90,
         title: 'Disk fill ETA', message: 'projected to fill in 14d',
         evidence: JSON.stringify({
+          mount_point: '/',
           lines: ['Disk projected to reach 90% in 14d'],
           forecast: { horizon_hours: 14 * 24, mid: 92, lower: 88, upper: 96 },
           log_bursts: [],
@@ -146,8 +147,41 @@ describe('insights explain', () => {
       const chart = explain.buildChart(db, insight);
 
       assert.equal(chart.kind, 'forecast');
+      assert.ok(chart.points.length > 0, 'historical disk points');
       assert.ok(chart.forecast && chart.forecast.length > 0, 'forecast points');
       assert.equal(chart.threshold, 90);
+    });
+
+    it('returns forecast cone for a container memory trend (bare metric name)', () => {
+      const insertSnap = db.prepare(`
+        INSERT INTO container_snapshots
+          (host_id, container_name, container_id, status, memory_mb, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (let i = 14 * 24; i >= 0; i--) {
+        const t = new Date(NOW.getTime() - i * 60 * 60 * 1000);
+        insertSnap.run('kingduck', 'Claude', 'abc123', 'running', 2000 + (14 * 24 - i) * 0.1, tsAt(t));
+      }
+      const insight = seedInsight(db, {
+        entity_type: 'container', entity_id: 'kingduck/Claude',
+        category: 'prediction', metric: 'memory_mb',
+        current_value: 2082.97, baseline_value: 2082.97,
+        title: 'Claude memory trending up', message: 'memory growing steadily',
+        evidence: JSON.stringify({
+          lines: ['Memory has grown 4% over 14 days'],
+          forecast: { horizon_hours: 14 * 24, mid: 2200, lower: 2150, upper: 2300 },
+          log_bursts: [],
+        }),
+        computed_at: tsAt(NOW),
+      });
+
+      const chart = explain.buildChart(db, insight);
+
+      assert.equal(chart.kind, 'forecast');
+      assert.ok(chart.points.length > 0, 'expected non-empty points for container memory_mb');
+      assert.ok(chart.forecast && chart.forecast.length > 0, 'forecast points');
+      assert.equal(chart.threshold, 2082.97);
+      assert.equal(chart.yLabel, 'MB');
     });
 
     it('returns week_overlay with this-week + last-week series for trend', () => {

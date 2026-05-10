@@ -117,10 +117,26 @@ function thresholdLabelForCategory(category: string): string | undefined {
   return 'Baseline (P95)';
 }
 
+// Hard-coded allowlist — never interpolate raw metric strings into SQL.
+const HOST_METRIC_COLUMN: Record<string, string> = {
+  cpu_percent:    'cpu_percent',
+  memory_used_mb: 'memory_used_mb',
+  load_5:         'load_5',
+};
+
+function normalizeMetric(metric: string, prefix: string): string {
+  // Strip optional entity-type prefix (e.g. "host.cpu_percent" → "cpu_percent").
+  if (metric.startsWith(prefix + '.')) return metric.slice(prefix.length + 1);
+  return metric;
+}
+
 function fetchHostMetricSeries(
   db: Database.Database, hostId: string, metric: string, fromIso: string, toIso: string,
 ): ChartPoint[] {
-  if (metric === 'host.memory_percent') {
+  const bare = normalizeMetric(metric, 'host');
+
+  // Computed percentage derived from memory_used_mb / memory_total_mb.
+  if (bare === 'memory_percent') {
     return db.prepare(`
       SELECT collected_at AS ts,
              CASE WHEN memory_total_mb > 0 THEN (memory_used_mb * 100.0 / memory_total_mb) ELSE NULL END AS value
@@ -129,11 +145,8 @@ function fetchHostMetricSeries(
       ORDER BY collected_at ASC
     `).all(hostId, fromIso, toIso) as ChartPoint[];
   }
-  const column = (() => {
-    if (metric === 'host.cpu_percent') return 'cpu_percent';
-    if (metric === 'host.load_5')      return 'load_5';
-    return null;
-  })();
+
+  const column = HOST_METRIC_COLUMN[bare] ?? null;
   if (!column) return [];
   return db.prepare(`
     SELECT collected_at AS ts, ${column} AS value
@@ -143,16 +156,18 @@ function fetchHostMetricSeries(
   `).all(hostId, fromIso, toIso) as ChartPoint[];
 }
 
+const CONTAINER_METRIC_COLUMN: Record<string, string> = {
+  cpu_percent: 'cpu_percent',
+  memory_mb:   'memory_mb',
+};
+
 function fetchContainerMetricSeries(
   db: Database.Database, entityId: string, metric: string, fromIso: string, toIso: string,
 ): ChartPoint[] {
   const [hostId, ...nameParts] = entityId.split('/');
   const containerName = nameParts.join('/');
-  const column = (() => {
-    if (metric === 'container.cpu_percent') return 'cpu_percent';
-    if (metric === 'container.memory_mb')   return 'memory_mb';
-    return null;
-  })();
+  const bare = normalizeMetric(metric, 'container');
+  const column = CONTAINER_METRIC_COLUMN[bare] ?? null;
   if (!column) return [];
   return db.prepare(`
     SELECT collected_at AS ts, ${column} AS value
@@ -163,29 +178,38 @@ function fetchContainerMetricSeries(
 }
 
 function fetchDiskSeries(
-  db: Database.Database, entityId: string, fromIso: string, toIso: string,
+  db: Database.Database, hostId: string, mountPoint: string, fromIso: string, toIso: string,
 ): ChartPoint[] {
-  const [hostId, ...mountParts] = entityId.split('/');
-  const mountpoint = '/' + mountParts.join('/');
   return db.prepare(`
     SELECT collected_at AS ts, used_percent AS value
     FROM disk_snapshots
     WHERE host_id = ? AND mount_point = ? AND collected_at BETWEEN ? AND ? AND used_percent IS NOT NULL
     ORDER BY collected_at ASC
-  `).all(hostId, mountpoint, fromIso, toIso) as ChartPoint[];
+  `).all(hostId, mountPoint, fromIso, toIso) as ChartPoint[];
 }
 
 function fetchSeries(
   db: Database.Database, insight: InsightRow, fromIso: string, toIso: string,
 ): ChartPoint[] {
   if (insight.entity_type === 'host') {
-    return fetchHostMetricSeries(db, insight.entity_id, insight.metric ?? '', fromIso, toIso);
+    const metric = insight.metric ?? '';
+    const bare = normalizeMetric(metric, 'host');
+    if (bare === 'disk_used_percent') {
+      // Disk insights are stored with entity_type='host'; mount_point lives in evidence.
+      let mountPoint: string | null = null;
+      try {
+        const parsed = insight.evidence ? JSON.parse(insight.evidence) : null;
+        if (parsed && typeof parsed.mount_point === 'string') {
+          mountPoint = parsed.mount_point;
+        }
+      } catch { /* fall through */ }
+      if (!mountPoint) return [];
+      return fetchDiskSeries(db, insight.entity_id, mountPoint, fromIso, toIso);
+    }
+    return fetchHostMetricSeries(db, insight.entity_id, metric, fromIso, toIso);
   }
   if (insight.entity_type === 'container') {
     return fetchContainerMetricSeries(db, insight.entity_id, insight.metric ?? '', fromIso, toIso);
-  }
-  if (insight.entity_type === 'disk') {
-    return fetchDiskSeries(db, insight.entity_id, fromIso, toIso);
   }
   return [];
 }
