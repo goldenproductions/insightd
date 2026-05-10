@@ -816,6 +816,23 @@ describe('Web API integration', () => {
     assert.ok(Array.isArray(res.json()));
   });
 
+  it('GET /api/insights/:id/explain returns 404 for unknown id and 200 for a known id', async () => {
+    const unknown = await fetch(port, '/api/insights/99999/explain');
+    assert.equal(unknown.status, 404);
+
+    // Seed an insight directly so we have a known id
+    const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
+    db.prepare(`INSERT INTO insights (entity_type, entity_id, category, severity, title, message, computed_at)
+      VALUES ('host', 'h1', 'performance', 'warning', 'test insight', 'test msg', ?)`).run(now);
+    const list = await (await fetch(port, '/api/insights')).json();
+    assert.ok(Array.isArray(list) && list.length > 0, 'expected at least one insight after seeding');
+    const id = (list as any[])[0].id;
+    const ok = await fetch(port, `/api/insights/${id}/explain`);
+    assert.equal(ok.status, 200);
+    const body = ok.json();
+    assert.ok(body.summary && body.chart && Array.isArray(body.timeline));
+  });
+
   it('GET /api/version-check returns version info', async () => {
     const res = await fetch(port, '/api/version-check');
     assert.equal(res.status, 200);
