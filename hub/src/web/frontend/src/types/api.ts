@@ -1117,7 +1117,7 @@ export interface InsightFeedback {
   created_at: string;
 }
 
-export type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars';
+export type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars' | 'restart_histogram';
 
 export interface ExplainChartPoint {
   ts: string;

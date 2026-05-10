@@ -184,6 +184,42 @@ describe('insights explain', () => {
       assert.equal(chart.yLabel, 'MB');
     });
 
+    it('returns restart_histogram for availability when container has restart deltas in window', () => {
+      const insertSnap = db.prepare(`
+        INSERT INTO container_snapshots
+          (host_id, container_name, container_id, status, cpu_percent, restart_count, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      // 0 → 3 → 5 over the window: 2 deltas (3 and 2)
+      insertSnap.run('h1', 'api', 'abc', 'running', 50, 0, tsAt(new Date(NOW.getTime() - 3 * 60 * 60 * 1000)));
+      insertSnap.run('h1', 'api', 'abc', 'running', 50, 3, tsAt(new Date(NOW.getTime() - 2 * 60 * 60 * 1000)));
+      insertSnap.run('h1', 'api', 'abc', 'running', 50, 5, tsAt(new Date(NOW.getTime() - 1 * 60 * 60 * 1000)));
+
+      const insight = seedInsight(db, {
+        entity_type: 'container', entity_id: 'h1/api',
+        category: 'availability', metric: null,
+        current_value: 5, baseline_value: 0,
+        title: 'Restarting frequently', message: 'm', computed_at: tsAt(NOW),
+      });
+
+      const chart = explain.buildChart(db, insight);
+
+      assert.equal(chart.kind, 'restart_histogram');
+      assert.equal(chart.points.length, 24, 'expected 24 hourly buckets');
+      const total = chart.points.reduce((s: number, p: any) => s + p.value, 0);
+      assert.equal(total, 5, 'sum of buckets equals total restart deltas');
+    });
+
+    it('falls back to uptime_bars for availability when no restart deltas exist', () => {
+      const insight = seedInsight(db, {
+        entity_type: 'container', entity_id: 'h1/api',
+        category: 'availability', metric: null,
+        title: 'Downtime', message: 'm', computed_at: tsAt(NOW),
+      });
+      const chart = explain.buildChart(db, insight);
+      assert.equal(chart.kind, 'uptime_bars');
+    });
+
     it('returns week_overlay with this-week + last-week series for trend', () => {
       const insertSnap = db.prepare(`
         INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, load_5, collected_at)
