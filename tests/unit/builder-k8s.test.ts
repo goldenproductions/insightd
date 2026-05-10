@@ -81,7 +81,7 @@ describe('buildK8sManifest', () => {
     assert.match(out, /resources:.*nodes\/metrics/);
     assert.match(out, /resources:.*replicasets/);
     assert.match(out, /name: insightd-agent-lease/);
-    assert.match(out, /apiGroups:.*coordination\.k8s\.io/);
+    assert.match(out, /apiGroups: \["coordination\.k8s\.io"\]/);
     assert.match(out, /resources:.*leases/);
   });
 });
