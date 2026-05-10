@@ -216,4 +216,24 @@ describe('detector — disk-fill ETA insights', () => {
     generateInsights(db);
     assert.equal(getDiskFillInsights().length, 0);
   });
+
+  it('does not fire when an open disk_full alert exists for the same (host, mount)', () => {
+    seedDisk({ totalGb: 100, startGb: 30, dailyGrowthGb: 5 });
+    db.prepare(`
+      INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, message, trigger_value)
+      VALUES ('node-1', 'disk_full', '/', datetime('now'), datetime('now'), 'disk full', '90')
+    `).run();
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 0);
+  });
+
+  it('still fires when a disk_full alert exists but is resolved', () => {
+    seedDisk({ totalGb: 100, startGb: 30, dailyGrowthGb: 5 });
+    db.prepare(`
+      INSERT INTO alert_state (host_id, alert_type, target, triggered_at, resolved_at, last_notified, message, trigger_value)
+      VALUES ('node-1', 'disk_full', '/', datetime('now', '-2 days'), datetime('now', '-1 day'), datetime('now', '-2 days'), 'disk full', '90')
+    `).run();
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 1);
+  });
 });
