@@ -6,6 +6,7 @@ import { initialWizardState } from './types';
 import { Step1Target } from './steps/Step1Target';
 import { Step2Connection } from './steps/Step2Connection';
 import { Step3Options } from './steps/Step3Options';
+import { Step4Install } from './steps/Step4Install';
 
 const STEP_LABELS = ['Target', 'Connection', 'Options', 'Install'] as const;
 
@@ -27,15 +28,21 @@ export function AddAgentPage() {
         {step === 1 && <Step1Target state={state} setState={setState} />}
         {step === 2 && <Step2Connection state={state} setState={setState} />}
         {step === 3 && <Step3Options state={state} setState={setState} />}
-        {step === 4 && <PlaceholderStep label="Install (Step 4 — Task 5)" />}
+        {step === 4 && <Step4Install state={state} />}
       </div>
       <div className="flex justify-between">
         <Button variant="secondary" onClick={() => setStep(s => Math.max(1, s - 1) as 1|2|3|4)} disabled={step === 1}>
           ← Back
         </Button>
-        <Button onClick={() => setStep(s => Math.min(4, s + 1) as 1|2|3|4)} disabled={!canAdvance || step === 4}>
-          Next →
-        </Button>
+        {step < 4 ? (
+          <Button onClick={() => setStep(s => Math.min(4, s + 1) as 1|2|3|4)} disabled={!canAdvance}>
+            Next →
+          </Button>
+        ) : (
+          <Button onClick={() => { window.location.hash = '#/hosts'; }}>
+            Done
+          </Button>
+        )}
       </div>
     </div>
   );
@@ -70,8 +77,4 @@ function Stepper({ current, onJump }: { current: 1|2|3|4; onJump: (s: 1|2|3|4) =
       })}
     </ol>
   );
-}
-
-function PlaceholderStep({ label }: { label: string }) {
-  return <div className="rounded border border-border bg-surface p-4 text-muted">{label}</div>;
 }

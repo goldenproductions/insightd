@@ -59,6 +59,7 @@ export const queryKeys = {
   settings: () => ['settings'] as const,
   apiKeys: () => ['api-keys'] as const,
   agentSetup: () => ['agent-setup'] as const,
+  agentSetupCheck: (target: string, identifier: string) => ['agent-setup-check', target, identifier] as const,
 
   // Updates
   versionCheck: () => ['version-check'] as const,
