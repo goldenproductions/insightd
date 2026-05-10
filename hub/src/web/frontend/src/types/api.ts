@@ -10,6 +10,7 @@ export interface HealthData {
 
 // Dashboard
 export interface DashboardInsight {
+  id: number;
   entity_type: string;
   entity_id: string;
   category: string;

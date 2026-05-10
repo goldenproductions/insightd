@@ -1065,7 +1065,7 @@ function getSystemHealthScore(db: Database.Database): { score: number; factors: 
 function getTopInsights(db: Database.Database): InsightRow[] {
   try {
     return db.prepare(`
-      SELECT entity_type, entity_id, category, severity, title, message, evidence FROM insights
+      SELECT id, entity_type, entity_id, category, severity, title, message, evidence FROM insights
       ORDER BY CASE severity WHEN 'critical' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END
       LIMIT 5
     `).all() as InsightRow[];

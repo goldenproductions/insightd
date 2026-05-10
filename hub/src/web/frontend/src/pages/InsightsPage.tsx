@@ -1,20 +1,13 @@
-import React, { Suspense, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import type { InsightRow } from '@/types/api';
-import type { InsightExplanation } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import { PageTitle } from '@/components/PageTitle';
 import { CardSkeleton } from '@/components/Skeleton';
-import { timeAgo } from '@/lib/formatters';
-import { splitContainerEntityId } from '@/lib/containers';
-import { ReasonSummary } from '@/components/insights/ReasonSummary';
-import { ContributingTimeline } from '@/components/insights/ContributingTimeline';
-
-const InsightChart = React.lazy(() => import('@/components/insights/InsightChart'));
+import { ExpandedBody } from '@/components/insights/ExpandedBody';
 
 // TODO(calibration): the per-insight "Helpful?" 👍/👎 UI was removed
 // 2026-04-25 because nobody used it. Backend wiring is intact:
@@ -47,32 +40,6 @@ const SEVERITY_COLORS: Record<string, string> = {
   warning: 'yellow',
   info: 'blue',
 };
-
-function entityLink(insight: InsightRow): string {
-  if (insight.entity_type === 'container') {
-    const split = splitContainerEntityId(insight.entity_id);
-    if (split) {
-      return `/hosts/${encodeURIComponent(split.hostId)}/containers/${encodeURIComponent(split.containerName)}`;
-    }
-  }
-  return `/hosts/${encodeURIComponent(insight.entity_id)}`;
-}
-
-function formatMetricValue(value: number | null, metric: string | null): string {
-  if (value == null) return '-';
-  if (metric?.includes('percent')) return `${Math.round(value * 10) / 10}%`;
-  if (metric?.includes('mb') || metric?.includes('memory')) return `${Math.round(value)} MB`;
-  if (metric?.includes('load')) return (Math.round(value * 100) / 100).toString();
-  return (Math.round(value * 10) / 10).toString();
-}
-
-function entityName(insight: InsightRow): string {
-  if (insight.entity_type === 'container') {
-    const split = splitContainerEntityId(insight.entity_id);
-    if (split) return split.containerName;
-  }
-  return insight.entity_id;
-}
 
 export function InsightsPage() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
@@ -196,67 +163,3 @@ function InsightCard({ insight, isExpanded, onToggle }: {
   );
 }
 
-function ExpandedBody({ insight }: { insight: InsightRow }) {
-  const { data: explain, isError } = useQuery({
-    queryKey: queryKeys.insightExplain(insight.id),
-    queryFn: () => api<InsightExplanation>(`/insights/${insight.id}/explain`),
-    staleTime: 60_000,
-  });
-
-  if (isError) return <FallbackStats insight={insight} />;
-  if (!explain) return (
-    <div className="border-t border-border px-4 py-3">
-      <CardSkeleton lines={4} />
-    </div>
-  );
-
-  return (
-    <div className="space-y-4 border-t border-border px-4 py-3">
-      <ReasonSummary summary={explain.summary} />
-      <Suspense fallback={<CardSkeleton lines={3} />}>
-        <InsightChart chart={explain.chart} />
-      </Suspense>
-      <ContributingTimeline events={explain.timeline} />
-      <MetadataRow insight={insight} />
-    </div>
-  );
-}
-
-function MetadataRow({ insight }: { insight: InsightRow }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-2 text-xs text-muted">
-      <Link to={entityLink(insight)} className="text-info hover:underline">
-        {entityName(insight)} <span className="text-muted">({insight.entity_type})</span>
-      </Link>
-      {insight.metric && <span>Metric: <span className="font-mono">{insight.metric}</span></span>}
-      <span>Computed {timeAgo(insight.computed_at)}</span>
-    </div>
-  );
-}
-
-function FallbackStats({ insight }: { insight: InsightRow }) {
-  // Pre-rebuild stats grid kept here as a graceful-degrade for /explain failures.
-  return (
-    <div className="border-t border-border px-4 py-3">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {insight.current_value != null && (
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-muted">Current</div>
-            <div className="mt-0.5 text-lg font-bold text-fg">
-              {formatMetricValue(insight.current_value, insight.metric)}
-            </div>
-          </div>
-        )}
-        {insight.baseline_value != null && (
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-muted">Baseline</div>
-            <div className="mt-0.5 text-lg font-bold text-secondary">
-              {formatMetricValue(insight.baseline_value, insight.metric)}
-            </div>
-          </div>
-        )}
-        <MetadataRow insight={insight} />
-      </div>
-    </div>
-  );
-}
