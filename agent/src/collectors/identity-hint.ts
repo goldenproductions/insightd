@@ -22,20 +22,27 @@ function hostPath(hostRoot: string | null, p: string): string {
 }
 
 function detectVirtType(hostRoot: string | null): IdentityHint['virt_type'] {
-  // DMI is exposed natively to docker containers (sysfs), so reads the same
-  // value whether or not we use hostRoot. Try hostRoot first for symmetry.
   const sysVendor = safeRead(hostPath(hostRoot, '/sys/class/dmi/id/sys_vendor'))
                  ?? safeRead('/sys/class/dmi/id/sys_vendor');
   if (sysVendor && sysVendor.trim() === 'QEMU') return 'qemu';
 
-  // /proc/1/environ MUST come from the host when in docker — the container's
-  // own PID 1 environ is the agent process, not the host LXC's init.
   const env = safeRead(hostPath(hostRoot, '/proc/1/environ'));
   if (env && env.includes('container=lxc')) return 'lxc';
 
   const cgroup = safeRead(hostPath(hostRoot, '/proc/self/cgroup'))
               ?? safeRead('/proc/self/cgroup');
   if (cgroup && /lxc\.payload\.\d+/.test(cgroup)) return 'lxc';
+
+  // Docker-on-LXC fallback: when the agent runs in Docker inside an unprivileged
+  // PVE LXC, `/host/proc/1/environ` is unreadable due to user-namespace mapping
+  // (the agent's "root" doesn't match the host LXC's "root"), and DMI shows the
+  // bare-metal hypervisor (e.g. "FUJITSU"), not QEMU. But `/host/etc/hostname`
+  // IS world-readable and reflects the LXC's hostname. If that file exists,
+  // is readable, and differs from the container's hostname, we're in an LXC.
+  if (hostRoot) {
+    const hostHostname = safeRead(hostPath(hostRoot, '/etc/hostname'))?.trim();
+    if (hostHostname && hostHostname !== os.hostname()) return 'lxc';
+  }
 
   return 'bare';
 }
@@ -56,7 +63,24 @@ function readHostHostname(hostRoot: string | null): string {
   return os.hostname();
 }
 
-function pickPrimaryMac(): string | null {
+function pickPrimaryMac(hostRoot: string | null): string | null {
+  // Prefer host's network interfaces when available — agent's own
+  // `os.networkInterfaces()` shows the docker container's interfaces, not the
+  // host LXC's eth0. `/host/sys/class/net/<iface>/address` is world-readable
+  // and gives the actual host MAC.
+  if (hostRoot) {
+    try {
+      const ifaceDir = hostPath(hostRoot, '/sys/class/net');
+      const ifaces = fs.readdirSync(ifaceDir);
+      for (const name of ifaces) {
+        if (name === 'lo' || name === 'bonding_masters') continue;
+        if (/^(docker|br-|veth|virbr|cni|flannel|cali)/.test(name)) continue;
+        const mac = safeRead(`${ifaceDir}/${name}/address`)?.trim().toLowerCase();
+        if (mac && mac !== '00:00:00:00:00:00') return mac;
+      }
+    } catch { /* fall through */ }
+  }
+
   const ifaces = os.networkInterfaces();
   for (const [name, addrs] of Object.entries(ifaces)) {
     if (!addrs) continue;
@@ -70,13 +94,23 @@ function pickPrimaryMac(): string | null {
   return null;
 }
 
+/** Resolve effective hostRoot: explicit env var, or default `/host` if that
+ *  directory exists (i.e. the docker-compose `/:/host:ro` bind is present).
+ *  Returns null on bare-metal/container deploys without the bind. */
+function resolveHostRoot(): string | null {
+  const explicit = process.env.INSIGHTD_HOST_ROOT?.trim();
+  if (explicit) return explicit;
+  try { if (fs.statSync('/host').isDirectory()) return '/host'; } catch { /* no /host */ }
+  return null;
+}
+
 export function collectIdentityHint(): IdentityHint {
-  const hostRoot = process.env.INSIGHTD_HOST_ROOT?.trim() || null;
+  const hostRoot = resolveHostRoot();
   const virt_type = detectVirtType(hostRoot);
   return {
     virt_type,
     system_uuid: virt_type === 'qemu' ? readQemuUuid(hostRoot) : null,
     hostname: readHostHostname(hostRoot),
-    primary_mac: pickPrimaryMac(),
+    primary_mac: pickPrimaryMac(hostRoot),
   };
 }
