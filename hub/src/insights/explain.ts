@@ -94,6 +94,14 @@ function chartKindForCategory(category: string): ChartKind {
   }
 }
 
+function chartWindowHours(category: string): number {
+  switch (category) {
+    case 'trend':      return 24 * 7;
+    case 'prediction': return 24 * 14;
+    default:           return 24;
+  }
+}
+
 function yLabelForMetric(metric: string | null): string | undefined {
   if (!metric) return undefined;
   if (metric.includes('percent')) return '%';
@@ -342,7 +350,7 @@ function thresholdCrossings(points: ChartPoint[], threshold: number | undefined)
 function buildTimeline(
   db: Database.Database, insight: InsightRow, chartPoints: ChartPoint[],
 ): TimelineMarker[] {
-  const fromIso = offsetIso(insight.computed_at, -24);
+  const fromIso = offsetIso(insight.computed_at, -chartWindowHours(insight.category));
   const toIso = insight.computed_at;
   const markers: TimelineMarker[] = [];
 

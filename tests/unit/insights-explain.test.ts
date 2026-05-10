@@ -217,6 +217,42 @@ describe('insights explain', () => {
       assert.deepEqual([...tsList].sort(), tsList);
       assert.ok(tl.length <= 25, `cap exceeded: ${tl.length}`);
     });
+
+    it('uses 7d window for trend insights and 14d for prediction insights', () => {
+      // Seed an alert 6 days back (would be missed by the old 24h window).
+      db.prepare(`
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, resolved_at)
+        VALUES ('h1', 'host_high_cpu', 'h1', ?, NULL)
+      `).run(tsAt(new Date(NOW.getTime() - 6 * 24 * 60 * 60 * 1000)));
+
+      const trendInsight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1', category: 'trend',
+        metric: 'host.cpu_percent', current_value: 70, baseline_value: 60,
+        title: 't', message: 'm', computed_at: tsAt(NOW),
+      });
+      const trendTl = explain.buildTimeline(db, trendInsight, []);
+      assert.ok(
+        trendTl.some((m: any) => m.kind === 'alert_fired'),
+        'trend timeline should pick up the 6-day-old alert',
+      );
+
+      // Same alert at 13 days back — only the 14d prediction window catches it.
+      db.prepare(`
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, resolved_at)
+        VALUES ('h1', 'host_high_cpu', 'h1', ?, NULL)
+      `).run(tsAt(new Date(NOW.getTime() - 13 * 24 * 60 * 60 * 1000)));
+
+      const predictionInsight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1', category: 'prediction',
+        metric: 'host.cpu_percent', title: 't', message: 'm',
+        computed_at: tsAt(NOW),
+      });
+      const predTl = explain.buildTimeline(db, predictionInsight, []);
+      assert.equal(
+        predTl.filter((m: any) => m.kind === 'alert_fired').length, 2,
+        'prediction timeline should pick up both alerts (13d and 6d old)',
+      );
+    });
   });
 
   describe('buildExplanation', () => {
