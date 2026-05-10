@@ -14,6 +14,7 @@ export interface FeedRowProps {
   time?: string | null;
   to: string;
   footer?: ReactNode;
+  expandable?: { isExpanded: boolean; onToggle: () => void };
 }
 
 const BORDER_CLASS: Record<FeedSeverity, string> = {
@@ -34,7 +35,7 @@ const PILL_CLASS: Record<FeedSeverity, string> = {
   info: 'bg-info/10 text-info',
 };
 
-export function FeedRow({ icon, title, pillLabel, severity, detail, meta, time, to, footer }: FeedRowProps) {
+export function FeedRow({ icon, title, pillLabel, severity, detail, meta, time, to, footer, expandable }: FeedRowProps) {
   return (
     <div className={`rounded-lg border-l-[3px] ${BORDER_CLASS[severity]} bg-bg-secondary`}>
       <Link to={to} className="block p-3 transition-colors hover:bg-surface-hover">
@@ -58,6 +59,16 @@ export function FeedRow({ icon, title, pillLabel, severity, detail, meta, time, 
               )}
             </div>
           </div>
+          {expandable && (
+            <button
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); expandable.onToggle(); }}
+              className="ml-auto shrink-0 px-1 text-xs text-muted hover:text-fg"
+              aria-label={expandable.isExpanded ? 'Collapse' : 'Expand'}
+              aria-expanded={expandable.isExpanded}
+            >
+              {expandable.isExpanded ? '▲' : '▼'}
+            </button>
+          )}
         </div>
       </Link>
       {footer}

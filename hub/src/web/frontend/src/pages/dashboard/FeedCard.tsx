@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/Card';
 import { LinkButton } from '@/components/FormField';
 import { FeedRow } from '@/components/FeedRow';
+import { ExpandedBody } from '@/components/insights/ExpandedBody';
 import { useAuth } from '@/context/AuthContext';
 import { useSilenceAlert } from '@/hooks/useSilenceAlert';
 import type { DashboardInsight } from '@/types/api';
@@ -61,6 +62,15 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
   // ~one tick to refetch even after invalidation.
   const [pendingSilenced, setPendingSilenced] = useState<Set<number>>(() => new Set());
   const [lastDismissed, setLastDismissed] = useState<DismissedRecord | null>(null);
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
+
+  const toggleExpand = useCallback((id: number) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
 
   const dismissInsight = useCallback((item: FeedItem) => {
     if (!item.insight) return;
@@ -167,26 +177,59 @@ export function FeedCard({ title, subtitle, items, viewAllHref, className, empty
       )}
       {visible.length > 0 ? (
         <div className="space-y-2">
-          {visible.map(item => (
-            <FeedRow
-              key={item.id}
-              icon={item.icon}
-              title={item.title}
-              pillLabel={item.pillLabel}
-              severity={item.severity}
-              detail={item.detail}
-              meta={item.meta}
-              time={item.time}
-              to={item.to}
-              footer={
-                item.kind === 'insight' && item.insight ? (
-                  <DismissAction onDismiss={() => dismissInsight(item)} ariaLabel="Dismiss insight" />
-                ) : item.kind === 'alert' && item.alert ? (
-                  <AlertDismissAction item={item} onDismissed={recordAlertDismiss} />
-                ) : undefined
-              }
-            />
-          ))}
+          {visible.map(item => {
+            if (item.kind === 'insight' && item.insight) {
+              const id = item.insight.id;
+              const isExpanded = expanded.has(id);
+              return (
+                <div key={item.id}>
+                  <FeedRow
+                    icon={item.icon}
+                    title={item.title}
+                    pillLabel={item.pillLabel}
+                    severity={item.severity}
+                    detail={item.detail}
+                    meta={item.meta}
+                    time={item.time}
+                    to={item.to}
+                    expandable={{ isExpanded, onToggle: () => toggleExpand(id) }}
+                    footer={
+                      <DismissAction onDismiss={() => dismissInsight(item)} ariaLabel="Dismiss insight" />
+                    }
+                  />
+                  {isExpanded && (
+                    <div className="border-t border-border bg-bg">
+                      <ExpandedBody
+                        insight={{
+                          id,
+                          entity_type: item.insight.entity_type,
+                          entity_id: item.insight.entity_id,
+                        }}
+                      />
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <FeedRow
+                key={item.id}
+                icon={item.icon}
+                title={item.title}
+                pillLabel={item.pillLabel}
+                severity={item.severity}
+                detail={item.detail}
+                meta={item.meta}
+                time={item.time}
+                to={item.to}
+                footer={
+                  item.kind === 'alert' && item.alert ? (
+                    <AlertDismissAction item={item} onDismissed={recordAlertDismiss} />
+                  ) : undefined
+                }
+              />
+            );
+          })}
         </div>
       ) : dismissedCount > 0 ? (
         <p className="py-2 text-center text-xs text-muted">All insights dismissed for this session</p>
