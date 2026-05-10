@@ -275,4 +275,47 @@ describe('detector — disk-fill ETA insights', () => {
     assert.match(i.title, /Storage pool "local-zfs" on node-1 filling up/);
     assert.match(i.suggested_action!, /pvesm status/);
   });
+
+  it('skips pve_storage with active=0', () => {
+    const GB = 1024 ** 3;
+    seedPveStorage({
+      storageName: 'mounted-offline',
+      totalBytes: 100 * GB,
+      startBytes: 30 * GB,
+      dailyGrowthBytes: 5 * GB,
+      active: 0,
+    });
+    generateInsights(db);
+    const insights = getDiskFillInsights().filter(i => i.metric === 'pve_storage_used_percent');
+    assert.equal(insights.length, 0);
+  });
+
+  it('dedups against open pve_storage_saturation alert', () => {
+    const GB = 1024 ** 3;
+    seedPveStorage({
+      storageName: 'local-zfs',
+      totalBytes: 100 * GB,
+      startBytes: 30 * GB,
+      dailyGrowthBytes: 5 * GB,
+    });
+    db.prepare(`
+      INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, message, trigger_value)
+      VALUES ('node-1', 'pve_storage_saturation', 'local-zfs', datetime('now'), datetime('now'), 'storage saturated', '90')
+    `).run();
+    generateInsights(db);
+    const insights = getDiskFillInsights().filter(i => i.metric === 'pve_storage_used_percent');
+    assert.equal(insights.length, 0);
+  });
+
+  it('skips pve_storage with null total_bytes', () => {
+    // active=1, but total_bytes is NULL — possible in real data when PVE hides
+    // the storage size for inactive shared storage.
+    db.prepare(`
+      INSERT INTO pve_storage_snapshots (host_id, storage_name, storage_type, total_bytes, used_bytes, active, shared, collected_at)
+      VALUES ('node-1', 'broken', 'dir', NULL, 60, 1, 0, datetime('now'))
+    `).run();
+    generateInsights(db);
+    const insights = getDiskFillInsights().filter(i => i.metric === 'pve_storage_used_percent');
+    assert.equal(insights.length, 0);
+  });
 });
