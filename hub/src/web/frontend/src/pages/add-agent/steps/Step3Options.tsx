@@ -1,5 +1,6 @@
 import { FormField, Input, Select } from '@/components/FormField';
 import type { WizardState } from '../types';
+import { validateImage } from '../validation';
 
 interface AdvancedField { key: keyof WizardState['advanced']; label: string; placeholder: string; help?: string }
 
@@ -77,6 +78,9 @@ export function Step3Options({ state, setState }: { state: WizardState; setState
                 onChange={e => setState(s => ({ ...s, advanced: { ...s.advanced, [f.key]: e.target.value } }))}
                 placeholder={f.placeholder}
               />
+              {f.key === 'image' && state.advanced.image && validateImage(state.advanced.image) && (
+                <p className="text-xs text-warning">{validateImage(state.advanced.image)}</p>
+              )}
             </FormField>
           ))}
         </div>

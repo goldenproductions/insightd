@@ -7,6 +7,7 @@ import { Step1Target } from './steps/Step1Target';
 import { Step2Connection } from './steps/Step2Connection';
 import { Step3Options } from './steps/Step3Options';
 import { Step4Install } from './steps/Step4Install';
+import { validateIdentifier, validateBrokerUrl, validateImage } from './validation';
 
 const STEP_LABELS = ['Target', 'Connection', 'Options', 'Install'] as const;
 
@@ -16,8 +17,10 @@ export function AddAgentPage() {
 
   const canAdvance =
     step === 1 ? state.target !== null :
-    step === 2 ? state.identifier.trim() !== '' && (state.useDefaultBroker || state.mqttUrl.trim() !== '') :
-    step === 3 ? true :
+    step === 2 ? state.identifier.trim() !== ''
+                && validateIdentifier(state.identifier) === null
+                && (state.useDefaultBroker || (state.mqttUrl.trim() !== '' && validateBrokerUrl(state.mqttUrl) === null)) :
+    step === 3 ? !state.advanced.image || validateImage(state.advanced.image) === null :
     false;
 
   return (

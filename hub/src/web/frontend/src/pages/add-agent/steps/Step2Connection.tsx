@@ -1,8 +1,10 @@
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
 import { FormField, Input } from '@/components/FormField';
 import type { WizardState, BrokerDefaults } from '../types';
+import { validateIdentifier, validateBrokerUrl } from '../validation';
 
 const IDENTIFIER_LABEL: Record<NonNullable<WizardState['target']>, { label: string; placeholder: string; help: string }> = {
   docker:     { label: 'Host ID',      placeholder: 'nas-01',      help: 'Unique name for this host. Used in URLs and reports.' },
@@ -14,11 +16,17 @@ const IDENTIFIER_LABEL: Record<NonNullable<WizardState['target']>, { label: stri
 interface HostsRow { host_id: string }
 
 export function Step2Connection({ state, setState }: { state: WizardState; setState: (u: (s: WizardState) => WizardState) => void }) {
-  const { data: defaults } = useQuery({
+  const { data: defaults, isError: brokerDefaultsFailed } = useQuery({
     queryKey: queryKeys.agentSetup(),
     queryFn: () => api<BrokerDefaults>('/agent-setup'),
     refetchInterval: false,
   });
+
+  useEffect(() => {
+    if (brokerDefaultsFailed && state.useDefaultBroker) {
+      setState(s => ({ ...s, useDefaultBroker: false }));
+    }
+  }, [brokerDefaultsFailed, state.useDefaultBroker, setState]);
   const { data: hosts } = useQuery({
     queryKey: queryKeys.hosts(),
     queryFn: () => api<HostsRow[]>('/hosts'),
@@ -28,6 +36,8 @@ export function Step2Connection({ state, setState }: { state: WizardState; setSt
   const target = state.target!;
   const ident = IDENTIFIER_LABEL[target];
   const collision = hosts?.some(h => h.host_id === state.identifier.trim()) ?? false;
+  const idError      = state.identifier ? validateIdentifier(state.identifier) : null;
+  const urlError     = state.useDefaultBroker ? null : validateBrokerUrl(state.mqttUrl);
 
   return (
     <div className="space-y-5">
@@ -39,6 +49,7 @@ export function Step2Connection({ state, setState }: { state: WizardState; setSt
           autoFocus
         />
       </FormField>
+      {idError && <p className="text-xs text-warning">{idError}</p>}
       {collision && target !== 'k8s' && (
         <p className="rounded border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
           Host ID '{state.identifier}' already exists. Continuing will replace its agent.
@@ -46,11 +57,17 @@ export function Step2Connection({ state, setState }: { state: WizardState; setSt
       )}
 
       <div className="space-y-3">
+        {brokerDefaultsFailed && (
+          <p className="rounded border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
+            Could not load broker defaults from the hub. Enter MQTT settings manually below.
+          </p>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
             checked={state.useDefaultBroker}
             onChange={e => setState(s => ({ ...s, useDefaultBroker: e.target.checked }))}
+            disabled={brokerDefaultsFailed}
           />
           Use the hub's default broker
         </label>
@@ -63,6 +80,7 @@ export function Step2Connection({ state, setState }: { state: WizardState; setSt
             disabled={state.useDefaultBroker}
           />
         </FormField>
+        {urlError && <p className="text-xs text-warning">{urlError}</p>}
         <div className="grid gap-3 sm:grid-cols-2">
           <FormField label="MQTT User">
             <Input
