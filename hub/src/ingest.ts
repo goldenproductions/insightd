@@ -847,8 +847,8 @@ function ingestPveZfs(db: Database.Database, hostId: string, items: PveZfsRecord
  * Hub stores nothing on standalone PVE installs (publishPveCluster
  * short-circuits when the agent's collectClusterStatus returns null).
  */
-function ingestPveCluster(db: Database.Database, status: PveClusterRecord): void {
-  db.prepare(`
+function ingestPveCluster(db: Database.Database, hostId: string, status: PveClusterRecord): void {
+  const upsertCluster = db.prepare(`
     INSERT INTO pve_cluster_status (cluster_name, quorate, total_nodes, online_nodes, observed_at)
     VALUES (?, ?, ?, ?, datetime('now'))
     ON CONFLICT(cluster_name) DO UPDATE SET
@@ -856,7 +856,14 @@ function ingestPveCluster(db: Database.Database, status: PveClusterRecord): void
       total_nodes  = excluded.total_nodes,
       online_nodes = excluded.online_nodes,
       observed_at  = excluded.observed_at
-  `).run(status.clusterName, status.quorate, status.totalNodes, status.onlineNodes);
+  `);
+  const seedHostClusterId = db.prepare(`
+    UPDATE hosts SET proxmox_cluster_id = ? WHERE host_id = ?
+  `);
+  db.transaction(() => {
+    upsertCluster.run(status.clusterName, status.quorate, status.totalNodes, status.onlineNodes);
+    seedHostClusterId.run(status.clusterName, hostId);
+  })();
 }
 
 interface PveGuestSnapshotRecord {

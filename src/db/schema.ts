@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 50;
+const SCHEMA_VERSION = 51;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -18,7 +18,11 @@ function bootstrap(db: Database.Database): void {
       runtime_type  TEXT NOT NULL DEFAULT 'docker',
       host_group    TEXT,
       host_group_override TEXT,
-      host_labels   TEXT  -- v48: agent-reported labels (Proxmox identity bridge in PR4+)
+      host_labels   TEXT,  -- v48: agent-reported labels (Proxmox identity bridge in PR4+)
+      proxmox_cluster_id TEXT, -- v51: PVE cluster the host belongs to (seeded from pve-cluster MQTT)
+      proxmox_node TEXT,
+      proxmox_vmid INTEGER,
+      proxmox_guest_type TEXT
     );
 
     CREATE TABLE IF NOT EXISTS container_snapshots (
@@ -1222,6 +1226,20 @@ function migrate(db: Database.Database, fromVersion: number): void {
         PRIMARY KEY (host_id, guest_vmid)
       );
     `);
+  }
+  if (fromVersion < 51) {
+    // v51: Proxmox guest <-> host correlation (mirrors hub/src/db/schema.ts v51 migration)
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_cluster_id TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_node TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_vmid INTEGER'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE hosts ADD COLUMN proxmox_guest_type TEXT'); } catch { /* already exists */ }
+    try {
+      db.exec(`CREATE INDEX IF NOT EXISTS hosts_proxmox_link
+               ON hosts (proxmox_cluster_id, proxmox_vmid)
+               WHERE proxmox_vmid IS NOT NULL`);
+    } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uuid TEXT'); } catch { /* already exists */ }
+    try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_primary_mac TEXT'); } catch { /* already exists */ }
   }
 }
 
