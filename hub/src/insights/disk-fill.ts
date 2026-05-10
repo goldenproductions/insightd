@@ -63,11 +63,12 @@ function generateDiskInsights(db: Database.Database, insert: DiskInsightInsert):
   // Hoist all prepared statements outside the loop — compile once, run many.
   const latestStmt = db.prepare(`
     SELECT host_id, mount_point, total_gb, used_gb, used_percent
-    FROM disk_snapshots ds
-    WHERE collected_at = (
-      SELECT MAX(collected_at) FROM disk_snapshots
-      WHERE host_id = ds.host_id AND mount_point = ds.mount_point
+    FROM (
+      SELECT host_id, mount_point, total_gb, used_gb, used_percent,
+             ROW_NUMBER() OVER (PARTITION BY host_id, mount_point ORDER BY collected_at DESC, id DESC) AS rn
+      FROM disk_snapshots
     )
+    WHERE rn = 1
   `);
   const dailyStmt = db.prepare(`
     SELECT DATE(collected_at) AS day, AVG(used_gb) AS avg
@@ -99,7 +100,7 @@ function generateDiskInsights(db: Database.Database, insert: DiskInsightInsert):
     if (!trend || trend.dailyGrowth <= 0) continue;
 
     const remainingGb = row.total_gb - trend.current;
-    const daysUntil = Math.round(remainingGb / trend.dailyGrowth);
+    const daysUntil = Math.ceil(remainingGb / trend.dailyGrowth);
     if (daysUntil <= 0 || daysUntil > HORIZON_DAYS) continue;
 
     const severity: 'critical' | 'warning' = daysUntil <= CRITICAL_DAYS ? 'critical' : 'warning';
@@ -135,11 +136,12 @@ interface DailyPveRow { day: string; avg: number | null }
 function generatePveStorageInsights(db: Database.Database, insert: DiskInsightInsert): number {
   const latestStmt = db.prepare(`
     SELECT host_id, storage_name, storage_type, total_bytes, used_bytes, active
-    FROM pve_storage_snapshots ps
-    WHERE collected_at = (
-      SELECT MAX(collected_at) FROM pve_storage_snapshots
-      WHERE host_id = ps.host_id AND storage_name = ps.storage_name
+    FROM (
+      SELECT host_id, storage_name, storage_type, total_bytes, used_bytes, active,
+             ROW_NUMBER() OVER (PARTITION BY host_id, storage_name ORDER BY collected_at DESC, id DESC) AS rn
+      FROM pve_storage_snapshots
     )
+    WHERE rn = 1
   `);
   const dailyStmt = db.prepare(`
     SELECT DATE(collected_at) AS day, AVG(used_bytes) AS avg
@@ -173,7 +175,7 @@ function generatePveStorageInsights(db: Database.Database, insert: DiskInsightIn
     if (!trend || trend.dailyGrowth <= 0) continue;
 
     const remaining = row.total_bytes - trend.current;
-    const daysUntil = Math.round(remaining / trend.dailyGrowth);
+    const daysUntil = Math.ceil(remaining / trend.dailyGrowth);
     if (daysUntil <= 0 || daysUntil > HORIZON_DAYS) continue;
 
     const severity: 'critical' | 'warning' = daysUntil <= CRITICAL_DAYS ? 'critical' : 'warning';
