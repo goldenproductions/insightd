@@ -154,15 +154,30 @@ function fetchContainerMetricSeries(
   `).all(hostId, containerName, fromIso, toIso) as ChartPoint[];
 }
 
+function fetchDiskSeries(
+  db: Database.Database, entityId: string, fromIso: string, toIso: string,
+): ChartPoint[] {
+  const [hostId, ...mountParts] = entityId.split('/');
+  const mountpoint = '/' + mountParts.join('/');
+  return db.prepare(`
+    SELECT collected_at AS ts, used_percent AS value
+    FROM disk_snapshots
+    WHERE host_id = ? AND mount_point = ? AND collected_at BETWEEN ? AND ? AND used_percent IS NOT NULL
+    ORDER BY collected_at ASC
+  `).all(hostId, mountpoint, fromIso, toIso) as ChartPoint[];
+}
+
 function fetchSeries(
   db: Database.Database, insight: InsightRow, fromIso: string, toIso: string,
 ): ChartPoint[] {
-  if (!insight.metric) return [];
   if (insight.entity_type === 'host') {
-    return fetchHostMetricSeries(db, insight.entity_id, insight.metric, fromIso, toIso);
+    return fetchHostMetricSeries(db, insight.entity_id, insight.metric ?? '', fromIso, toIso);
   }
   if (insight.entity_type === 'container') {
-    return fetchContainerMetricSeries(db, insight.entity_id, insight.metric, fromIso, toIso);
+    return fetchContainerMetricSeries(db, insight.entity_id, insight.metric ?? '', fromIso, toIso);
+  }
+  if (insight.entity_type === 'disk') {
+    return fetchDiskSeries(db, insight.entity_id, fromIso, toIso);
   }
   return [];
 }
@@ -174,6 +189,19 @@ function tsAt(date: Date): string {
 function offsetIso(baseIso: string, hoursDelta: number): string {
   const t = new Date(baseIso.replace(' ', 'T') + 'Z');
   return tsAt(new Date(t.getTime() + hoursDelta * 60 * 60 * 1000));
+}
+
+function parseForecastMeta(evidence: string | null): { horizon_hours: number; mid: number; lower: number; upper: number } | null {
+  if (!evidence) return null;
+  try {
+    const parsed = JSON.parse(evidence);
+    const f = parsed?.forecast;
+    if (f && typeof f.horizon_hours === 'number' && typeof f.mid === 'number'
+        && typeof f.lower === 'number' && typeof f.upper === 'number') {
+      return f;
+    }
+  } catch { /* fall through */ }
+  return null;
 }
 
 function buildChart(db: Database.Database, insight: InsightRow): ChartData {
@@ -194,6 +222,29 @@ function buildChart(db: Database.Database, insight: InsightRow): ChartData {
     const points  = fetchSeries(db, insight, thisFrom, insight.computed_at);
     const compare = fetchSeries(db, insight, lastFrom, lastTo);
     return { kind, points, compare, threshold, thresholdLabel, yLabel };
+  }
+  if (kind === 'forecast') {
+    const fromIso = offsetIso(insight.computed_at, -24 * 14);
+    const points = fetchSeries(db, insight, fromIso, insight.computed_at);
+    const meta = parseForecastMeta(insight.evidence);
+    let forecast: ChartData['forecast'] | undefined;
+    if (meta) {
+      const horizonHours = meta.horizon_hours;
+      const stepHours = Math.max(1, Math.round(horizonHours / 24));
+      const baselinePoint = points[points.length - 1]?.value ?? insight.current_value ?? meta.mid;
+      forecast = [];
+      for (let h = 0; h <= horizonHours; h += stepHours) {
+        const ratio = h / horizonHours;
+        const ts = offsetIso(insight.computed_at, h);
+        forecast.push({
+          ts,
+          mid:   baselinePoint + (meta.mid   - baselinePoint) * ratio,
+          lower: baselinePoint + (meta.lower - baselinePoint) * ratio,
+          upper: baselinePoint + (meta.upper - baselinePoint) * ratio,
+        });
+      }
+    }
+    return { kind, points, forecast, threshold, thresholdLabel, yLabel };
   }
   return { kind, points: [], threshold, thresholdLabel, yLabel };
 }

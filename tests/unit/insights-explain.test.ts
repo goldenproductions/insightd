@@ -91,6 +91,36 @@ describe('insights explain', () => {
       }
     });
 
+    it('returns forecast cone for a disk_fill prediction insight', () => {
+      const insertDisk = db.prepare(`
+        INSERT INTO disk_snapshots (host_id, mount_point, total_gb, used_gb, used_percent, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (let i = 14 * 24; i >= 0; i--) {
+        const t = new Date(NOW.getTime() - i * 60 * 60 * 1000);
+        const pct = 50 + (14 * 24 - i) * 0.05;
+        insertDisk.run('h1', '/', 1000, Math.round(pct * 10) / 10, pct, tsAt(t));
+      }
+      const insight = seedInsight(db, {
+        entity_type: 'disk', entity_id: 'h1//',
+        category: 'prediction', metric: 'disk.percent',
+        current_value: 80, baseline_value: 90,
+        title: 'Disk fill ETA', message: 'projected to fill in 14d',
+        evidence: JSON.stringify({
+          lines: ['Disk projected to reach 90% in 14d'],
+          forecast: { horizon_hours: 14 * 24, mid: 92, lower: 88, upper: 96 },
+          log_bursts: [],
+        }),
+        computed_at: tsAt(NOW),
+      });
+
+      const chart = explain.buildChart(db, insight);
+
+      assert.equal(chart.kind, 'forecast');
+      assert.ok(chart.forecast && chart.forecast.length > 0, 'forecast points');
+      assert.equal(chart.threshold, 90);
+    });
+
     it('returns week_overlay with this-week + last-week series for trend', () => {
       const insertSnap = db.prepare(`
         INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, load_5, collected_at)
