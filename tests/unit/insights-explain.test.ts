@@ -90,6 +90,28 @@ describe('insights explain', () => {
         assert.equal(chart.kind, 'sparkline', `category=${category}`);
       }
     });
+
+    it('returns week_overlay with this-week + last-week series for trend', () => {
+      const insertSnap = db.prepare(`
+        INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, load_5, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (let i = 14 * 24; i >= 0; i--) {
+        const t = new Date(NOW.getTime() - i * 60 * 60 * 1000);
+        insertSnap.run('h1', 60, 8000, 4000, 1.0, tsAt(t));
+      }
+      const insight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1', category: 'trend',
+        metric: 'host.cpu_percent', current_value: 75, baseline_value: 60,
+        title: 'CPU trend', message: 'm', computed_at: tsAt(NOW),
+      });
+
+      const chart = explain.buildChart(db, insight);
+
+      assert.equal(chart.kind, 'week_overlay');
+      assert.ok(chart.points.length > 0, 'this-week points');
+      assert.ok(chart.compare && chart.compare.length > 0, 'last-week points');
+    });
   });
 
   describe('buildSummary', () => {

@@ -187,6 +187,14 @@ function buildChart(db: Database.Database, insight: InsightRow): ChartData {
     const points = fetchSeries(db, insight, fromIso, insight.computed_at);
     return { kind, points, threshold, thresholdLabel, yLabel };
   }
+  if (kind === 'week_overlay') {
+    const thisFrom = offsetIso(insight.computed_at, -24 * 7);
+    const lastFrom = offsetIso(insight.computed_at, -24 * 14);
+    const lastTo   = offsetIso(insight.computed_at, -24 * 7);
+    const points  = fetchSeries(db, insight, thisFrom, insight.computed_at);
+    const compare = fetchSeries(db, insight, lastFrom, lastTo);
+    return { kind, points, compare, threshold, thresholdLabel, yLabel };
+  }
   return { kind, points: [], threshold, thresholdLabel, yLabel };
 }
 
