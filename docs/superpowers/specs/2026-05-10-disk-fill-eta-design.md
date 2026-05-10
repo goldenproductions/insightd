@@ -47,7 +47,7 @@ For each source (disk_snapshots → mount, pve_storage_snapshots → storage poo
 1. Read latest snapshot. Skip if `total_bytes` is null/0 or `active = 0` (pve_storage only).
 2. **Floor:** skip if `used_percent < 50`.
 3. **Alert dedup:** skip if an open `alert_state` row exists with `alert_type IN ('disk_full', 'pve_storage_saturation')` and matching host/target.
-4. **Trend:** OLS linear regression of usage vs time, over the last 7 days of raw snapshots. For Linux disks, regress on `used_gb`; for pve_storage, on `used_bytes`. Reject if `n < 24` samples (less than ~hourly coverage over the window).
+4. **Trend:** mirror the existing `computeMetricTrend` shape used by host/container predictions. Group raw snapshots into daily averages over the last 7 days, then compute slope as `(last_day_avg − first_day_avg) / (days − 1)`. Reject if fewer than 4 days of data. Reject if relative growth is below 1 % of current value per day (noise floor). Reject if fewer than half of day-over-day changes agree with the trend direction (consistency check). Reject if absolute growth is below a per-source minimum: 0.05 GB/day for `disk_snapshots`, 50 MB/day for `pve_storage_snapshots`. For Linux disks, average `used_gb`; for pve_storage, average `used_bytes`.
 5. **Direction:** skip if `dailyGrowth <= 0`.
 6. **ETA:** `daysUntil = round((total - current) / dailyGrowth)`. Skip if `> 14` or `<= 0`.
 7. **Severity:** critical if `daysUntil <= 3`, otherwise warning.
@@ -62,11 +62,11 @@ For each source (disk_snapshots → mount, pve_storage_snapshots → storage poo
 | `message` | `{mount} at {used_pct}% ({used}/{total} GB), growing {dailyGrowth} GB/day — full in ~{daysUntil} {day(s)}` | analogous, "{storage}" + bytes-formatted |
 | `current_value` | `used_percent` | `used_percent` |
 | `baseline_value` | 100 (saturation %) | 100 |
-| `evidence` (JSON) | `{ mount_point, used_gb, total_gb, daily_growth_gb, sample_count, slope_r2 }` | `{ storage_name, storage_type, used_bytes, total_bytes, daily_growth_bytes, sample_count, slope_r2 }` |
+| `evidence` (JSON) | `{ mount_point, used_gb, total_gb, daily_growth_gb, day_count }` | `{ storage_name, storage_type, used_bytes, total_bytes, daily_growth_bytes, day_count }` |
 | `suggested_action` | `Check largest consumers: \`du -h {mount} \| sort -h \| tail -20\`. Common causes: log rotation broken, container volumes, package cache.` | `Inspect with \`pvesm status\` and review per-storage usage in Datacenter → Storage. Common causes: backups accumulating, disk images, ISO uploads.` |
 | `confidence` | `medium` | `medium` |
 
-`slope_r2` is included so a future "explanation depth" pass can mark low-r² (noisy) predictions as lower confidence; v1 always uses `medium`.
+v1 always emits `medium` confidence. Future iterations could derate based on noisier signals (e.g., spike + decay patterns).
 
 ## Data flow
 
@@ -80,8 +80,8 @@ For each source (disk_snapshots → mount, pve_storage_snapshots → storage poo
 | Case | Handling |
 |---|---|
 | Disk shrinking (cleanup happened) | `dailyGrowth <= 0` → skip |
-| Brand-new host (<7 days of data) | `n < 24` → skip; reconsider next cycle |
-| Disk yo-yos (logs grow then rotate) | OLS averages over 7d; if net-flat → skip |
+| Brand-new host (<4 days of data) | skip; reconsider next cycle |
+| Disk yo-yos (logs grow then rotate) | Daily averages smooth intra-day noise; consistency check rejects if fewer than half of day pairs increase |
 | Disk replaced / mount remounted (total changes mid-window) | Regression on `used_bytes` still computes a slope; ETA may be off for one cycle, self-corrects next hour |
 | pve_storage with `active = 0` | Skip (mirrors `pve_storage_saturation` alert) |
 | Mount disappeared from latest snapshot | Loop never visits it; stale insight cleared by cycle wipe |
@@ -106,7 +106,7 @@ Cases:
 | 4 | 30% used (below floor), growing fast | no insight |
 | 5 | Disk shrinking | no insight |
 | 6 | Flat disk (slope ≈ 0) | no insight |
-| 7 | Only 12 samples in 7d window | no insight |
+| 7 | Only 3 days of data in window | no insight (n < 4 days) |
 | 8 | Open `disk_full` alert for same (host, mount) | no insight |
 | 9 | pve_storage equivalent of #2 | warning, message uses `storage_name` + `pvesm status` |
 | 10 | pve_storage with `active = 0` | no insight |
@@ -125,7 +125,7 @@ Coverage target: every branch in `runDiskFillPredictions`.
 ## Open questions
 
 - `alert_state` column name for the dedup query: `evaluator.ts:1113` references `target` for `disk_full`. Confirm during implementation that the same column name applies for `pve_storage_saturation`.
-- Whether to export `computeMetricTrend` from `detector.ts` for reuse, or inline a small OLS helper in `disk-fill.ts`. Prefer inline to keep the new module standalone unless the existing function maps cleanly.
+- Whether to export `computeMetricTrend` from `detector.ts` for reuse, or inline an analogous helper in `disk-fill.ts`. The existing function is private; its signature accepts a metric column name and a single host/container scope, which doesn't quite fit a (host, mount) two-key scope. Lean toward inline.
 
 ## Out of scope (followups)
 
@@ -133,4 +133,4 @@ Coverage target: every branch in `runDiskFillPredictions`.
 - HTTP endpoint insights, log-pattern standalone insights, cluster-wide patterns — separate specs.
 - Per-disk silence UI.
 - Configurable horizon.
-- Lowering `confidence` based on `slope_r2` (placeholder evidence field).
+- Confidence-derating heuristics for noisy series.
