@@ -4,6 +4,8 @@ import { Button } from '@/components/FormField';
 import type { WizardState } from './types';
 import { initialWizardState } from './types';
 import { Step1Target } from './steps/Step1Target';
+import { Step2Connection } from './steps/Step2Connection';
+import { Step3Options } from './steps/Step3Options';
 
 const STEP_LABELS = ['Target', 'Connection', 'Options', 'Install'] as const;
 
@@ -23,8 +25,8 @@ export function AddAgentPage() {
       <Stepper current={step} onJump={s => s < step && setStep(s)} />
       <div>
         {step === 1 && <Step1Target state={state} setState={setState} />}
-        {step === 2 && <PlaceholderStep label="Connection (Step 2 — Task 4)" />}
-        {step === 3 && <PlaceholderStep label="Options (Step 3 — Task 4)" />}
+        {step === 2 && <Step2Connection state={state} setState={setState} />}
+        {step === 3 && <Step3Options state={state} setState={setState} />}
         {step === 4 && <PlaceholderStep label="Install (Step 4 — Task 5)" />}
       </div>
       <div className="flex justify-between">
