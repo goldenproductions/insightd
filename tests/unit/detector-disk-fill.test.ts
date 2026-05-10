@@ -257,4 +257,22 @@ describe('detector — disk-fill ETA insights', () => {
     assert.equal(typeof evidence.daily_growth_gb, 'number');
     assert.equal(evidence.day_count, 7);
   });
+
+  it('fires a warning insight on a pve_storage pool filling within horizon', () => {
+    // 60 GB used today on 100 GB pool, growing 5 GB/day → 8 days.
+    const GB = 1024 ** 3;
+    seedPveStorage({
+      storageName: 'local-zfs',
+      totalBytes: 100 * GB,
+      startBytes: 30 * GB,
+      dailyGrowthBytes: 5 * GB,
+    });
+    generateInsights(db);
+    const insights = getDiskFillInsights().filter(i => i.metric === 'pve_storage_used_percent');
+    assert.equal(insights.length, 1);
+    const i = insights[0]!;
+    assert.equal(i.severity, 'warning');
+    assert.match(i.title, /Storage pool "local-zfs" on node-1 filling up/);
+    assert.match(i.suggested_action!, /pvesm status/);
+  });
 });

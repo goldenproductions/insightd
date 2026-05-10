@@ -129,8 +129,84 @@ function generateDiskInsights(db: Database.Database, insert: DiskInsightInsert):
 function round1(n: number): number { return Math.round(n * 10) / 10; }
 function round2(n: number): number { return Math.round(n * 100) / 100; }
 
+interface PveStorageRow { host_id: string; storage_name: string; storage_type: string; total_bytes: number; used_bytes: number; active: number }
+interface DailyPveRow { day: string; avg: number | null }
+
+function generatePveStorageInsights(db: Database.Database, insert: DiskInsightInsert): number {
+  const latestStmt = db.prepare(`
+    SELECT host_id, storage_name, storage_type, total_bytes, used_bytes, active
+    FROM pve_storage_snapshots ps
+    WHERE collected_at = (
+      SELECT MAX(collected_at) FROM pve_storage_snapshots
+      WHERE host_id = ps.host_id AND storage_name = ps.storage_name
+    )
+  `);
+  const dailyStmt = db.prepare(`
+    SELECT DATE(collected_at) AS day, AVG(used_bytes) AS avg
+    FROM pve_storage_snapshots
+    WHERE host_id = ? AND storage_name = ?
+      AND collected_at >= datetime('now', '-7 days')
+    GROUP BY DATE(collected_at)
+    ORDER BY day
+  `);
+  const alertStmt = db.prepare(`
+    SELECT 1 FROM alert_state
+    WHERE alert_type = ? AND host_id = ? AND target = ? AND resolved_at IS NULL
+    LIMIT 1
+  `);
+
+  let count = 0;
+  const latest = latestStmt.all() as PveStorageRow[];
+
+  for (const row of latest) {
+    if (!row.total_bytes || row.total_bytes <= 0) continue;
+    if (!row.active) continue;
+    const usedPct = (row.used_bytes / row.total_bytes) * 100;
+    if (usedPct < FLOOR_USED_PERCENT) continue;
+    if (row.used_bytes >= row.total_bytes) continue;
+    if (alertStmt.get('pve_storage_saturation', row.host_id, row.storage_name)) continue;
+
+    const daily = dailyStmt.all(row.host_id, row.storage_name) as DailyPveRow[];
+    const cleaned = daily.filter((r): r is { day: string; avg: number } => r.avg != null);
+
+    const trend = dailyTrend(cleaned, MIN_PVE_GROWTH_BYTES);
+    if (!trend || trend.dailyGrowth <= 0) continue;
+
+    const remaining = row.total_bytes - trend.current;
+    const daysUntil = Math.round(remaining / trend.dailyGrowth);
+    if (daysUntil <= 0 || daysUntil > HORIZON_DAYS) continue;
+
+    const severity: 'critical' | 'warning' = daysUntil <= CRITICAL_DAYS ? 'critical' : 'warning';
+    const dayWord = daysUntil === 1 ? 'day' : 'days';
+    const liveUsedPct = round1((trend.current / row.total_bytes) * 100);
+    const evidence = JSON.stringify({
+      storage_name: row.storage_name,
+      storage_type: row.storage_type,
+      used_bytes: Math.round(trend.current),
+      total_bytes: row.total_bytes,
+      daily_growth_bytes: Math.round(trend.dailyGrowth),
+      day_count: trend.dayCount,
+    });
+
+    insert.run(
+      'host', row.host_id, 'prediction', severity,
+      `Storage pool "${row.storage_name}" on ${row.host_id} filling up`,
+      `${row.storage_name} at ${liveUsedPct}% (${formatGb(trend.current)}/${formatGb(row.total_bytes)} GB), growing ${formatGb(trend.dailyGrowth)} GB/day — full in ~${daysUntil} ${dayWord}`,
+      'pve_storage_used_percent', liveUsedPct, 100, evidence,
+      `Inspect with \`pvesm status\` and review per-storage usage in Datacenter → Storage. Common causes: backups accumulating, disk images, ISO uploads.`,
+      'medium',
+    );
+    count++;
+  }
+  return count;
+}
+
+function formatGb(bytes: number): string {
+  return (bytes / (1024 ** 3)).toFixed(1);
+}
+
 export function generateDiskFillInsights(db: Database.Database): number {
-  const insert: DiskInsightInsert = db.prepare(`
+  const insert = db.prepare(`
     INSERT INTO insights
       (entity_type, entity_id, category, severity, title, message,
        metric, current_value, baseline_value, evidence,
@@ -139,6 +215,7 @@ export function generateDiskFillInsights(db: Database.Database): number {
   `) as unknown as DiskInsightInsert;
   let count = 0;
   count += generateDiskInsights(db, insert);
+  count += generatePveStorageInsights(db, insert);
   return count;
 }
 
