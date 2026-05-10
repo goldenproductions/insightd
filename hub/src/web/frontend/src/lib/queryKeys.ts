@@ -38,6 +38,7 @@ export const queryKeys = {
   // Alerts & Insights
   alerts: () => ['alerts'] as const,
   insights: () => ['insights'] as const,
+  hostInsights: (hostId: string | undefined) => ['hostInsights', hostId] as const,
   insightExplain: (id: number) => ['insightExplain', id] as const,
   insightFeedback: () => ['insight-feedback'] as const,
   aiDiagnoseStatus: () => ['ai-diagnose-status'] as const,
