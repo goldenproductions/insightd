@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-2UHhqg_S.js";import{v as t}from"./index-CRBJJaFC.js";var n=e();function r({to:e,label:r}){return(0,n.jsxs)(t,{to:e,className:`text-sm text-info hover:underline`,children:[`← `,r]})}export{r as t};

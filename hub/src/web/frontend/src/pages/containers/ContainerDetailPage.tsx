@@ -297,13 +297,15 @@ export function ContainerDetailPage() {
 
   // Redirect PVE guests that have a linked host agent — show the richer host
   // detail page instead. Skipped when bypass_redirect=1 (set by HostDetailPage's
-  // "View on hypervisor" link so users can always reach the raw PVE view).
+  // "View on hypervisor" link so users can always reach the raw PVE view) or
+  // when the user came in with an explicit ?tab= — the insight they want lives
+  // on this entity, not the linked host.
   useEffect(() => {
     if (!data) return;
     if (bypassRedirect) return;
+    if (searchParams.get('tab')) return;
     if (data.linkedHostId && data.status === 'running') {
-      const qs = searchParams.toString();
-      navigate(`/hosts/${encodeURIComponent(data.linkedHostId)}${qs ? `?${qs}` : ''}`, { replace: true });
+      navigate(`/hosts/${encodeURIComponent(data.linkedHostId)}`, { replace: true });
     }
   }, [data, bypassRedirect, navigate, searchParams]);
 

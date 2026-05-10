@@ -1,0 +1,1 @@
+import{t as e}from"./jsx-runtime-2UHhqg_S.js";import{t}from"./Topbar-BC9q8Hlm.js";var n=e();function r({children:e,actions:r,subtitle:i}){return(0,n.jsx)(t,{title:e,subtitle:i,actions:r})}export{r as t};
