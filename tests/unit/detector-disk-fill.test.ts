@@ -236,4 +236,25 @@ describe('detector — disk-fill ETA insights', () => {
     generateInsights(db);
     assert.equal(getDiskFillInsights().length, 1);
   });
+
+  it('fires only for mounts above the floor when multiple mounts on one host', () => {
+    seedDisk({ totalGb: 100, startGb: 30, dailyGrowthGb: 5, mount: '/' });
+    seedDisk({ totalGb: 100, startGb: 5, dailyGrowthGb: 5, mount: '/var/log' }); // ends at 35% — below floor
+    generateInsights(db);
+    const insights = getDiskFillInsights();
+    assert.equal(insights.length, 1);
+    assert.match(insights[0]!.title, /Disk "\/" on node-1/);
+  });
+
+  it('embeds expected fields in evidence JSON', () => {
+    seedDisk({ totalGb: 100, startGb: 30, dailyGrowthGb: 5 });
+    generateInsights(db);
+    const i = getDiskFillInsights()[0]!;
+    const evidence = JSON.parse(i.evidence!);
+    assert.equal(evidence.mount_point, '/');
+    assert.equal(typeof evidence.used_gb, 'number');
+    assert.equal(typeof evidence.total_gb, 'number');
+    assert.equal(typeof evidence.daily_growth_gb, 'number');
+    assert.equal(evidence.day_count, 7);
+  });
 });
