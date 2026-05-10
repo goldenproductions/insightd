@@ -3,7 +3,7 @@ import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
-import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse, PodEventsResponse } from '@/types/api';
+import type { ContainerDetail, ContainerAvailability, ContainerSnapshot, ContainerBaselinesResponse, RcaNeighborsResponse, PodEventsResponse, InsightRow } from '@/types/api';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/FormField';
 import { TimeSeriesChart, type ChartSeries } from '@/components/TimeSeriesChart';
@@ -34,6 +34,7 @@ import { PodConditionsBadges } from '@/components/PodConditionsBadges';
 import { TopologyLinkCard } from '@/components/TopologyLinkCard';
 import { AIDiagnosisCard } from '@/components/AIDiagnosisCard';
 import { queryKeys } from '@/lib/queryKeys';
+import { InsightsTabPanel } from '@/components/insights/InsightsTabPanel';
 
 interface HistoryRow {
   collected_at: string;
@@ -138,10 +139,23 @@ export function ContainerDetailPage() {
   const hid = encodeURIComponent(hostId!);
   const cname = encodeURIComponent(containerName!);
   const { isAuthenticated } = useAuth();
-  const [activeTab, setActiveTab] = useState('overview');
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const bypassRedirect = searchParams.get('bypass_redirect') === '1';
+
+  const tabParam = searchParams.get('tab');
+  const validTabs = ['overview', 'logs', 'history', 'insights'];
+  const initialTab = tabParam && validTabs.includes(tabParam) ? tabParam : 'overview';
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  const handleTabChange = (id: string) => {
+    setActiveTab(id);
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('tab', id);
+      return next;
+    }, { replace: true });
+  };
   const { confirm, dialogProps } = useConfirm();
   const { actionLoading, actionResult, runAction, removeContainer } = useContainerAction(hostId!, [['container', hostId, containerName]], confirm);
 
@@ -171,6 +185,28 @@ export function ContainerDetailPage() {
     refetchInterval: 5 * 60_000,
   });
 
+
+  // Host-level insights filtered to this container's entity_id.
+  // We reuse the host insights endpoint rather than adding a new one.
+  const { data: hostInsightsAll } = useQuery({
+    queryKey: queryKeys.hostInsights(hostId),
+    queryFn: () => api<InsightRow[]>(`/hosts/${hid}/insights`).catch(() => []),
+    refetchInterval: 60_000,
+  });
+  const containerEntityId = `${hostId}/${containerName}`;
+  const containerInsights = (hostInsightsAll ?? []).filter(
+    i => i.entity_type === 'container' && i.entity_id === containerEntityId,
+  );
+  const hasContainerInsights = containerInsights.length > 0;
+
+  // Fall back to overview if user landed via ?tab=insights but this container
+  // has no insights (cross-entity redirect can leave a stale tab param).
+  useEffect(() => {
+    if (hostInsightsAll && activeTab === 'insights' && !hasContainerInsights) {
+      setActiveTab('overview');
+      setSearchParams({}, { replace: true });
+    }
+  }, [hostInsightsAll, activeTab, hasContainerInsights, setSearchParams]);
 
   // Pod-scoped k8s events. Fetched unconditionally — the endpoint returns
   // an empty list for non-k8s containers, so the gating happens at render.
@@ -217,19 +253,26 @@ export function ContainerDetailPage() {
     keys: '1',
     description: 'Overview tab',
     scope: 'Container detail',
-    onTrigger: () => setActiveTab('overview'),
+    onTrigger: () => handleTabChange('overview'),
   });
   useKeyboardShortcut({
     keys: '2',
     description: 'Logs tab',
     scope: 'Container detail',
-    onTrigger: () => setActiveTab('logs'),
+    onTrigger: () => handleTabChange('logs'),
   });
   useKeyboardShortcut({
     keys: '3',
     description: 'Alerts & history tab',
     scope: 'Container detail',
-    onTrigger: () => setActiveTab('history'),
+    onTrigger: () => handleTabChange('history'),
+  });
+  useKeyboardShortcut({
+    keys: '4',
+    description: 'Insights tab',
+    scope: 'Container detail',
+    disabled: !hasContainerInsights,
+    onTrigger: () => handleTabChange('insights'),
   });
   useKeyboardShortcut({
     keys: 'b',
@@ -254,17 +297,21 @@ export function ContainerDetailPage() {
 
   // Redirect PVE guests that have a linked host agent — show the richer host
   // detail page instead. Skipped when bypass_redirect=1 (set by HostDetailPage's
-  // "View on hypervisor" link so users can always reach the raw PVE view).
+  // "View on hypervisor" link so users can always reach the raw PVE view) or
+  // when the user came in with an explicit ?tab= — the insight they want lives
+  // on this entity, not the linked host.
   useEffect(() => {
     if (!data) return;
     if (bypassRedirect) return;
+    if (searchParams.get('tab')) return;
     if (data.linkedHostId && data.status === 'running') {
       navigate(`/hosts/${encodeURIComponent(data.linkedHostId)}`, { replace: true });
     }
-  }, [data, bypassRedirect, navigate]);
+  }, [data, bypassRedirect, navigate, searchParams]);
 
   // Early return prevents flash of the PVE container UI before the redirect fires.
-  if (data?.linkedHostId && data.status === 'running' && !bypassRedirect) {
+  // Skip when ?tab= is set — same reasoning as the redirect skip above.
+  if (data?.linkedHostId && data.status === 'running' && !bypassRedirect && !searchParams.get('tab')) {
     return null;
   }
 
@@ -336,6 +383,10 @@ export function ContainerDetailPage() {
     { id: 'overview', label: 'Overview', shortcut: '1' },
     { id: 'logs', label: 'Logs', shortcut: '2' },
     { id: 'history', label: 'Alerts & history', count: data.alerts.length, shortcut: '3' },
+    ...(hasContainerInsights
+      ? [{ id: 'insights', label: 'Insights', count: containerInsights.length, shortcut: '4' }]
+      : []
+    ),
   ];
 
   return (
@@ -590,7 +641,7 @@ export function ContainerDetailPage() {
         );
       })()}
 
-      <Tabs tabs={tabs} active={activeTab} onChange={setActiveTab} />
+      <Tabs tabs={tabs} active={activeTab} onChange={handleTabChange} />
 
       {/* Overview Tab — Status + Detail layers below the hero */}
       {activeTab === 'overview' && (
@@ -765,6 +816,11 @@ export function ContainerDetailPage() {
           hostId={hostId}
           containerName={containerName}
         />
+      )}
+
+      {/* Insights Tab */}
+      {activeTab === 'insights' && hasContainerInsights && (
+        <InsightsTabPanel insights={containerInsights} emptyMessage="No insights for this container." />
       )}
 
       <ConfirmDialog {...dialogProps} />

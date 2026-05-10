@@ -44,10 +44,10 @@ function insightLink(insight: DashboardInsight): string {
   if (insight.entity_type === 'container') {
     const split = splitContainerEntityId(insight.entity_id);
     if (split) {
-      return `/hosts/${encodeURIComponent(split.hostId)}/containers/${encodeURIComponent(split.containerName)}`;
+      return `/hosts/${encodeURIComponent(split.hostId)}/containers/${encodeURIComponent(split.containerName)}?tab=insights`;
     }
   }
-  return `/hosts/${encodeURIComponent(insight.entity_id)}`;
+  return `/hosts/${encodeURIComponent(insight.entity_id)}?tab=insights`;
 }
 
 function insightEntityName(insight: DashboardInsight): string {
