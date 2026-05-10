@@ -372,4 +372,11 @@ function buildTimeline(
   return markers.length > 25 ? markers.slice(markers.length - 25) : markers;
 }
 
-module.exports = { buildSummary, buildChart, buildTimeline };
+function buildExplanation(db: Database.Database, insight: InsightRow) {
+  const summary  = buildSummary(insight);
+  const chart    = buildChart(db, insight);
+  const timeline = buildTimeline(db, insight, chart.points);
+  return { summary, chart, timeline };
+}
+
+module.exports = { buildSummary, buildChart, buildTimeline, buildExplanation };

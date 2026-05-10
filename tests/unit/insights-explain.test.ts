@@ -219,6 +219,30 @@ describe('insights explain', () => {
     });
   });
 
+  describe('buildExplanation', () => {
+    it('returns summary + chart + timeline for a basic insight', () => {
+      const insertSnap = db.prepare(`
+        INSERT INTO host_snapshots (host_id, cpu_percent, memory_total_mb, memory_used_mb, load_5, collected_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `);
+      for (let i = 24; i >= 0; i--) {
+        const t = new Date(NOW.getTime() - i * 60 * 60 * 1000);
+        insertSnap.run('h1', 50 + i, 8000, 4000, 1.0, tsAt(t));
+      }
+      const insight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1', category: 'performance',
+        metric: 'host.cpu_percent', current_value: 74, baseline_value: 70,
+        title: 'High CPU', message: 'm', computed_at: tsAt(NOW),
+      });
+
+      const out = explain.buildExplanation(db, insight);
+
+      assert.ok(out.summary && out.summary.lead, 'has summary');
+      assert.equal(out.chart.kind, 'sparkline');
+      assert.ok(Array.isArray(out.timeline), 'has timeline array');
+    });
+  });
+
   describe('buildSummary', () => {
     it('synthesizes a summary for a capacity-based performance insight', () => {
       const insight = seedInsight(db, {
