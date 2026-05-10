@@ -55,7 +55,25 @@ describe('insights explain', () => {
     db.close();
   });
 
-  it('placeholder', () => {
-    assert.ok(db);
+  describe('buildSummary', () => {
+    it('synthesizes a summary for a capacity-based performance insight', () => {
+      const insight = seedInsight(db, {
+        entity_type: 'host', entity_id: 'h1',
+        category: 'performance', metric: 'host.cpu_percent',
+        title: 'High CPU on h1', message: 'CPU at 92%',
+        current_value: 92, baseline_value: 70,
+        confidence: 'medium', computed_at: tsAt(NOW),
+      });
+
+      const summary = explain.buildSummary(insight);
+
+      assert.equal(summary.confidence, 'medium');
+      assert.match(summary.lead, /h1/);
+      assert.ok(summary.reasons.length >= 1, 'expected at least one reason');
+      assert.ok(
+        summary.reasons.some((r: string) => r.includes('92')),
+        `expected current value in reasons; got ${JSON.stringify(summary.reasons)}`,
+      );
+    });
   });
 });
