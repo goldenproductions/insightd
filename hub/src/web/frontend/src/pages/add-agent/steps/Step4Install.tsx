@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { queryKeys } from '@/lib/queryKeys';
+import { timeAgo } from '@/lib/formatters';
 import { CommandBlock } from '@/components/CommandBlock';
 import { Card } from '@/components/Card';
 import type { WizardState, BrokerDefaults, AgentSetupCheck } from '../types';
@@ -23,7 +24,7 @@ export function Step4Install({ state }: { state: WizardState }) {
     user: state.useDefaultBroker ? (defaults?.mqttUser ?? '') : state.mqttUser,
     pass: state.useDefaultBroker ? (defaults?.mqttPass ?? '') : state.mqttPass,
   };
-  const image = state.advanced.image ?? defaults?.image ?? 'andreas404/insightd-agent:latest';
+  const image = state.advanced.image || defaults?.image || 'andreas404/insightd-agent:latest';
 
   let command = '';
   if (target === 'docker' || target === 'in-guest') {
@@ -150,7 +151,7 @@ function VerifyPanel({
   // docker
   return (
     <div className="text-sm">
-      ✓ Connected. Last heartbeat: just now.{' '}
+      ✓ Connected. Last heartbeat: {data.lastSeenAt ? timeAgo(data.lastSeenAt) : 'unknown'}.{' '}
       <Link to={`/hosts/${encodeURIComponent(identifier)}`} className="text-info hover:underline">→ View host page</Link>
     </div>
   );

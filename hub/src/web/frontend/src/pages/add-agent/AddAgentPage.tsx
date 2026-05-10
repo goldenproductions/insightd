@@ -39,8 +39,8 @@ export function AddAgentPage() {
             Next →
           </Button>
         ) : (
-          <Button onClick={() => { window.location.hash = '#/hosts'; }}>
-            Done
+          <Button variant="secondary" onClick={() => { window.location.hash = '#/'; }}>
+            Close
           </Button>
         )}
       </div>
