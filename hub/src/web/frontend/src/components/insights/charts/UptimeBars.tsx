@@ -5,8 +5,10 @@ export function UptimeBars({ chart }: { chart: ExplainChart }) {
   if (intervals.length === 0) {
     return <div className="text-xs text-muted">No uptime data for this window.</div>;
   }
-  const startMs = new Date(intervals[0].from.replace(' ', 'T') + 'Z').getTime();
-  const endMs   = new Date(intervals[intervals.length - 1].to.replace(' ', 'T') + 'Z').getTime();
+  const first = intervals[0]!;
+  const last = intervals[intervals.length - 1]!;
+  const startMs = new Date(first.from.replace(' ', 'T') + 'Z').getTime();
+  const endMs   = new Date(last.to.replace(' ', 'T') + 'Z').getTime();
   const span = Math.max(1, endMs - startMs);
 
   return (
@@ -27,8 +29,8 @@ export function UptimeBars({ chart }: { chart: ExplainChart }) {
         })}
       </div>
       <div className="flex justify-between text-[10px] text-muted">
-        <span>{intervals[0].from}</span>
-        <span>{intervals[intervals.length - 1].to}</span>
+        <span>{first.from}</span>
+        <span>{last.to}</span>
       </div>
     </div>
   );
