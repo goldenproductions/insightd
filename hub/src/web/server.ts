@@ -105,6 +105,7 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('DELETE', '/api/alerts/:id/silence', handlers.handleUnsilenceAlert);
   router.add('DELETE', '/api/alerts/:id', handlers.handleDeleteAlert);
   router.add('GET', '/api/agent-setup', handlers.handleAgentSetup);
+  router.add('GET', '/api/agent-setup/check', handlers.handleAgentSetupCheck);
   router.add('POST', '/api/auth', handlers.handleLogin);
   router.add('GET', '/api/api-keys', handlers.handleGetApiKeys);
   router.add('POST', '/api/api-keys', handlers.handleCreateApiKey);

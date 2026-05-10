@@ -495,6 +495,61 @@ function handleAgentSetup(req: HandlerReq, res: ServerResponse, db: Database.Dat
   };
 }
 
+function handleAgentSetupCheck(req: HandlerReq, res: ServerResponse, db: Database.Database, _config: any): any {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const identifier = (url.searchParams.get('identifier') || '').trim();
+  const target = (url.searchParams.get('target') || '').trim();
+
+  if (!identifier || !['docker', 'k8s', 'pve', 'in-guest'].includes(target)) {
+    return { status: 'waiting', firstSeenAt: null, lastSeenAt: null, proxmoxLink: null, pveCluster: null };
+  }
+
+  if (target === 'k8s') {
+    const row = db.prepare(`SELECT 1 AS hit FROM hosts WHERE host_group = ? AND runtime_type = 'kubernetes' LIMIT 1`).get(identifier) as { hit: number } | undefined;
+    return {
+      status: row ? 'connected' : 'waiting',
+      firstSeenAt: null,
+      lastSeenAt: null,
+      proxmoxLink: null,
+      pveCluster: null,
+    };
+  }
+
+  const host = db.prepare(`
+    SELECT host_id, first_seen, last_seen,
+           proxmox_node, proxmox_vmid, proxmox_guest_type, proxmox_cluster_id
+      FROM hosts
+     WHERE host_id = ?
+  `).get(identifier) as
+    | { host_id: string; first_seen: string; last_seen: string;
+        proxmox_node: string | null; proxmox_vmid: number | null;
+        proxmox_guest_type: 'qemu' | 'lxc' | null; proxmox_cluster_id: string | null }
+    | undefined;
+
+  if (!host) {
+    return { status: 'waiting', firstSeenAt: null, lastSeenAt: null, proxmoxLink: null, pveCluster: null };
+  }
+
+  const proxmoxLink = (target === 'in-guest' && host.proxmox_vmid != null && host.proxmox_node && host.proxmox_guest_type)
+    ? { node: host.proxmox_node, vmid: host.proxmox_vmid, guestType: host.proxmox_guest_type }
+    : null;
+
+  let pveCluster: string | null = null;
+  if (target === 'pve' && host.proxmox_cluster_id) {
+    const cluster = db.prepare(`SELECT cluster_name FROM pve_cluster_status WHERE cluster_name = ?`)
+      .get(host.proxmox_cluster_id) as { cluster_name: string } | undefined;
+    pveCluster = cluster?.cluster_name ?? null;
+  }
+
+  return {
+    status: 'connected',
+    firstSeenAt: host.first_seen,
+    lastSeenAt: host.last_seen,
+    proxmoxLink,
+    pveCluster,
+  };
+}
+
 function handleTimeline(req: HandlerReq, res: ServerResponse, db: Database.Database, config: any, params: Record<string, string>): any {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const days = Math.max(1, Math.min(30, parseInt(url.searchParams.get('days') || '7', 10) || 7));
@@ -1571,7 +1626,7 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerPodEvents, handleContainerLogs, handleGetNamespaceTopology, handleGetClusterOverview, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetContainerLogBursts, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerPodEvents, handleContainerLogs, handleGetNamespaceTopology, handleGetClusterOverview, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleAgentSetupCheck, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetContainerLogBursts, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return getApiKeys(db);
