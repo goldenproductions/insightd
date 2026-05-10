@@ -170,4 +170,36 @@ describe('detector — disk-fill ETA insights', () => {
     assert.match(i.message, /full in ~8 days/);
     assert.equal(i.confidence, 'medium');
   });
+
+  it('fires critical when ETA <= 3 days', () => {
+    // 7 daily samples, day 0 = 10 GB used, day 6 = 70 GB used. Last avg = 70.
+    // Slope = (70-10)/6 = 10. Remaining = 30. daysUntil = round(30/10) = 3 → critical at boundary.
+    seedDisk({ totalGb: 100, startGb: 10, dailyGrowthGb: 10 });
+    generateInsights(db);
+    const insights = getDiskFillInsights();
+    assert.equal(insights.length, 1);
+    assert.equal(insights[0]!.severity, 'critical');
+    assert.match(insights[0]!.message, /full in ~3 days/);
+  });
+
+  it('does not fire when ETA > 14 days', () => {
+    // 60% used, growing 1 GB/day on 100 GB → 40 days. Above horizon.
+    seedDisk({ totalGb: 100, startGb: 54, dailyGrowthGb: 1 });
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 0);
+  });
+
+  it('does not fire when disk is shrinking', () => {
+    // Used decreasing 5 GB/day from 95 GB ⇒ ends at 65 GB, still over floor, but slope is negative.
+    seedDisk({ totalGb: 100, startGb: 95, dailyGrowthGb: -5 });
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 0);
+  });
+
+  it('does not fire when disk is flat', () => {
+    // 70 GB used, no daily change.
+    seedDisk({ totalGb: 100, startGb: 70, dailyGrowthGb: 0 });
+    generateInsights(db);
+    assert.equal(getDiskFillInsights().length, 0);
+  });
 });
