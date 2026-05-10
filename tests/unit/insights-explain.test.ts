@@ -117,7 +117,7 @@ describe('insights explain', () => {
 
       assert.equal(chart.kind, 'uptime_bars');
       assert.ok(chart.uptime && chart.uptime.length > 0, 'expected uptime intervals');
-      assert.ok(chart.uptime!.some(iv => iv.up === false), 'expected at least one down interval');
+      assert.ok(chart.uptime!.some((iv: any) => iv.up === false), 'expected at least one down interval');
     });
 
     it('returns forecast cone for a disk_fill prediction insight', () => {
