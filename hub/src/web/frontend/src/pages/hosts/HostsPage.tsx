@@ -376,7 +376,7 @@ function HostRow({ host, draggable, onDragStart, onDragEnd, onClick }: HostRowPr
         <div className="flex items-center gap-1.5 truncate">
           <span className="truncate text-sm font-semibold text-fg">{host.host_id}</span>
           {host.proxmox && (
-            <span className="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 font-mono text-[10px] text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+            <span className="shrink-0 rounded border border-border bg-bg-secondary/40 px-1.5 py-0.5 font-mono text-[10px] text-secondary">
               {host.proxmox.node}:{host.proxmox.vmid}
             </span>
           )}

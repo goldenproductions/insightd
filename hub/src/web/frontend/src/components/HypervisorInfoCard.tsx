@@ -24,7 +24,7 @@ export function HypervisorInfoCard({ proxmox, pveHostId, containerName }: Props)
     : '—';
 
   return (
-    <Card className="border-l-4 border-purple-500/60">
+    <Card className="border-l-[3px] border-l-info">
       <div className="mb-3 flex items-center gap-1.5">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-secondary">
           Hypervisor info
