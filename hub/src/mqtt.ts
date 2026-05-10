@@ -25,7 +25,7 @@ const { ingestContainers, ingestDisk, ingestVolumes, ingestPvs, ingestPvcs, inge
   ingestHost: (db: Database.Database, hostId: string, metrics: any) => void;
   ingestPveStorage: (db: Database.Database, hostId: string, items: any[]) => void;
   ingestPveZfs: (db: Database.Database, hostId: string, items: any[]) => void;
-  ingestPveCluster: (db: Database.Database, status: any) => void;
+  ingestPveCluster: (db: Database.Database, hostId: string, status: any) => void;
   ingestPveGuestSnapshots: (db: Database.Database, hostId: string, items: any[]) => void;
   ingestPveBackups: (db: Database.Database, hostId: string, items: any[]) => void;
 };
@@ -337,7 +337,7 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         } else if (type === 'pve-zfs') {
           handlePveZfs(db, hostId, payload);
         } else if (type === 'pve-cluster') {
-          handlePveCluster(db, payload);
+          handlePveCluster(db, hostId, payload);
         } else if (type === 'pve-guest-snapshots') {
           handlePveGuestSnapshots(db, hostId, payload);
         } else if (type === 'pve-backups') {
@@ -867,8 +867,8 @@ function handlePveZfs(db: Database.Database, hostId: string, payload: PveZfsPayl
   logger.info('mqtt', `Ingested ${items.length} ZFS pools from ${hostId}`);
 }
 
-function handlePveCluster(db: Database.Database, payload: PveClusterPayload): void {
-  ingestPveCluster(db, {
+function handlePveCluster(db: Database.Database, hostId: string, payload: PveClusterPayload): void {
+  ingestPveCluster(db, hostId, {
     clusterName: payload.cluster_name,
     quorate: payload.quorate,
     totalNodes: payload.total_nodes,
