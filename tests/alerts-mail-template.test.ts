@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 const { subjectFor, renderAlertHtml } = require('../shared/mail/alert-template');
-const { renderAftermathText, renderAftermathHtml, aftermathSubject } = require('../shared/mail/aftermath-template');
+const { renderAftermathText, aftermathSubject } = require('../shared/mail/aftermath-template');
 
 test('subject carries severity badge', () => {
   assert.match(subjectFor({ type: 'host_offline', target: 'system', message: 'down', severity: 'critical' }), /^\[CRITICAL\]/);
