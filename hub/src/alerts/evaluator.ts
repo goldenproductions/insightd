@@ -4,6 +4,8 @@ const { sendAlert } = require('./sender');
 const { isExcluded } = require('./filter');
 const { findActiveParent, findActiveChildren, DEPS } = require('./dependencies');
 const { buildAftermath } = require('./aftermath');
+const { getRule } = require('./rules');
+const { effectiveSeverity } = require('./severity');
 
 interface AlertItem {
   type: string;
@@ -1526,20 +1528,32 @@ async function runAlerts(db: Database.Database, config: EvaluatorConfig): Promis
   if (toSend.length === 0) return;
 
   for (const alert of toSend) {
-    try {
-      await sendAlert(alert, config, db);
-      const label = alert.isResolution ? 'RESOLVED' : alert.reminderNumber! > 0 ? `REMINDER #${alert.reminderNumber}` : 'ALERT';
-      logger.info('alerts', `${label}: ${alert.message}`);
-    } catch (err) {
-      logger.error('alerts', `Failed to send alert: ${alert.message}`, err);
+    const rule = getRule(db, alert.type);
+    if (!rule.enabled) {
+      continue;  // muted entirely
+    }
+    const sev = effectiveSeverity(alert, rule, config.alerts.diskCriticalPercent ?? 95);
+    const sevAllowed = config.alerts.mailCriticalOnly === false ? true : sev === 'critical';
+
+    if (rule.mail && sevAllowed) {
+      try {
+        // Re-resolve at call time so tests can stub sender via require cache.
+        const { sendAlert: sendAlertFn } = require('./sender');
+        await sendAlertFn({ ...alert, severity: sev }, config, db);
+        const label = alert.isResolution ? 'RESOLVED' : alert.reminderNumber! > 0 ? `REMINDER #${alert.reminderNumber}` : 'ALERT';
+        logger.info('alerts', `${label} [${sev}]: ${alert.message}`);
+      } catch (err) {
+        logger.error('alerts', `Failed to send alert: ${alert.message}`, err);
+      }
     }
 
-    // Dispatch to webhooks (independent of email)
-    try {
-      const { dispatchAlertWebhooks } = require('../../../shared/webhooks/sender');
-      await dispatchAlertWebhooks(db, alert);
-    } catch (err) {
-      logger.error('alerts', `Webhook dispatch failed: ${alert.message}`, err);
+    if (rule.webhook) {
+      try {
+        const { dispatchAlertWebhooks } = require('../../../shared/webhooks/sender');
+        await dispatchAlertWebhooks(db, { ...alert, severity: sev });
+      } catch (err) {
+        logger.error('alerts', `Webhook dispatch failed: ${alert.message}`, err);
+      }
     }
   }
 
