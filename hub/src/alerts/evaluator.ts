@@ -2,6 +2,8 @@ import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 const { sendAlert } = require('./sender');
 const { isExcluded } = require('./filter');
+const { findActiveParent, findActiveChildren, DEPS } = require('./dependencies');
+const { buildAftermath } = require('./aftermath');
 
 interface AlertItem {
   type: string;
@@ -1371,6 +1373,7 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
   const backoff = config.alerts.reminderBackoff !== false;
   const capMinutes = config.alerts.reminderMaxMinutes ?? 1440;
   const stabilizeMin = Math.max(0, config.alerts.flapStabilizeMinutes ?? 5);
+  const suppress = config.alerts.suppressDependents !== false;
 
   const minutesSince = (ts: string | null): number => {
     if (!ts) return Number.POSITIVE_INFINITY;
@@ -1378,6 +1381,27 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
   };
 
   for (const alert of triggered) {
+    // === Retroactive suppression: parent type firing this cycle ===
+    if (suppress) {
+      const isParentType = DEPS.some((d: any) => d.parent === alert.type);
+      if (isParentType) {
+        let parentRow = db.prepare(
+          'SELECT id FROM alert_state WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL'
+        ).get(alert.hostId, alert.type, alert.target) as { id: number } | undefined;
+        if (!parentRow) {
+          const info = db.prepare(`
+            INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, pending_since, message, trigger_value, threshold)
+            VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?)
+          `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
+          parentRow = { id: Number(info.lastInsertRowid) };
+        }
+        const children = findActiveChildren(db, { alert_type: alert.type, host_id: alert.hostId });
+        const stamp = db.prepare('UPDATE alert_state SET suppressed_by_state_id = ? WHERE id = ? AND suppressed_by_state_id IS NULL AND resolved_at IS NULL');
+        for (const c of children) stamp.run(parentRow.id, c.id);
+        // Fall through — parent itself still flows through the mail path below.
+      }
+    }
+
     const active = db.prepare(`
       SELECT id, triggered_at, last_notified, notify_count, silenced_until,
              pending_since, resolved_pending_since
@@ -1388,14 +1412,20 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
 
     if (!active) {
       // First sighting — record state, NO mail until stabilize elapses.
-      db.prepare(`
-        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, pending_since, message, trigger_value, threshold)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?)
-      `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
+      // Also check if a parent is already active and stamp at birth.
+      let parentId: number | null = null;
+      if (suppress) {
+        const p = findActiveParent(db, alert);
+        if (p) parentId = p.id;
+      }
+      const ins = db.prepare(`
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, pending_since, message, trigger_value, threshold, suppressed_by_state_id)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?, ?)
+      `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null, parentId);
+      if (parentId !== null) continue;  // suppressed at birth — no mail
       if (stabilizeMin === 0) {
         // back-compat: immediately bump notify_count and mail
-        db.prepare("UPDATE alert_state SET notify_count = 1, last_notified = datetime('now') WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL")
-          .run(alert.hostId, alert.type, alert.target);
+        db.prepare("UPDATE alert_state SET notify_count = 1, last_notified = datetime('now') WHERE id = ?").run(Number(ins.lastInsertRowid));
         toSend.push({ ...alert, reminderNumber: 0 });
       }
       continue;
@@ -1412,7 +1442,14 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
     }
 
     if (active.notify_count === 0) {
-      // Initial mail still pending. Send only after stabilize gate.
+      // Initial mail still pending. Apply suppression check before mailing.
+      if (suppress) {
+        const p = findActiveParent(db, alert);
+        if (p) {
+          db.prepare('UPDATE alert_state SET suppressed_by_state_id = ? WHERE id = ?').run(p.id, active.id);
+          continue;
+        }
+      }
       if (minutesSince(active.pending_since) >= stabilizeMin) {
         db.prepare("UPDATE alert_state SET notify_count = 1, last_notified = datetime('now') WHERE id = ?").run(active.id);
         toSend.push({ ...alert, reminderNumber: 0 });
@@ -1503,6 +1540,30 @@ async function runAlerts(db: Database.Database, config: EvaluatorConfig): Promis
       await dispatchAlertWebhooks(db, alert);
     } catch (err) {
       logger.error('alerts', `Webhook dispatch failed: ${alert.message}`, err);
+    }
+  }
+
+  // Aftermath: for each parent that just resolved this cycle, send one
+  // consolidated summary in addition to the individual resolution mail.
+  for (const alert of toSend) {
+    if (!alert.isResolution) continue;
+    const isParentType = DEPS.some((d: any) => d.parent === alert.type);
+    if (!isParentType) continue;
+    const parentRow = db.prepare(`
+      SELECT id, alert_type, host_id, target, triggered_at
+      FROM alert_state
+      WHERE host_id = ? AND alert_type = ? AND target = ?
+      ORDER BY id DESC LIMIT 1
+    `).get(alert.hostId, alert.type, alert.target) as any;
+    if (!parentRow) continue;
+    const summary = buildAftermath(db, parentRow);
+    if (summary.stillFiring.length === 0 && summary.cleared.length === 0) continue;
+    try {
+      const { sendAftermath } = require('./sender');
+      await sendAftermath(summary, config);
+      logger.info('alerts', `AFTERMATH: ${summary.cleared.length} cleared, ${summary.stillFiring.length} still firing under ${parentRow.alert_type} on ${parentRow.host_id}`);
+    } catch (err) {
+      logger.error('alerts', 'Aftermath send failed', err);
     }
   }
 }

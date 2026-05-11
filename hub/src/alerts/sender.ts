@@ -88,4 +88,8 @@ async function sendAlert(alert: AlertItem, config: AlertSenderConfig, db?: Datab
   logger.info('alert-sender', `Alert sent to ${config.alerts.to} (${info.messageId})`);
 }
 
-module.exports = { sendAlert };
+async function sendAftermath(_summary: any, _config: any): Promise<void> {
+  // Real implementation lands in Task 9 (mail templates).
+}
+
+module.exports = { sendAlert, sendAftermath };
