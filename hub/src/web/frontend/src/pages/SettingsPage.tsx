@@ -12,6 +12,7 @@ import { PageTitle } from '@/components/PageTitle';
 import { LoadingState } from '@/components/LoadingState';
 import { SearchIcon } from '@/components/Icons';
 import { fmtBytes, timeAgo } from '@/lib/formatters';
+import { AlertRulesSection } from './AlertRulesSection';
 
 // ───────────────────────── Category metadata ─────────────────────────
 
@@ -353,6 +354,7 @@ function SectionBody({
       )}
 
       {category === 'Storage' && <StorageBody token={token} />}
+      {category === 'Alerts' && <AlertRulesSection />}
     </>
   );
 }
