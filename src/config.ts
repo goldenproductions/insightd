@@ -63,6 +63,10 @@ const config = Object.freeze({
     certExpiry: process.env.INSIGHTD_ALERT_CERT_EXPIRY !== 'false',
     certExpiryWarnDays: parseInt(process.env.INSIGHTD_ALERT_CERT_WARN_DAYS || '14', 10),
     certCheckIntervalHours: parseInt(process.env.INSIGHTD_CERT_CHECK_INTERVAL_HOURS || '6', 10),
+    mailCriticalOnly: process.env.INSIGHTD_ALERT_MAIL_CRITICAL_ONLY !== 'false',
+    suppressDependents: process.env.INSIGHTD_ALERT_SUPPRESS_DEPENDENTS !== 'false',
+    flapStabilizeMinutes: parseInt(process.env.INSIGHTD_ALERT_FLAP_STABILIZE || '5', 10),
+    diskCriticalPercent: parseInt(process.env.INSIGHTD_ALERT_DISK_CRITICAL || '95', 10),
   }),
 });
 

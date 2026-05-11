@@ -516,7 +516,9 @@ describe('processAlerts', () => {
     mock.restoreAll();
   });
 
-  const config = { alerts: { cooldownMinutes: 60 } };
+  // flapStabilizeMinutes: 0 reproduces legacy instant-mail behavior these tests expect.
+  // suppressDependents: false avoids parent/child suppression interactions for unit tests.
+  const config = { alerts: { cooldownMinutes: 60, flapStabilizeMinutes: 0, suppressDependents: false } };
 
   it('inserts new alert and returns it for sending', () => {
     const triggered = [{ type: 'container_down', hostId: 'local', target: 'nginx', message: 'test' }];
@@ -685,7 +687,8 @@ describe('processAlerts', () => {
   });
 
   describe('silence', () => {
-    const config = { alerts: { cooldownMinutes: 60, reminderBackoff: false } };
+    // flapStabilizeMinutes: 0 keeps these tests in legacy instant-mail mode.
+    const config = { alerts: { cooldownMinutes: 60, reminderBackoff: false, flapStabilizeMinutes: 0, suppressDependents: false } };
 
     function hoursFromNow(hours: number): string {
       return ts(new Date(NOW.getTime() + hours * 60 * 60 * 1000));
