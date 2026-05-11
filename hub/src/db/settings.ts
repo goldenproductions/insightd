@@ -72,6 +72,10 @@ interface AlertsConfig {
   certCheckIntervalHours: number;
   /** Days without a successful vzdump before pve_backup_overdue fires. 0 disables. */
   pveBackupAgeWarnDays?: number;
+  mailCriticalOnly?: boolean;
+  suppressDependents?: boolean;
+  flapStabilizeMinutes?: number;
+  diskCriticalPercent?: number;
 }
 
 interface AiConfig {
@@ -135,6 +139,10 @@ const SETTING_DEFS: SettingDef[] = [
   { key: 'alerts.certExpiryWarnDays', env: 'INSIGHTD_ALERT_CERT_WARN_DAYS', type: 'int', category: 'Alerts', label: 'TLS Expiry Warning (days)', hotReload: true, default: '14', description: 'Fire a warning when the certificate expires within this many days.' },
   { key: 'alerts.certCheckIntervalHours', env: 'INSIGHTD_CERT_CHECK_INTERVAL_HOURS', type: 'int', category: 'Alerts', label: 'TLS Check Interval (hours)', hotReload: true, default: '6', description: 'How often to re-fetch certificate metadata for monitored https endpoints.' },
   { key: 'alerts.pveBackupAgeWarnDays', env: 'INSIGHTD_ALERT_PVE_BACKUP_DAYS', type: 'int', category: 'Alerts', label: 'PVE Backup Overdue (days)', hotReload: true, default: '7', description: 'Days without a successful vzdump before pve_backup_overdue fires for a Proxmox guest. Set 0 to disable.' },
+  { key: 'alerts.mailCriticalOnly', env: 'INSIGHTD_ALERT_MAIL_CRITICAL_ONLY', type: 'bool', category: 'Alerts', label: 'Mail critical only', hotReload: true, default: 'true', description: 'When on, only critical-severity alerts may send email. Per-rule mail toggle still required. Webhooks unaffected.' },
+  { key: 'alerts.suppressDependents', env: 'INSIGHTD_ALERT_SUPPRESS_DEPENDENTS', type: 'bool', category: 'Alerts', label: 'Suppress dependent alerts', hotReload: true, default: 'true', description: 'When a root-cause alert (host offline, node not ready, cluster quorum lost) is active, suppress mail+webhooks for the alerts it explains. Send one aftermath summary when it resolves.' },
+  { key: 'alerts.flapStabilizeMinutes', env: 'INSIGHTD_ALERT_FLAP_STABILIZE', type: 'int', category: 'Alerts', label: 'Flap stabilize (minutes)', hotReload: true, default: '5', description: 'An alert must persist this long before it sends. A resolution must persist this long before it sends. Set 0 to disable (instant mail like the old behavior).' },
+  { key: 'alerts.diskCriticalPercent', env: 'INSIGHTD_ALERT_DISK_CRITICAL', type: 'int', category: 'Alerts', label: 'Disk critical threshold (%)', hotReload: true, default: '95', description: 'disk_full and pve_storage_saturation count as critical-severity at or over this percent; treated as warning below it. Used by the mail-critical-only filter.' },
 
   // Collection
   { key: 'collectIntervalMinutes', env: 'INSIGHTD_COLLECT_INTERVAL', type: 'int', category: 'Collection', label: 'Collection Interval (minutes)', hotReload: false, default: '5' },
@@ -303,6 +311,10 @@ function getEffectiveConfig(db: Database.Database, baseConfig: BaseConfig): Base
       certExpiryWarnDays: get('alerts.certExpiryWarnDays') ?? baseConfig.alerts?.certExpiryWarnDays ?? 14,
       certCheckIntervalHours: get('alerts.certCheckIntervalHours') ?? baseConfig.alerts?.certCheckIntervalHours ?? 6,
       pveBackupAgeWarnDays: get('alerts.pveBackupAgeWarnDays') ?? baseConfig.alerts?.pveBackupAgeWarnDays ?? 7,
+      mailCriticalOnly: get('alerts.mailCriticalOnly') ?? true,
+      suppressDependents: get('alerts.suppressDependents') ?? true,
+      flapStabilizeMinutes: get('alerts.flapStabilizeMinutes') ?? 5,
+      diskCriticalPercent: get('alerts.diskCriticalPercent') ?? 95,
     },
     web: {
       baseUrl: (get('web.baseUrl') as string) || baseConfig.web?.baseUrl || '',

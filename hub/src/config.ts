@@ -94,6 +94,10 @@ const config = Object.freeze({
     workloadDegradedMinutes: parseInt(process.env.INSIGHTD_ALERT_WORKLOAD_DEGRADED_MINUTES || '10', 10),
     workloadRolloutStuck: process.env.INSIGHTD_ALERT_WORKLOAD_ROLLOUT_STUCK !== 'false',
     workloadRolloutStuckMinutes: parseInt(process.env.INSIGHTD_ALERT_WORKLOAD_ROLLOUT_STUCK_MINUTES || '10', 10),
+    mailCriticalOnly: process.env.INSIGHTD_ALERT_MAIL_CRITICAL_ONLY !== 'false',
+    suppressDependents: process.env.INSIGHTD_ALERT_SUPPRESS_DEPENDENTS !== 'false',
+    flapStabilizeMinutes: parseInt(process.env.INSIGHTD_ALERT_FLAP_STABILIZE || '5', 10),
+    diskCriticalPercent: parseInt(process.env.INSIGHTD_ALERT_DISK_CRITICAL || '95', 10),
   }),
 
   // AI diagnosis (Gemini)
