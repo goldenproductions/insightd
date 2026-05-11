@@ -55,6 +55,12 @@ interface AlertsConfig {
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
+  /** Minutes a condition must persist before the first mail goes out; same gate
+   *  applies to resolutions. 0 reproduces legacy instant-mail behavior. */
+  flapStabilizeMinutes?: number;
+  mailCriticalOnly?: boolean;
+  suppressDependents?: boolean;
+  diskCriticalPercent?: number;
   to: string;
 }
 
@@ -1364,49 +1370,99 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
   const cooldownMinutes = config.alerts.cooldownMinutes;
   const backoff = config.alerts.reminderBackoff !== false;
   const capMinutes = config.alerts.reminderMaxMinutes ?? 1440;
+  const stabilizeMin = Math.max(0, config.alerts.flapStabilizeMinutes ?? 5);
+
+  const minutesSince = (ts: string | null): number => {
+    if (!ts) return Number.POSITIVE_INFINITY;
+    return (db.prepare("SELECT (julianday('now') - julianday(?)) * 1440 AS m").get(ts) as { m: number }).m;
+  };
 
   for (const alert of triggered) {
     const active = db.prepare(`
-      SELECT id, last_notified, notify_count, silenced_until FROM alert_state
+      SELECT id, triggered_at, last_notified, notify_count, silenced_until,
+             pending_since, resolved_pending_since
+      FROM alert_state
       WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL
-    `).get(alert.hostId, alert.type, alert.target) as { id: number; last_notified: string; notify_count: number; silenced_until: string | null } | undefined;
+    `).get(alert.hostId, alert.type, alert.target) as
+      { id: number; triggered_at: string; last_notified: string; notify_count: number; silenced_until: string | null; pending_since: string | null; resolved_pending_since: string | null } | undefined;
 
     if (!active) {
+      // First sighting — record state, NO mail until stabilize elapses.
       db.prepare(`
-        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, message, trigger_value, threshold)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'), 1, ?, ?, ?)
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, pending_since, message, trigger_value, threshold)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?)
       `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
-      toSend.push({ ...alert, reminderNumber: 0 });
-    } else {
-      // Silence guard — block reminders entirely while silenced_until is in the
-      // future. Does NOT reset notify_count, so backoff resumes at the same
-      // step on unsilence. The initial alert above is unaffected.
-      if (active.silenced_until) {
-        const stillSilenced = (db.prepare(
-          "SELECT (julianday(?) > julianday('now')) as still"
-        ).get(active.silenced_until) as { still: number }).still === 1;
-        if (stillSilenced) continue;
+      if (stabilizeMin === 0) {
+        // back-compat: immediately bump notify_count and mail
+        db.prepare("UPDATE alert_state SET notify_count = 1, last_notified = datetime('now') WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL")
+          .run(alert.hostId, alert.type, alert.target);
+        toSend.push({ ...alert, reminderNumber: 0 });
       }
+      continue;
+    }
 
-      const minutesSinceLast = (db.prepare(
-        "SELECT (julianday('now') - julianday(?)) * 1440 as minutes"
-      ).get(active.last_notified) as { minutes: number }).minutes;
+    // Existing row. Clear any pending-resolution state — alert is back.
+    if (active.resolved_pending_since) {
+      db.prepare('UPDATE alert_state SET resolved_pending_since = NULL WHERE id = ?').run(active.id);
+    }
 
-      const requiredGap = requiredReminderGap(active.notify_count, cooldownMinutes, capMinutes, backoff);
-      if (minutesSinceLast >= requiredGap) {
-        const newCount = active.notify_count + 1;
-        db.prepare('UPDATE alert_state SET last_notified = datetime(\'now\'), notify_count = ? WHERE id = ?').run(newCount, active.id);
-        toSend.push({ ...alert, reminderNumber: newCount - 1 });
+    if (active.silenced_until) {
+      const stillSilenced = (db.prepare("SELECT (julianday(?) > julianday('now')) AS s").get(active.silenced_until) as { s: number }).s === 1;
+      if (stillSilenced) continue;
+    }
+
+    if (active.notify_count === 0) {
+      // Initial mail still pending. Send only after stabilize gate.
+      if (minutesSince(active.pending_since) >= stabilizeMin) {
+        db.prepare("UPDATE alert_state SET notify_count = 1, last_notified = datetime('now') WHERE id = ?").run(active.id);
+        toSend.push({ ...alert, reminderNumber: 0 });
       }
+      continue;
+    }
+
+    // Already mailed at least once — reminder cadence path (unchanged from prior behavior).
+    const requiredGap = requiredReminderGap(active.notify_count, cooldownMinutes, capMinutes, backoff);
+    if (minutesSince(active.last_notified) >= requiredGap) {
+      const newCount = active.notify_count + 1;
+      db.prepare("UPDATE alert_state SET last_notified = datetime('now'), notify_count = ? WHERE id = ?").run(newCount, active.id);
+      toSend.push({ ...alert, reminderNumber: newCount - 1 });
     }
   }
 
   for (const alert of resolved) {
-    db.prepare(
-      "UPDATE alert_state SET resolved_at = datetime('now') WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL"
-    ).run(alert.hostId, alert.type, alert.target);
-    if (alert.isSilentResolution) continue;
-    toSend.push(alert);
+    const row = db.prepare(`
+      SELECT id, notify_count, last_notified, resolved_pending_since
+      FROM alert_state
+      WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL
+    `).get(alert.hostId, alert.type, alert.target) as
+      { id: number; notify_count: number; last_notified: string; resolved_pending_since: string | null } | undefined;
+
+    if (!row) continue;
+
+    if (row.notify_count === 0) {
+      // Initial alert was never mailed — drop silently. No resolution email.
+      db.prepare('DELETE FROM alert_state WHERE id = ?').run(row.id);
+      continue;
+    }
+
+    if (stabilizeMin === 0 || alert.isSilentResolution) {
+      // Send (or silently resolve) immediately.
+      db.prepare("UPDATE alert_state SET resolved_at = datetime('now') WHERE id = ?").run(row.id);
+      if (!alert.isSilentResolution) toSend.push(alert);
+      continue;
+    }
+
+    if (!row.resolved_pending_since) {
+      db.prepare("UPDATE alert_state SET resolved_pending_since = datetime('now') WHERE id = ?").run(row.id);
+      continue;  // first sighting of recovery — wait stabilize
+    }
+
+    const pendMin = minutesSince(row.resolved_pending_since);
+    const sinceLast = minutesSince(row.last_notified);
+    if (pendMin >= stabilizeMin && sinceLast >= stabilizeMin) {
+      db.prepare("UPDATE alert_state SET resolved_at = datetime('now') WHERE id = ?").run(row.id);
+      toSend.push(alert);
+    }
   }
 
   return toSend;
