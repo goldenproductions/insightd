@@ -12,7 +12,7 @@ test('verify accepts a signed token', () => {
 test('verify rejects tampered tokens', () => {
   process.env.INSIGHTD_MUTE_SECRET = 'test-secret';
   const tok = signMuteToken('restart_loop');
-  const tampered = tok.replace(/.$/, c => (c === 'a' ? 'b' : 'a'));
+  const tampered = tok.replace(/.$/, (c: string) => (c === 'a' ? 'b' : 'a'));
   assert.equal(verifyMuteToken(tampered), null);
 });
 
