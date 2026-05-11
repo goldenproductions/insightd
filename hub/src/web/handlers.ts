@@ -20,6 +20,8 @@ const { getSettings, putSettings } = require('../db/settings') as {
   getSettings: (db: Database.Database) => Array<{ category: string; [key: string]: any }>;
   putSettings: (db: Database.Database, body: any) => any;
 };
+const { getAllRules, updateRule, resetRules } = require('../alerts/rules');
+const { verifyMuteToken } = require('../alerts/mute-token');
 
 type HandlerReq = IncomingMessage & { body?: any; url: string };
 type HandlerCtx = {
@@ -1641,7 +1643,54 @@ async function handleContainerAction(req: HandlerReq, res: ServerResponse, db: D
   }
 }
 
-module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerPodEvents, handleContainerLogs, handleGetNamespaceTopology, handleGetClusterOverview, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleAgentSetup, handleAgentSetupCheck, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetContainerLogBursts, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleInsightExplain, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
+function handleGetAlertRules(_req: HandlerReq, _res: ServerResponse, db: Database.Database): any {
+  return { rules: getAllRules(db) };
+}
+
+async function handlePutAlertRule(req: HandlerReq, res: ServerResponse, db: Database.Database, _config: any, params: Record<string, string>): Promise<any> {
+  let body: any;
+  try { body = await readBody(req); } catch (err: any) {
+    res.statusCode = 400;
+    return { error: err.message };
+  }
+  const patch: any = {};
+  if (body.severity !== undefined) patch.severity = String(body.severity);
+  if (body.enabled !== undefined) patch.enabled = body.enabled ? 1 : 0;
+  if (body.mail !== undefined) patch.mail = body.mail ? 1 : 0;
+  if (body.webhook !== undefined) patch.webhook = body.webhook ? 1 : 0;
+  try {
+    updateRule(db, params.type, patch);
+  } catch (err: any) {
+    res.statusCode = 400;
+    return { error: err.message };
+  }
+  return { ok: true };
+}
+
+function handleResetAlertRules(_req: HandlerReq, _res: ServerResponse, db: Database.Database): any {
+  resetRules(db);
+  return { ok: true };
+}
+
+function handleMuteAlertType(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
+  const url = new URL(req.url!, 'http://localhost');
+  const token = url.searchParams.get('token');
+  if (!token) {
+    res.statusCode = 400;
+    return { error: 'missing token' };
+  }
+  const type = verifyMuteToken(token);
+  if (!type) {
+    res.statusCode = 400;
+    return { error: 'invalid or expired token' };
+  }
+  updateRule(db, type, { mail: 0 });
+  // HTML response — directly write to res so the auto-JSON path is skipped
+  res.setHeader('Content-Type', 'text/html');
+  res.end(`<!doctype html><meta charset="utf-8"><title>Muted</title><body style="font-family:sans-serif;padding:2em"><h2>Muted ${type}</h2><p>Email notifications for <code>${type}</code> are now off. Re-enable in <a href="/settings">Settings → Alert Rules</a>.</p></body>`);
+}
+
+module.exports = { handleHealth, handleHosts, handleHostDetail, handleHostContainers, handleHostDisk, handleDashboard, handleAlerts, handleContainerDetail, handleContainerPodEvents, handleContainerLogs, handleGetNamespaceTopology, handleGetClusterOverview, handleHostMetrics, handleLogin, handleGetSettings, handlePutSettings, handleGetAlertRules, handlePutAlertRule, handleResetAlertRules, handleMuteAlertType, handleAgentSetup, handleAgentSetupCheck, handleTimeline, handleRankings, handleTrends, handleEvents, handleHostK8sEvents, handleHostNodeConditions, handleGetEndpoints, handleCreateEndpoint, handleGetEndpoint, handleUpdateEndpoint, handleDeleteEndpoint, handleEndpointChecks, handleGetDiscoveredIngresses, handleCreateEndpointFromIngress, handleDismissIngress, handleUndismissIngress, handleGetWebhooks, handleCreateWebhook, handleGetWebhook, handleUpdateWebhook, handleDeleteWebhook, handleTestWebhook, handleTestWebhookUnsaved, handleGetBaselines, handleGetHostBaselinesView, handleGetContainerBaselinesView, handleGetContainerRcaNeighbors, handleGetContainerLogBursts, handleGetAllHealthScores, handleGetHealthScore, handleGetInsights, handleInsightExplain, handleGetHostInsights, handleInsightFeedback, handleGetInsightFeedback, handleAIDiagnoseStatus, handleGetAIDiagnose, handleAIDiagnose, handleDeleteHost, handleSetHostGroup, handleResetHostGroup, handleRenameHostGroup, handleDeleteHostGroup, handleDeleteContainer, handleSetupStatus, handleSetupPassword, handleSetupComplete, handleImageUpdates, handleRequestUpdateCheck, handleVersionCheck, handleUpdateAgent, handleUpdateAllAgents, handleUpdateHub, handleContainerAvailability, handleContainerAction, handleSilenceAlert, handleUnsilenceAlert, handleDeleteAlert, handlePublicStatus, handleGetApiKeys, handleCreateApiKey, handleDeleteApiKey, handleGetStorage, handleVacuum, handleRefreshVersionCheck, handleDisksOverview, handleVolumesOverview, handlePvsOverview };
 
 function handleGetApiKeys(req: HandlerReq, res: ServerResponse, db: Database.Database): any {
   return getApiKeys(db);
