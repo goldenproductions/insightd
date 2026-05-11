@@ -29,6 +29,7 @@ export interface AlertEmailInput {
   triggeredAt?: string;
   reminderNumber?: number;
   isResolution?: boolean;
+  severity?: 'critical' | 'warning' | 'info' | string;
 }
 
 /**
@@ -51,6 +52,8 @@ export interface RenderAlertContext {
   baseUrl?: string;
   /** Full host display name for the hero; defaults to alert.hostId. */
   hostLabel?: string;
+  /** Signed mute-token for the alert type. When set together with baseUrl, footer renders a mute link. */
+  muteToken?: string;
 }
 
 function resolveSeverity(alert: AlertEmailInput): 'red' | 'yellow' | 'green' {
@@ -94,6 +97,15 @@ function linkForAlert(baseUrl: string | undefined, alert: AlertEmailInput): stri
 }
 
 function subjectFor(alert: AlertEmailInput): string {
+  if (alert.severity) {
+    const sev = String(alert.severity).toUpperCase();
+    if (alert.isResolution) return `[${sev}] insightd resolved: ${alert.message}`;
+    if ((alert.reminderNumber ?? 0) > 0) {
+      return `[${sev}] insightd: ${alert.message} (reminder #${alert.reminderNumber})`;
+    }
+    return `[${sev}] insightd: ${alert.message}`;
+  }
+  // legacy fallback
   if (alert.isResolution) return `[OK] insightd: ${alert.message}`;
   if ((alert.reminderNumber ?? 0) > 0) {
     return `[ALERT] insightd: ${alert.message} (reminder #${alert.reminderNumber})`;
@@ -185,8 +197,12 @@ function renderAlertHtml(alert: AlertEmailInput, ctx: RenderAlertContext = {}): 
     ? mutedText('This alert has been resolved. You will not receive further reminders for this incident.')
     : mutedText('Reminders slow down as an alert persists (1h → 2h → 4h → … capped at 24h). Silence or tune in Settings → Alerts.');
 
+  const muteFooter = (ctx.muteToken && ctx.baseUrl)
+    ? `<div style="margin-top:8px;font-size:12px;color:#888"><a href="${ctx.baseUrl}/api/alerts/mute?token=${encodeURIComponent(ctx.muteToken)}" style="color:#666;text-decoration:underline">Mute this alert type</a> · <a href="${ctx.baseUrl}/settings" style="color:#666;text-decoration:underline">Alert settings</a></div>`
+    : '';
+
   const actionCard = card({
-    children: `${openButton}${helpText}`,
+    children: `${openButton}${helpText}${muteFooter}`,
   });
 
   const body = `${heroHtml}${detailCard}${diagnosisCard}${actionCard}`;
@@ -258,6 +274,11 @@ function renderAlertText(alert: AlertEmailInput, ctx: RenderAlertContext = {}): 
   } else {
     lines.push('Reminders slow down as the alert persists, up to once per day until resolved.');
     lines.push('Set INSIGHTD_ALERTS_ENABLED=false to disable alerts.');
+  }
+
+  if (ctx.muteToken && ctx.baseUrl) {
+    lines.push('');
+    lines.push(`Mute this alert type: ${ctx.baseUrl}/api/alerts/mute?token=${encodeURIComponent(ctx.muteToken)}`);
   }
 
   return lines.join('\n');

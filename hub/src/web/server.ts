@@ -40,6 +40,7 @@ const PUBLIC_ROUTES = new Set<string>([
   'GET /api/setup/status',
   'POST /api/setup/password',
   'POST /api/setup/complete',
+  'GET /api/alerts/mute',
 ]);
 
 const MIME_TYPES: Record<string, string> = {
@@ -112,6 +113,10 @@ function startWebServer(db: Database.Database, config: WebConfig, context?: WebS
   router.add('DELETE', '/api/api-keys/:keyId', handlers.handleDeleteApiKey);
   router.add('GET', '/api/settings', handlers.handleGetSettings);
   router.add('PUT', '/api/settings', handlers.handlePutSettings);
+  router.add('GET',  '/api/alert-rules',         handlers.handleGetAlertRules);
+  router.add('PUT',  '/api/alert-rules/:type',   handlers.handlePutAlertRule);
+  router.add('POST', '/api/alert-rules/reset',   handlers.handleResetAlertRules);
+  router.add('GET',  '/api/alerts/mute',         handlers.handleMuteAlertType);
   router.add('GET', '/api/endpoints', handlers.handleGetEndpoints);
   router.add('POST', '/api/endpoints', handlers.handleCreateEndpoint);
   // Order matters: /api/endpoints/from-ingress/:ingressId must be matched

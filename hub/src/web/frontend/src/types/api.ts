@@ -1223,3 +1223,14 @@ export interface VacuumResult {
   after: number;
   reclaimed: number;
 }
+
+// Alert rules — per-type delivery/severity overrides surfaced on Settings.
+export interface AlertRule {
+  alert_type: string;
+  severity: 'critical' | 'warning' | 'info';
+  enabled: number;
+  mail: number;
+  webhook: number;
+  description: string;
+}
+export interface AlertRulesResponse { rules: AlertRule[] }

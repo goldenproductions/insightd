@@ -2,6 +2,10 @@ import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 const { sendAlert } = require('./sender');
 const { isExcluded } = require('./filter');
+const { findActiveParent, findActiveChildren, DEPS } = require('./dependencies');
+const { buildAftermath } = require('./aftermath');
+const { getRule } = require('./rules');
+const { effectiveSeverity } = require('./severity');
 
 interface AlertItem {
   type: string;
@@ -55,6 +59,12 @@ interface AlertsConfig {
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
+  /** Minutes a condition must persist before the first mail goes out; same gate
+   *  applies to resolutions. 0 reproduces legacy instant-mail behavior. */
+  flapStabilizeMinutes?: number;
+  mailCriticalOnly?: boolean;
+  suppressDependents?: boolean;
+  diskCriticalPercent?: number;
   to: string;
 }
 
@@ -1364,49 +1374,134 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
   const cooldownMinutes = config.alerts.cooldownMinutes;
   const backoff = config.alerts.reminderBackoff !== false;
   const capMinutes = config.alerts.reminderMaxMinutes ?? 1440;
+  const stabilizeMin = Math.max(0, config.alerts.flapStabilizeMinutes ?? 5);
+  const suppress = config.alerts.suppressDependents !== false;
+
+  const minutesSince = (ts: string | null): number => {
+    if (!ts) return Number.POSITIVE_INFINITY;
+    return (db.prepare("SELECT (julianday('now') - julianday(?)) * 1440 AS m").get(ts) as { m: number }).m;
+  };
 
   for (const alert of triggered) {
+    // === Retroactive suppression: parent type firing this cycle ===
+    if (suppress) {
+      const isParentType = DEPS.some((d: any) => d.parent === alert.type);
+      if (isParentType) {
+        let parentRow = db.prepare(
+          'SELECT id FROM alert_state WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL'
+        ).get(alert.hostId, alert.type, alert.target) as { id: number } | undefined;
+        if (!parentRow) {
+          const info = db.prepare(`
+            INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, pending_since, message, trigger_value, threshold)
+            VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?)
+          `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
+          parentRow = { id: Number(info.lastInsertRowid) };
+        }
+        const children = findActiveChildren(db, { alert_type: alert.type, host_id: alert.hostId });
+        const stamp = db.prepare('UPDATE alert_state SET suppressed_by_state_id = ? WHERE id = ? AND suppressed_by_state_id IS NULL AND resolved_at IS NULL');
+        for (const c of children) stamp.run(parentRow.id, c.id);
+        // Fall through — parent itself still flows through the mail path below.
+      }
+    }
+
     const active = db.prepare(`
-      SELECT id, last_notified, notify_count, silenced_until FROM alert_state
+      SELECT id, triggered_at, last_notified, notify_count, silenced_until,
+             pending_since, resolved_pending_since
+      FROM alert_state
       WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL
-    `).get(alert.hostId, alert.type, alert.target) as { id: number; last_notified: string; notify_count: number; silenced_until: string | null } | undefined;
+    `).get(alert.hostId, alert.type, alert.target) as
+      { id: number; triggered_at: string; last_notified: string; notify_count: number; silenced_until: string | null; pending_since: string | null; resolved_pending_since: string | null } | undefined;
 
     if (!active) {
-      db.prepare(`
-        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, message, trigger_value, threshold)
-        VALUES (?, ?, ?, datetime('now'), datetime('now'), 1, ?, ?, ?)
-      `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
-      toSend.push({ ...alert, reminderNumber: 0 });
-    } else {
-      // Silence guard — block reminders entirely while silenced_until is in the
-      // future. Does NOT reset notify_count, so backoff resumes at the same
-      // step on unsilence. The initial alert above is unaffected.
-      if (active.silenced_until) {
-        const stillSilenced = (db.prepare(
-          "SELECT (julianday(?) > julianday('now')) as still"
-        ).get(active.silenced_until) as { still: number }).still === 1;
-        if (stillSilenced) continue;
+      // First sighting — record state, NO mail until stabilize elapses.
+      // Also check if a parent is already active and stamp at birth.
+      let parentId: number | null = null;
+      if (suppress) {
+        const p = findActiveParent(db, alert);
+        if (p) parentId = p.id;
       }
-
-      const minutesSinceLast = (db.prepare(
-        "SELECT (julianday('now') - julianday(?)) * 1440 as minutes"
-      ).get(active.last_notified) as { minutes: number }).minutes;
-
-      const requiredGap = requiredReminderGap(active.notify_count, cooldownMinutes, capMinutes, backoff);
-      if (minutesSinceLast >= requiredGap) {
-        const newCount = active.notify_count + 1;
-        db.prepare('UPDATE alert_state SET last_notified = datetime(\'now\'), notify_count = ? WHERE id = ?').run(newCount, active.id);
-        toSend.push({ ...alert, reminderNumber: newCount - 1 });
+      const ins = db.prepare(`
+        INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, pending_since, message, trigger_value, threshold, suppressed_by_state_id)
+        VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?, ?)
+      `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null, parentId);
+      if (parentId !== null) continue;  // suppressed at birth — no mail
+      if (stabilizeMin === 0) {
+        // back-compat: immediately bump notify_count and mail
+        db.prepare("UPDATE alert_state SET notify_count = 1, last_notified = datetime('now') WHERE id = ?").run(Number(ins.lastInsertRowid));
+        toSend.push({ ...alert, reminderNumber: 0 });
       }
+      continue;
+    }
+
+    // Existing row. Clear any pending-resolution state — alert is back.
+    if (active.resolved_pending_since) {
+      db.prepare('UPDATE alert_state SET resolved_pending_since = NULL WHERE id = ?').run(active.id);
+    }
+
+    if (active.silenced_until) {
+      const stillSilenced = (db.prepare("SELECT (julianday(?) > julianday('now')) AS s").get(active.silenced_until) as { s: number }).s === 1;
+      if (stillSilenced) continue;
+    }
+
+    if (active.notify_count === 0) {
+      // Initial mail still pending. Apply suppression check before mailing.
+      if (suppress) {
+        const p = findActiveParent(db, alert);
+        if (p) {
+          db.prepare('UPDATE alert_state SET suppressed_by_state_id = ? WHERE id = ?').run(p.id, active.id);
+          continue;
+        }
+      }
+      if (minutesSince(active.pending_since) >= stabilizeMin) {
+        db.prepare("UPDATE alert_state SET notify_count = 1, last_notified = datetime('now') WHERE id = ?").run(active.id);
+        toSend.push({ ...alert, reminderNumber: 0 });
+      }
+      continue;
+    }
+
+    // Already mailed at least once — reminder cadence path (unchanged from prior behavior).
+    const requiredGap = requiredReminderGap(active.notify_count, cooldownMinutes, capMinutes, backoff);
+    if (minutesSince(active.last_notified) >= requiredGap) {
+      const newCount = active.notify_count + 1;
+      db.prepare("UPDATE alert_state SET last_notified = datetime('now'), notify_count = ? WHERE id = ?").run(newCount, active.id);
+      toSend.push({ ...alert, reminderNumber: newCount - 1 });
     }
   }
 
   for (const alert of resolved) {
-    db.prepare(
-      "UPDATE alert_state SET resolved_at = datetime('now') WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL"
-    ).run(alert.hostId, alert.type, alert.target);
-    if (alert.isSilentResolution) continue;
-    toSend.push(alert);
+    const row = db.prepare(`
+      SELECT id, notify_count, last_notified, resolved_pending_since
+      FROM alert_state
+      WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NULL
+    `).get(alert.hostId, alert.type, alert.target) as
+      { id: number; notify_count: number; last_notified: string; resolved_pending_since: string | null } | undefined;
+
+    if (!row) continue;
+
+    if (row.notify_count === 0) {
+      // Initial alert was never mailed — drop silently. No resolution email.
+      db.prepare('DELETE FROM alert_state WHERE id = ?').run(row.id);
+      continue;
+    }
+
+    if (stabilizeMin === 0 || alert.isSilentResolution) {
+      // Send (or silently resolve) immediately.
+      db.prepare("UPDATE alert_state SET resolved_at = datetime('now') WHERE id = ?").run(row.id);
+      if (!alert.isSilentResolution) toSend.push(alert);
+      continue;
+    }
+
+    if (!row.resolved_pending_since) {
+      db.prepare("UPDATE alert_state SET resolved_pending_since = datetime('now') WHERE id = ?").run(row.id);
+      continue;  // first sighting of recovery — wait stabilize
+    }
+
+    const pendMin = minutesSince(row.resolved_pending_since);
+    const sinceLast = minutesSince(row.last_notified);
+    if (pendMin >= stabilizeMin && sinceLast >= stabilizeMin) {
+      db.prepare("UPDATE alert_state SET resolved_at = datetime('now') WHERE id = ?").run(row.id);
+      toSend.push(alert);
+    }
   }
 
   return toSend;
@@ -1427,26 +1522,71 @@ async function runAlerts(db: Database.Database, config: EvaluatorConfig): Promis
     }
   } catch { /* alert-snooze module not available */ }
 
+  try {
+    const noticeRow = db.prepare("SELECT value FROM meta WHERE key = 'alert_mail_v2_notice'").get() as { value: string } | undefined;
+    if (!noticeRow) {
+      const types = db.prepare("SELECT alert_type FROM alert_rules WHERE severity != 'critical' AND mail = 0").all() as { alert_type: string }[];
+      logger.info('alerts', `Alert mail strategy v2 active. Mail-critical-only is ON by default. ${types.length} alert types no longer email by default: ${types.map(t => t.alert_type).join(', ')}. Edit per-rule in Settings → Alert Rules.`);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('alert_mail_v2_notice', datetime('now'))").run();
+    }
+  } catch { /* ignore */ }
+
   const evaluation = evaluateAlerts(db, config);
   const toSend = processAlerts(db, config, evaluation);
 
   if (toSend.length === 0) return;
 
   for (const alert of toSend) {
-    try {
-      await sendAlert(alert, config, db);
-      const label = alert.isResolution ? 'RESOLVED' : alert.reminderNumber! > 0 ? `REMINDER #${alert.reminderNumber}` : 'ALERT';
-      logger.info('alerts', `${label}: ${alert.message}`);
-    } catch (err) {
-      logger.error('alerts', `Failed to send alert: ${alert.message}`, err);
+    const rule = getRule(db, alert.type);
+    if (!rule.enabled) {
+      continue;  // muted entirely
+    }
+    const sev = effectiveSeverity(alert, rule, config.alerts.diskCriticalPercent ?? 95);
+    const sevAllowed = config.alerts.mailCriticalOnly === false ? true : sev === 'critical';
+
+    if (rule.mail && sevAllowed) {
+      try {
+        // Re-resolve at call time so tests can stub sender via require cache.
+        const { sendAlert: sendAlertFn } = require('./sender');
+        await sendAlertFn({ ...alert, severity: sev }, config, db);
+        const label = alert.isResolution ? 'RESOLVED' : alert.reminderNumber! > 0 ? `REMINDER #${alert.reminderNumber}` : 'ALERT';
+        logger.info('alerts', `${label} [${sev}]: ${alert.message}`);
+      } catch (err) {
+        logger.error('alerts', `Failed to send alert: ${alert.message}`, err);
+      }
     }
 
-    // Dispatch to webhooks (independent of email)
+    if (rule.webhook) {
+      try {
+        const { dispatchAlertWebhooks } = require('../../../shared/webhooks/sender');
+        await dispatchAlertWebhooks(db, { ...alert, severity: sev });
+      } catch (err) {
+        logger.error('alerts', `Webhook dispatch failed: ${alert.message}`, err);
+      }
+    }
+  }
+
+  // Aftermath: for each parent that just resolved this cycle, send one
+  // consolidated summary in addition to the individual resolution mail.
+  for (const alert of toSend) {
+    if (!alert.isResolution) continue;
+    const isParentType = DEPS.some((d: any) => d.parent === alert.type);
+    if (!isParentType) continue;
+    const parentRow = db.prepare(`
+      SELECT id, alert_type, host_id, target, triggered_at
+      FROM alert_state
+      WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NOT NULL
+      ORDER BY id DESC LIMIT 1
+    `).get(alert.hostId, alert.type, alert.target) as any;
+    if (!parentRow) continue;
+    const summary = buildAftermath(db, parentRow);
+    if (summary.stillFiring.length === 0 && summary.cleared.length === 0) continue;
     try {
-      const { dispatchAlertWebhooks } = require('../../../shared/webhooks/sender');
-      await dispatchAlertWebhooks(db, alert);
+      const { sendAftermath } = require('./sender');
+      await sendAftermath(summary, config);
+      logger.info('alerts', `AFTERMATH: ${summary.cleared.length} cleared, ${summary.stillFiring.length} still firing under ${parentRow.alert_type} on ${parentRow.host_id}`);
     } catch (err) {
-      logger.error('alerts', `Webhook dispatch failed: ${alert.message}`, err);
+      logger.error('alerts', 'Aftermath send failed', err);
     }
   }
 }

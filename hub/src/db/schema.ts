@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../../../shared/utils/logger');
 
-const SCHEMA_VERSION = 51;
+const SCHEMA_VERSION = 52;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -463,11 +463,23 @@ function bootstrap(db: Database.Database): void {
       threshold       TEXT,
       silenced_until  TEXT,
       silenced_by     TEXT,
-      silenced_at     TEXT
+      silenced_at     TEXT,
+      severity        TEXT,
+      pending_since   TEXT,
+      resolved_pending_since TEXT,
+      suppressed_by_state_id INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_alert_host_active
       ON alert_state (host_id, alert_type, target);
+
+    CREATE TABLE IF NOT EXISTS alert_rules (
+      alert_type  TEXT PRIMARY KEY,
+      severity    TEXT NOT NULL CHECK (severity IN ('critical','warning','info')),
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      mail        INTEGER NOT NULL,
+      webhook     INTEGER NOT NULL DEFAULT 1
+    );
 
     CREATE TABLE IF NOT EXISTS settings (
       key        TEXT PRIMARY KEY,
@@ -1377,6 +1389,38 @@ function migrate(db: Database.Database, fromVersion: number): void {
     } catch { /* already exists */ }
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_uuid TEXT'); } catch { /* already exists */ }
     try { db.exec('ALTER TABLE container_snapshots ADD COLUMN guest_primary_mac TEXT'); } catch { /* already exists */ }
+  }
+  if (fromVersion < 52) {
+    // Alert mail strategy v2 — severity-aware mail filter, flap dampening,
+    // dependent suppression. Adds rule table + new alert_state columns.
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN severity TEXT'); } catch { /* exists */ }
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN pending_since TEXT'); } catch { /* exists */ }
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN resolved_pending_since TEXT'); } catch { /* exists */ }
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN suppressed_by_state_id INTEGER'); } catch { /* exists */ }
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS alert_rules (
+        alert_type  TEXT PRIMARY KEY,
+        severity    TEXT NOT NULL CHECK (severity IN ('critical','warning','info')),
+        enabled     INTEGER NOT NULL DEFAULT 1,
+        mail        INTEGER NOT NULL,
+        webhook     INTEGER NOT NULL DEFAULT 1
+      );
+    `);
+    // Backfill pending_since from triggered_at so the new flap-gate logic
+    // treats already-firing alerts as fully stabilized rather than holding them.
+    db.exec("UPDATE alert_state SET pending_since = triggered_at WHERE pending_since IS NULL AND resolved_at IS NULL");
+    // Seed alert_rules from the static defaults. Done here AND in the new
+    // ensureRulesSeeded() that runs every boot to cover future-added types.
+    const { DEFAULT_SEVERITY } = require('../alerts/severity');
+    const insert = db.prepare(`
+      INSERT OR IGNORE INTO alert_rules (alert_type, severity, enabled, mail, webhook)
+      VALUES (?, ?, 1, ?, 1)
+    `);
+    for (const [type, severity] of Object.entries(DEFAULT_SEVERITY) as [string, string][]) {
+      insert.run(type, severity, severity === 'critical' ? 1 : 0);
+    }
+    // Backfill alert_state.severity from the seeded rule rows
+    db.exec("UPDATE alert_state SET severity = (SELECT severity FROM alert_rules WHERE alert_rules.alert_type = alert_state.alert_type) WHERE severity IS NULL");
   }
 }
 
