@@ -655,6 +655,15 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
 async function runAlerts(db: Database.Database, config: EvaluatorConfig): Promise<void> {
   if (!config.alerts.enabled) return;
 
+  try {
+    const noticeRow = db.prepare("SELECT value FROM meta WHERE key = 'alert_mail_v2_notice'").get() as { value: string } | undefined;
+    if (!noticeRow) {
+      const types = db.prepare("SELECT alert_type FROM alert_rules WHERE severity != 'critical' AND mail = 0").all() as { alert_type: string }[];
+      logger.info('alerts', `Alert mail strategy v2 active. Mail-critical-only is ON by default. ${types.length} alert types no longer email by default: ${types.map(t => t.alert_type).join(', ')}. Edit per-rule in Settings → Alert Rules.`);
+      db.prepare("INSERT INTO meta (key, value) VALUES ('alert_mail_v2_notice', datetime('now'))").run();
+    }
+  } catch { /* ignore */ }
+
   const evaluation = evaluateAlerts(db, config);
   const toSend = processAlerts(db, config, evaluation);
 
