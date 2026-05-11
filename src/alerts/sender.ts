@@ -55,7 +55,7 @@ async function sendAlert(alert: AlertItem, config: AlertSenderConfig, _db?: Data
   try {
     const { signMuteToken } = require('./mute-token');
     muteToken = signMuteToken(alert.type);
-  } catch { /* mute-token module not present */ }
+  } catch { /* mute-token module unavailable — footer hidden */ }
   // Standalone mode does not run the diagnosis engine — diagnosis is always null here.
   const ctx = { diagnosis: null, baseUrl, muteToken };
 

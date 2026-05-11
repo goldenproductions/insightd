@@ -708,7 +708,7 @@ async function runAlerts(db: Database.Database, config: EvaluatorConfig): Promis
     const parentRow = db.prepare(`
       SELECT id, alert_type, host_id, target, triggered_at
       FROM alert_state
-      WHERE host_id = ? AND alert_type = ? AND target = ?
+      WHERE host_id = ? AND alert_type = ? AND target = ? AND resolved_at IS NOT NULL
       ORDER BY id DESC LIMIT 1
     `).get(alert.hostId, alert.type, alert.target) as any;
     if (!parentRow) continue;

@@ -80,7 +80,7 @@ async function sendAlert(alert: AlertItem, config: AlertSenderConfig, db?: Datab
   try {
     const { signMuteToken } = require('./mute-token');
     muteToken = signMuteToken(alert.type);
-  } catch { /* mute-token module not present yet — Task 10 ships it */ }
+  } catch { /* mute-token module unavailable — footer hidden */ }
   const ctx = { diagnosis, baseUrl, muteToken };
 
   const info = await transporter.sendMail({
