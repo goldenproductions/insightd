@@ -20,11 +20,13 @@ export function parseDockerTop(res: DockerTopResult): {
   if (pidIdx < 0 || ppidIdx < 0 || argsIdx < 0) return [];
   const out = [];
   for (const row of res.Processes) {
+    const maxIdx = Math.max(pidIdx, ppidIdx, commIdx, argsIdx);
+    if (row.length <= maxIdx) continue;
     const pid = parseInt(row[pidIdx], 10);
     const ppid = parseInt(row[ppidIdx], 10);
     const comm = commIdx >= 0 ? row[commIdx] : '';
     const argvFull = row[argsIdx].split(/\s+/).filter(s => s.length > 0);
-    if (Number.isNaN(pid) || argvFull.length === 0) continue;
+    if (Number.isNaN(pid) || Number.isNaN(ppid) || argvFull.length === 0) continue;
     out.push({ pid, ppid, comm, argvFull });
   }
   return out;

@@ -25,6 +25,31 @@ describe('parseDockerTop', () => {
     assert.deepEqual(parseDockerTop({ Titles: [], Processes: null }), []);
     assert.deepEqual(parseDockerTop({ Titles: [], Processes: [] }), []);
   });
+
+  it('skips rows shorter than the column index requires', () => {
+    const out = parseDockerTop({
+      Titles: ['PID', 'PPID', 'COMM', 'ARGS'],
+      Processes: [
+        ['100', '1', 'nginx'],  // missing ARGS column
+        ['101', '1', 'nginx', '/usr/sbin/nginx'],
+      ],
+    });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].pid, 101);
+  });
+
+  it('skips rows whose pid or ppid is non-numeric', () => {
+    const out = parseDockerTop({
+      Titles: ['PID', 'PPID', 'COMM', 'ARGS'],
+      Processes: [
+        ['xyz', '1', 'a', '/x'],
+        ['1', 'xyz', 'a', '/x'],
+        ['1', '0', 'a', '/x'],
+      ],
+    });
+    assert.equal(out.length, 1);
+    assert.equal(out[0].pid, 1);
+  });
 });
 
 describe('viaDockerTop', () => {
