@@ -1380,8 +1380,15 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const rEv  = db.prepare(`DELETE FROM k8s_events    WHERE last_seen_at < ${rawCutoff}`).run();
   const rIng = db.prepare(`DELETE FROM k8s_ingresses WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
   const rC = db.prepare(`DELETE FROM containers WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
-  // Template burst events have their own 15-day TTL.
+  const rNc = db.prepare(`DELETE FROM node_conditions WHERE host_id NOT IN (
+    SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
+  )`).run();
+  // Template burst events have their own 15-day TTL — short enough to keep
+  // the table small but long enough that diagnoser evidence still resolves
+  // for findings up to two weeks old.
   const rTb = db.prepare(`DELETE FROM template_burst_events WHERE ts < datetime('now', '-15 days')`).run();
+  // PVE storage snapshots — per-cycle append. Same retention as disk_snapshots.
+  const rPveSt = db.prepare(`DELETE FROM pve_storage_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
     UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
@@ -1394,13 +1401,27 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r11 = db.prepare(`DELETE FROM disk_rollups WHERE bucket < ${rollupCutoff}`).run();
   const r12 = db.prepare(`DELETE FROM http_rollups WHERE bucket < ${rollupCutoff}`).run();
 
+  // Process events (independent 7d retention; see spec 2026-05-12-per-container-process-visibility-design.md)
+  const rPe = db.prepare(
+    `DELETE FROM process_events WHERE started_at < datetime('now', '-7 days')`
+  ).run();
+  const rAd = db.prepare(
+    `DELETE FROM argv_dictionary
+      WHERE argv_hash NOT IN (SELECT DISTINCT argv_hash FROM process_events)`
+  ).run();
+
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
-    + rEv.changes + rIng.changes + rTb.changes
-    + r9.changes + r10.changes + r11.changes + r12.changes;
+    + rEv.changes + rIng.changes + rNc.changes + rTb.changes + rPveSt.changes
+    + r9.changes + r10.changes + r11.changes + r12.changes + rPe.changes + rAd.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);
+  }
+
+  if (rPe.changes > 0 || rAd.changes > 0) {
+    logger.info('schema',
+      `Pruned ${rPe.changes} process_events rows, ${rAd.changes} orphaned argv entries`);
   }
 
   // 4. Update prune timestamp

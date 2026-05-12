@@ -1540,13 +1540,27 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r11 = db.prepare(`DELETE FROM disk_rollups WHERE bucket < ${rollupCutoff}`).run();
   const r12 = db.prepare(`DELETE FROM http_rollups WHERE bucket < ${rollupCutoff}`).run();
 
+  // Process events (independent 7d retention; see spec 2026-05-12-per-container-process-visibility-design.md)
+  const rPe = db.prepare(
+    `DELETE FROM process_events WHERE started_at < datetime('now', '-7 days')`
+  ).run();
+  const rAd = db.prepare(
+    `DELETE FROM argv_dictionary
+      WHERE argv_hash NOT IN (SELECT DISTINCT argv_hash FROM process_events)`
+  ).run();
+
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
     + rEv.changes + rIng.changes + rNc.changes + rTb.changes + rPveSt.changes
-    + r9.changes + r10.changes + r11.changes + r12.changes;
+    + r9.changes + r10.changes + r11.changes + r12.changes + rPe.changes + rAd.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);
+  }
+
+  if (rPe.changes > 0 || rAd.changes > 0) {
+    logger.info('schema',
+      `Pruned ${rPe.changes} process_events rows, ${rAd.changes} orphaned argv entries`);
   }
 
   // 4. Update prune timestamp
