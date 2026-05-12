@@ -79,6 +79,14 @@ const config = Object.freeze({
   // Log tailing
   logLines: parseInt(process.env.INSIGHTD_LOG_LINES || '100', 10),
   logMaxLines: parseInt(process.env.INSIGHTD_LOG_MAX_LINES || '1000', 10),
+
+  // Process collection
+  processCollection: {
+    enabled: process.env.INSIGHTD_PROCESS_ENABLED !== 'false',
+    pollIntervalMs: parseInt(process.env.INSIGHTD_PROCESS_INTERVAL_MS ?? '5000', 10),
+    argvMaxBytes: parseInt(process.env.INSIGHTD_PROCESS_ARGV_MAX ?? '4096', 10),
+    dockerTopTimeoutMs: parseInt(process.env.INSIGHTD_PROCESS_DOCKER_TIMEOUT_MS ?? '2000', 10),
+  },
 });
 
 function validate(): string[] {
