@@ -298,6 +298,9 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
         if (err) logger.error('mqtt', 'Failed to subscribe to identity-hint topic');
         else logger.info('mqtt', 'Subscribed to insightd/+/identity-hint');
       });
+      client!.subscribe('insightd/+/process_events', { qos: 0 }, (err) => {
+        if (err) logger.error('mqtt', 'Failed to subscribe to process_events topic');
+      });
 
       if (!connected) {
         connected = true;
@@ -306,55 +309,7 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
     });
 
     client.on('message', (topic: string, message: Buffer) => {
-      try {
-        const payload = JSON.parse(message.toString());
-        const parts = topic.split('/');
-        const hostId = parts[1];
-        const type = parts[2];
-
-        // Cluster-scoped topics use `insightd/_cluster_<id>/pvs|pvcs`. The
-        // `_cluster_` prefix keeps them out of per-host routing: hostId here
-        // is really the cluster_id wrapped in a sentinel, which the PV/PVC
-        // handlers unwrap.
-        if (hostId.startsWith('_cluster_')) {
-          const clusterId = hostId.slice('_cluster_'.length);
-          if (type === 'pvs')           { handlePvs(db, clusterId, payload); return; }
-          if (type === 'pvcs')          { handlePvcs(db, clusterId, payload); return; }
-          if (type === 'events')        { handleEvents(db, clusterId, payload); return; }
-          if (type === 'ingresses')     { handleIngresses(db, clusterId, payload); return; }
-          if (type === 'pending-pods')  { handlePendingPods(db, clusterId, payload); return; }
-          if (type === 'services')      { handleServices(db, clusterId, payload); return; }
-          if (type === 'pod-volumes')   { handlePodVolumes(db, clusterId, payload); return; }
-          if (type === 'workload-rollouts') { handleWorkloadRollouts(db, clusterId, payload); return; }
-        }
-
-        if (type === 'collection') {
-          handleCollection(db, hostId, payload);
-        } else if (type === 'updates') {
-          handleUpdates(db, hostId, payload);
-        } else if (type === 'pve-storage') {
-          handlePveStorage(db, hostId, payload);
-        } else if (type === 'pve-zfs') {
-          handlePveZfs(db, hostId, payload);
-        } else if (type === 'pve-cluster') {
-          handlePveCluster(db, hostId, payload);
-        } else if (type === 'pve-guest-snapshots') {
-          handlePveGuestSnapshots(db, hostId, payload);
-        } else if (type === 'pve-backups') {
-          handlePveBackups(db, hostId, payload);
-        } else if (type === 'identity-hint') {
-          rememberIdentityHint(hostId, payload);
-          handleIdentityHint(db, hostId, payload);
-        } else if (type === 'logs' && parts[3] === 'response') {
-          handleLogResponse(payload);
-        } else if (type === 'update' && parts[3] === 'response') {
-          handleUpdateResponse(payload);
-        } else if (type === 'action' && parts[3] === 'response') {
-          handleActionResponse(payload);
-        }
-      } catch (err) {
-        logger.error('mqtt', `Failed to process message on ${topic}: ${(err as Error).message}`);
-      }
+      handleMqttMessage(db, topic, message);
     });
 
     client.on('error', (err: Error) => {
@@ -370,6 +325,74 @@ function startSubscriber(db: Database.Database, config: MqttConfig): Promise<Mqt
       if (!client!.connected) reject(new Error('MQTT connection timeout'));
     }, 10000);
   });
+}
+
+export function handleMqttMessage(db: Database.Database, topic: string, message: Buffer): void {
+  const parts = topic.split('/');
+  const hostId = parts[1];
+  const type = parts[2];
+
+  // process_events: high-frequency, QoS 0 — parse independently with own try/catch
+  if (type === 'process_events') {
+    const { ingestProcessEvents } =
+      require('./ingest-process-events') as {
+        ingestProcessEvents: (db: Database.Database, hostId: string, p: any) => void;
+      };
+    try {
+      const parsed = JSON.parse(message.toString());
+      ingestProcessEvents(db, hostId, parsed);
+    } catch (err) {
+      logger.error('mqtt', `process_events ingest failed for host ${hostId}: ${(err as Error).message}`);
+    }
+    return;
+  }
+
+  try {
+    const payload = JSON.parse(message.toString());
+
+    // Cluster-scoped topics use `insightd/_cluster_<id>/pvs|pvcs`. The
+    // `_cluster_` prefix keeps them out of per-host routing: hostId here
+    // is really the cluster_id wrapped in a sentinel, which the PV/PVC
+    // handlers unwrap.
+    if (hostId.startsWith('_cluster_')) {
+      const clusterId = hostId.slice('_cluster_'.length);
+      if (type === 'pvs')           { handlePvs(db, clusterId, payload); return; }
+      if (type === 'pvcs')          { handlePvcs(db, clusterId, payload); return; }
+      if (type === 'events')        { handleEvents(db, clusterId, payload); return; }
+      if (type === 'ingresses')     { handleIngresses(db, clusterId, payload); return; }
+      if (type === 'pending-pods')  { handlePendingPods(db, clusterId, payload); return; }
+      if (type === 'services')      { handleServices(db, clusterId, payload); return; }
+      if (type === 'pod-volumes')   { handlePodVolumes(db, clusterId, payload); return; }
+      if (type === 'workload-rollouts') { handleWorkloadRollouts(db, clusterId, payload); return; }
+    }
+
+    if (type === 'collection') {
+      handleCollection(db, hostId, payload);
+    } else if (type === 'updates') {
+      handleUpdates(db, hostId, payload);
+    } else if (type === 'pve-storage') {
+      handlePveStorage(db, hostId, payload);
+    } else if (type === 'pve-zfs') {
+      handlePveZfs(db, hostId, payload);
+    } else if (type === 'pve-cluster') {
+      handlePveCluster(db, hostId, payload);
+    } else if (type === 'pve-guest-snapshots') {
+      handlePveGuestSnapshots(db, hostId, payload);
+    } else if (type === 'pve-backups') {
+      handlePveBackups(db, hostId, payload);
+    } else if (type === 'identity-hint') {
+      rememberIdentityHint(hostId, payload);
+      handleIdentityHint(db, hostId, payload);
+    } else if (type === 'logs' && parts[3] === 'response') {
+      handleLogResponse(payload);
+    } else if (type === 'update' && parts[3] === 'response') {
+      handleUpdateResponse(payload);
+    } else if (type === 'action' && parts[3] === 'response') {
+      handleActionResponse(payload);
+    }
+  } catch (err) {
+    logger.error('mqtt', `Failed to process message on ${topic}: ${(err as Error).message}`);
+  }
 }
 
 /**
@@ -1141,4 +1164,4 @@ function disconnect(): void {
   }
 }
 
-module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot, handleIdentityHint, rememberIdentityHint, rematchAllPendingHints };
+module.exports = { startSubscriber, disconnect, requestContainerLogs, requestAgentUpdate, requestContainerAction, requestUpdateCheck, payloadContainerToSnapshot, handleIdentityHint, rememberIdentityHint, rematchAllPendingHints, handleMqttMessage };
