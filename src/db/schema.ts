@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 52;
+const SCHEMA_VERSION = 53;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -683,6 +683,38 @@ function bootstrap(db: Database.Database): void {
     );
 
     CREATE INDEX IF NOT EXISTS idx_rca_edges_from ON rca_edges(from_entity);
+
+    CREATE TABLE IF NOT EXISTS argv_dictionary (
+      argv_hash   TEXT PRIMARY KEY,
+      argv        TEXT NOT NULL,
+      comm        TEXT NOT NULL,
+      first_seen  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS process_events (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id       TEXT NOT NULL,
+      container_id  TEXT,
+      pod_uid       TEXT,
+      pid           INTEGER NOT NULL,
+      ppid          INTEGER NOT NULL,
+      argv_hash     TEXT NOT NULL,
+      started_at    TEXT NOT NULL,
+      exited_at     TEXT,
+      exit_code     INTEGER,
+      lifetime_ms   INTEGER,
+      source        TEXT NOT NULL,
+      UNIQUE (host_id, pid, started_at)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_process_events_host_started
+      ON process_events (host_id, started_at);
+    CREATE INDEX IF NOT EXISTS idx_process_events_container
+      ON process_events (container_id, started_at) WHERE container_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_process_events_argv_hash
+      ON process_events (argv_hash, started_at);
+    CREATE INDEX IF NOT EXISTS idx_process_events_alive
+      ON process_events (host_id, exited_at) WHERE exited_at IS NULL;
   `);
 
   // Track schema version and run migrations
@@ -1283,6 +1315,40 @@ function migrate(db: Database.Database, fromVersion: number): void {
     // Backfill alert_state.severity from the seeded rule rows
     db.exec("UPDATE alert_state SET severity = (SELECT severity FROM alert_rules WHERE alert_rules.alert_type = alert_state.alert_type) WHERE severity IS NULL");
   }
+  if (fromVersion < 53) {
+    // process visibility — see spec docs/superpowers/specs/2026-05-12-per-container-process-visibility-design.md
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS argv_dictionary (
+        argv_hash   TEXT PRIMARY KEY,
+        argv        TEXT NOT NULL,
+        comm        TEXT NOT NULL,
+        first_seen  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS process_events (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id       TEXT NOT NULL,
+        container_id  TEXT,
+        pod_uid       TEXT,
+        pid           INTEGER NOT NULL,
+        ppid          INTEGER NOT NULL,
+        argv_hash     TEXT NOT NULL,
+        started_at    TEXT NOT NULL,
+        exited_at     TEXT,
+        exit_code     INTEGER,
+        lifetime_ms   INTEGER,
+        source        TEXT NOT NULL,
+        UNIQUE (host_id, pid, started_at)
+      );
+      CREATE INDEX IF NOT EXISTS idx_process_events_host_started
+        ON process_events (host_id, started_at);
+      CREATE INDEX IF NOT EXISTS idx_process_events_container
+        ON process_events (container_id, started_at) WHERE container_id IS NOT NULL;
+      CREATE INDEX IF NOT EXISTS idx_process_events_argv_hash
+        ON process_events (argv_hash, started_at);
+      CREATE INDEX IF NOT EXISTS idx_process_events_alive
+        ON process_events (host_id, exited_at) WHERE exited_at IS NULL;
+    `);
+  }
 }
 
 /**
@@ -1314,8 +1380,15 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const rEv  = db.prepare(`DELETE FROM k8s_events    WHERE last_seen_at < ${rawCutoff}`).run();
   const rIng = db.prepare(`DELETE FROM k8s_ingresses WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
   const rC = db.prepare(`DELETE FROM containers WHERE removed_at IS NOT NULL AND removed_at < ${rawCutoff}`).run();
-  // Template burst events have their own 15-day TTL.
+  const rNc = db.prepare(`DELETE FROM node_conditions WHERE host_id NOT IN (
+    SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
+  )`).run();
+  // Template burst events have their own 15-day TTL — short enough to keep
+  // the table small but long enough that diagnoser evidence still resolves
+  // for findings up to two weeks old.
   const rTb = db.prepare(`DELETE FROM template_burst_events WHERE ts < datetime('now', '-15 days')`).run();
+  // PVE storage snapshots — per-cycle append. Same retention as disk_snapshots.
+  const rPveSt = db.prepare(`DELETE FROM pve_storage_snapshots WHERE collected_at < ${rawCutoff}`).run();
   const r6 = db.prepare(`DELETE FROM hosts WHERE host_id NOT IN (
     SELECT DISTINCT host_id FROM container_snapshots WHERE collected_at >= ${rawCutoff}
     UNION SELECT DISTINCT host_id FROM host_snapshots WHERE collected_at >= ${rawCutoff}
@@ -1328,13 +1401,27 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
   const r11 = db.prepare(`DELETE FROM disk_rollups WHERE bucket < ${rollupCutoff}`).run();
   const r12 = db.prepare(`DELETE FROM http_rollups WHERE bucket < ${rollupCutoff}`).run();
 
+  // Process events (independent 7d retention; see spec 2026-05-12-per-container-process-visibility-design.md)
+  const rPe = db.prepare(
+    `DELETE FROM process_events WHERE started_at < datetime('now', '-7 days')`
+  ).run();
+  const rAd = db.prepare(
+    `DELETE FROM argv_dictionary
+      WHERE argv_hash NOT IN (SELECT DISTINCT argv_hash FROM process_events)`
+  ).run();
+
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
-    + rEv.changes + rIng.changes + rTb.changes
-    + r9.changes + r10.changes + r11.changes + r12.changes;
+    + rEv.changes + rIng.changes + rNc.changes + rTb.changes + rPveSt.changes
+    + r9.changes + r10.changes + r11.changes + r12.changes + rPe.changes + rAd.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);
+  }
+
+  if (rPe.changes > 0 || rAd.changes > 0) {
+    logger.info('schema',
+      `Pruned ${rPe.changes} process_events rows, ${rAd.changes} orphaned argv entries`);
   }
 
   // 4. Update prune timestamp

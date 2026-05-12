@@ -25,6 +25,13 @@ RUN cd agent && npm ci --omit=dev
 
 COPY --from=builder /app/agent/dist/ ./agent/dist/
 
+ARG TARGETARCH
+RUN ARCH=${TARGETARCH:-amd64} && \
+    CRICTL_VERSION=v1.30.0 && \
+    wget -q -O- https://github.com/kubernetes-sigs/cri-tools/releases/download/${CRICTL_VERSION}/crictl-${CRICTL_VERSION}-linux-${ARCH}.tar.gz | \
+    tar -xz -C /usr/local/bin && \
+    chmod +x /usr/local/bin/crictl
+
 ARG INSIGHTD_VERSION=dev
 ENV NODE_OPTIONS="--max-old-space-size=40"
 ENV NODE_ENV=production

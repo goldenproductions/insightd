@@ -1,6 +1,7 @@
 import logger = require('../../shared/utils/logger');
 import { getRuntime, DockerRuntime } from './runtime';
 import type { ContainerRuntime } from './runtime/types';
+import { startProcessCollector } from './collectors/processes/processes';
 
 const { config, validate } = require('./config') as {
   config: {
@@ -33,6 +34,12 @@ const { config, validate } = require('./config') as {
     /** PR4 — in-guest identity bridge (set on the guest VM agent). */
     proxmoxNode: string;
     proxmoxVmid: string;
+    processCollection: {
+      enabled: boolean;
+      pollIntervalMs: number;
+      argvMaxBytes: number;
+      dockerTopTimeoutMs: number;
+    };
   };
   validate: () => string[];
 };
@@ -71,8 +78,9 @@ async function main(): Promise<void> {
   }
 
   // Connect to MQTT
+  let mqttClient: any;
   try {
-    await connect(config, runtime);
+    mqttClient = await connect(config, runtime);
   } catch (err) {
     logger.error('mqtt', 'Cannot connect to MQTT broker', err);
     process.exit(1);
@@ -93,6 +101,17 @@ async function main(): Promise<void> {
 
   // Start collection scheduler
   startAgentScheduler(runtime, config);
+
+  // Start process collector (enabled by default; disable via INSIGHTD_PROCESS_ENABLED=false)
+  if (config.processCollection?.enabled) {
+    startProcessCollector({
+      mqtt: mqttClient,
+      hostId: config.hostId,
+      runtime,
+      hostRoot: config.hostRoot,
+      config: config.processCollection,
+    });
+  }
 
   logger.info('agent', 'insightd agent is running');
 
