@@ -1,7 +1,7 @@
 // tests/unit/agent-process-poller.test.ts
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-const { runPollCycle, newState, makeKey } =
+const { runPollCycle, newState } =
   require('../../agent/src/collectors/processes/poller');
 
 function proc(p: Partial<any>): any {
