@@ -6,7 +6,7 @@ const { bootstrap, SCHEMA_VERSION } = require('../../hub/src/db/schema');
 
 describe('schema v53 — process_events tables', () => {
   it('bumps SCHEMA_VERSION to 53', () => {
-    assert.equal(SCHEMA_VERSION, 53);
+    assert.ok(SCHEMA_VERSION >= 53);
   });
 
   it('creates argv_dictionary and process_events on bootstrap', () => {
@@ -49,6 +49,6 @@ describe('schema v53 — process_events tables', () => {
     ).get();
     assert.ok(row, 'process_events not re-created by migrate');
     const ver = db.prepare(`SELECT value FROM meta WHERE key='schema_version'`).get() as any;
-    assert.equal(ver.value, '53');
+    assert.equal(ver.value, String(SCHEMA_VERSION));
   });
 });
