@@ -90,6 +90,9 @@ interface AlertRow {
   silenced_until: string | null;
   silenced_by: string | null;
   silenced_at: string | null;
+  explained_by_pattern_event_id: number | null;
+  explained_pattern_id: string | null;
+  explained_line: string | null;
 }
 
 interface CountRow {
@@ -728,7 +731,7 @@ function getAlertsExplore(db: Database.Database, filters: AlertsExploreFilters):
   }
 
   if (filters.hosts && filters.hosts.length > 0) {
-    where.push(`host_id IN (${filters.hosts.map(() => '?').join(',')})`);
+    where.push(`alert_state.host_id IN (${filters.hosts.map(() => '?').join(',')})`);
     params.push(...filters.hosts);
   }
 
@@ -737,7 +740,7 @@ function getAlertsExplore(db: Database.Database, filters: AlertsExploreFilters):
 
   if (filters.q && filters.q.trim()) {
     const needle = `%${filters.q.trim().toLowerCase()}%`;
-    where.push(`(LOWER(alert_type) LIKE ? OR LOWER(target) LIKE ? OR LOWER(IFNULL(message, '')) LIKE ? OR LOWER(host_id) LIKE ?)`);
+    where.push(`(LOWER(alert_type) LIKE ? OR LOWER(target) LIKE ? OR LOWER(IFNULL(message, '')) LIKE ? OR LOWER(alert_state.host_id) LIKE ?)`);
     params.push(needle, needle, needle, needle);
   }
 
@@ -756,11 +759,15 @@ function getAlertsExplore(db: Database.Database, filters: AlertsExploreFilters):
   const totalRow = db.prepare(`SELECT COUNT(*) as count FROM alert_state${whereSql}`).get(...params) as CountRow;
 
   const alerts = db.prepare(`
-    SELECT id, host_id, alert_type, target, triggered_at, resolved_at, last_notified,
+    SELECT alert_state.id, alert_state.host_id, alert_type, target, triggered_at, resolved_at, last_notified,
            notify_count, message, trigger_value, threshold,
            silenced_until, silenced_by, silenced_at,
+           explained_by_pattern_event_id,
+           lpe.pattern_id   AS explained_pattern_id,
+           lpe.matched_line AS explained_line,
            ${LEVEL_CASE_SQL} AS level
-    FROM alert_state${whereSql}
+    FROM alert_state
+    LEFT JOIN log_pattern_events lpe ON lpe.id = alert_state.explained_by_pattern_event_id${whereSql}
     ORDER BY
       CASE WHEN resolved_at IS NULL THEN 0 ELSE 1 END,
       triggered_at DESC

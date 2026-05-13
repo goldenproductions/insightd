@@ -8,6 +8,7 @@ import { CardSkeleton } from '@/components/Skeleton';
 import { ReasonSummary } from './ReasonSummary';
 import { ContributingTimeline } from './ContributingTimeline';
 import { TopArgvsTable } from './TopArgvsTable';
+import { LogMatchBlock } from './LogMatchBlock';
 import { timeAgo } from '@/lib/formatters';
 import { splitContainerEntityId } from '@/lib/containers';
 
@@ -72,6 +73,7 @@ export function ExpandedBody({ insight }: { insight: ExpandedBodyInsight }) {
       <ContributingTimeline events={explain.timeline} />
       {explain.extras?.map((block, i) => {
         if (block.kind === 'top_argvs') return <TopArgvsTable key={`${block.kind}-${i}`} {...block} />;
+        if (block.kind === 'log_match') return <LogMatchBlock key={`${block.kind}-${i}`} {...block} />;
         return null;
       })}
       <MetadataRow insight={insight} />

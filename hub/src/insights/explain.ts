@@ -476,18 +476,55 @@ interface TopArgvsBlock {
   rows: TopArgvsRow[];
 }
 
-type ExtraBlock = TopArgvsBlock;
+interface LogMatchBlock {
+  kind: 'log_match';
+  pattern_id: string;
+  image: string | null;
+  matched_line: string;
+  context_before: string[];
+  context_after: string[];
+  captures: Record<string, string>;
+  occurrences: number;
+  fired_at: string;
+}
+
+type ExtraBlock = TopArgvsBlock | LogMatchBlock;
 
 function buildExtras(insight: InsightRow): ExtraBlock[] | undefined {
-  if (insight.metric !== 'process_spawn_count') return undefined;
-  try {
-    const ev = insight.evidence ? JSON.parse(insight.evidence) : null;
-    const rows = ev?.top_argvs;
-    if (!Array.isArray(rows) || rows.length === 0) return undefined;
-    return [{ kind: 'top_argvs', rows }];
-  } catch {
-    return undefined;
+  const extras: ExtraBlock[] = [];
+
+  // top_argvs (from PR #275)
+  if (insight.metric === 'process_spawn_count') {
+    try {
+      const ev = insight.evidence ? JSON.parse(insight.evidence) : null;
+      const rows = ev?.top_argvs;
+      if (Array.isArray(rows) && rows.length > 0) {
+        extras.push({ kind: 'top_argvs', rows });
+      }
+    } catch { /* malformed evidence — skip */ }
   }
+
+  // log_match (NEW)
+  if (insight.metric === 'log_pattern_match') {
+    try {
+      const ev = insight.evidence ? JSON.parse(insight.evidence) : null;
+      if (ev && ev.matched_line) {
+        extras.push({
+          kind: 'log_match',
+          pattern_id: ev.pattern_id ?? '',
+          image: ev.image ?? null,
+          matched_line: ev.matched_line,
+          context_before: Array.isArray(ev.context_before) ? ev.context_before : [],
+          context_after:  Array.isArray(ev.context_after)  ? ev.context_after  : [],
+          captures:       (ev.captures && typeof ev.captures === 'object') ? ev.captures : {},
+          occurrences:    typeof ev.occurrences === 'number' ? ev.occurrences : 1,
+          fired_at:       ev.fired_at ?? '',
+        });
+      }
+    } catch { /* malformed evidence — skip */ }
+  }
+
+  return extras.length ? extras : undefined;
 }
 
 function buildExplanation(db: Database.Database, insight: InsightRow) {

@@ -28,6 +28,9 @@ import type {
 } from './types';
 import { DrainTree, tokenize, type DrainTemplate } from './drain';
 import { classifyTemplate } from './templateClassifier';
+const { matchLines } = require('../../log-patterns/matcher');
+const { recordMatch } = require('../../log-patterns/events');
+const { getRegistry } = require('../../log-patterns');
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_LINES_PER_CACHE_ENTRY = 100;
@@ -380,6 +383,25 @@ export function setCachedLogs(
       mining = mineTemplates(ctx.db, imageKey, trimmed, { hostId, containerName });
     } catch {
       mining = EMPTY_MINING;
+    }
+  }
+  if (ctx && ctx.db) {
+    try {
+      const cfg = (require('../../config') as { config: { logPatterns?: { enabled?: boolean; dir?: string } } }).config;
+      if (cfg.logPatterns?.enabled !== false) {
+        const registry = getRegistry(cfg.logPatterns?.dir ?? 'shared/log-patterns');
+        if (registry.all.length > 0) {
+          const lineStrings = trimmed.map(l => l.message ?? '');
+          const events = matchLines(lineStrings, ctx.image, hostId, containerName, registry);
+          for (const ev of events) recordMatch(ctx.db, ev, registry);
+        }
+      }
+    } catch (err) {
+      // Matcher failures must never break the cache write path
+      try {
+        const log = require('../../../../shared/utils/logger');
+        log.warn('log-patterns', `logCache match step failed: ${(err as Error).message}`);
+      } catch { /* logger unavailable, swallow */ }
     }
   }
   cache.set(key, {

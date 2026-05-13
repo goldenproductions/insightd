@@ -7,6 +7,8 @@ const { buildAftermath } = require('./aftermath');
 const { getRule } = require('./rules');
 const { effectiveSeverity } = require('./severity');
 const { findActiveRespawnLoops } = require('./respawn-loop');
+const { findForAlertType } = require('../log-patterns/events');
+const { getRegistry } = require('../log-patterns');
 
 interface AlertItem {
   type: string;
@@ -1423,6 +1425,31 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
 }
 
 /**
+ * Best-effort stamp of `explained_by_pattern_event_id` onto a freshly inserted
+ * alert_state row. Looks up recent log_pattern_events whose pattern declares
+ * `explains_alert: [<alertType>]` for the same host/container within the last
+ * 15 minutes and writes the first match's id. Sticky — the UPDATE includes
+ * `AND explained_by_pattern_event_id IS NULL` so a later cycle never overwrites.
+ *
+ * MUST NOT throw — alert processing must not be broken by log-pattern lookups.
+ */
+function stampExplanation(db: Database.Database, alertStateId: number, alert: AlertItem): void {
+  try {
+    const cfg = (require('../config') as { config: { logPatterns?: { enabled?: boolean; dir?: string } } }).config;
+    if (cfg.logPatterns?.enabled === false) return;
+    const registry = getRegistry(cfg.logPatterns?.dir ?? 'shared/log-patterns');
+    if (registry.all.length === 0) return;
+    const hits = findForAlertType(db, alert.type, alert.hostId, alert.target, '-15 minutes', registry);
+    if (hits.length === 0) return;
+    db.prepare(
+      'UPDATE alert_state SET explained_by_pattern_event_id = ? WHERE id = ? AND explained_by_pattern_event_id IS NULL'
+    ).run(hits[0].id, alertStateId);
+  } catch {
+    // Log-pattern enrichment must never break alert flow
+  }
+}
+
+/**
  * Process alerts: handle cooldown, deduplication, and DB state.
  */
 function processAlerts(db: Database.Database, config: EvaluatorConfig, { triggered, resolved }: EvaluationResult): AlertItem[] {
@@ -1452,6 +1479,7 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
             VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?)
           `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
           parentRow = { id: Number(info.lastInsertRowid) };
+          stampExplanation(db, parentRow.id, alert);
         }
         const children = findActiveChildren(db, { alert_type: alert.type, host_id: alert.hostId, target: alert.target });
         const stamp = db.prepare('UPDATE alert_state SET suppressed_by_state_id = ? WHERE id = ? AND suppressed_by_state_id IS NULL AND resolved_at IS NULL');
@@ -1480,6 +1508,7 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
         INSERT INTO alert_state (host_id, alert_type, target, triggered_at, last_notified, notify_count, pending_since, message, trigger_value, threshold, suppressed_by_state_id)
         VALUES (?, ?, ?, datetime('now'), datetime('now'), 0, datetime('now'), ?, ?, ?, ?)
       `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null, parentId);
+      stampExplanation(db, Number(ins.lastInsertRowid), alert);
       if (parentId !== null) continue;  // suppressed at birth — no mail
       if (stabilizeMin === 0) {
         // back-compat: immediately bump notify_count and mail

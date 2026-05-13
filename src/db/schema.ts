@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import logger = require('../utils/logger');
 
-const SCHEMA_VERSION = 53;
+const SCHEMA_VERSION = 54;
 
 function bootstrap(db: Database.Database): void {
   db.exec(`
@@ -396,7 +396,8 @@ function bootstrap(db: Database.Database): void {
       severity        TEXT,
       pending_since   TEXT,
       resolved_pending_since TEXT,
-      suppressed_by_state_id INTEGER
+      suppressed_by_state_id INTEGER,
+      explained_by_pattern_event_id INTEGER
     );
 
     CREATE INDEX IF NOT EXISTS idx_alert_host_active
@@ -715,6 +716,25 @@ function bootstrap(db: Database.Database): void {
       ON process_events (argv_hash, started_at);
     CREATE INDEX IF NOT EXISTS idx_process_events_alive
       ON process_events (host_id, exited_at) WHERE exited_at IS NULL;
+
+    CREATE TABLE IF NOT EXISTS log_pattern_events (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      host_id         TEXT NOT NULL,
+      container_name  TEXT NOT NULL,
+      image           TEXT,
+      pattern_id      TEXT NOT NULL,
+      matched_line    TEXT NOT NULL,
+      context_before  TEXT,
+      context_after   TEXT,
+      captures        TEXT,
+      line_hash       TEXT NOT NULL,
+      fired_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      occurrences     INTEGER NOT NULL DEFAULT 1,
+      UNIQUE (host_id, container_name, pattern_id, line_hash)
+    );
+    CREATE INDEX IF NOT EXISTS idx_lpe_container ON log_pattern_events (host_id, container_name, fired_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_lpe_pattern   ON log_pattern_events (pattern_id, fired_at DESC);
   `);
 
   // Track schema version and run migrations
@@ -1349,6 +1369,31 @@ function migrate(db: Database.Database, fromVersion: number): void {
         ON process_events (host_id, exited_at) WHERE exited_at IS NULL;
     `);
   }
+  if (fromVersion < 54) {
+    // log-pattern framework — see spec docs/superpowers/specs/2026-05-12-log-pattern-framework-design.md
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS log_pattern_events (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        host_id         TEXT NOT NULL,
+        container_name  TEXT NOT NULL,
+        image           TEXT,
+        pattern_id      TEXT NOT NULL,
+        matched_line    TEXT NOT NULL,
+        context_before  TEXT,
+        context_after   TEXT,
+        captures        TEXT,
+        line_hash       TEXT NOT NULL,
+        fired_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        occurrences     INTEGER NOT NULL DEFAULT 1,
+        UNIQUE (host_id, container_name, pattern_id, line_hash)
+      );
+      CREATE INDEX IF NOT EXISTS idx_lpe_container ON log_pattern_events (host_id, container_name, fired_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_lpe_pattern   ON log_pattern_events (pattern_id, fired_at DESC);
+    `);
+    try { db.exec('ALTER TABLE alert_state ADD COLUMN explained_by_pattern_event_id INTEGER'); }
+    catch { /* column already exists */ }
+  }
 }
 
 /**
@@ -1410,10 +1455,17 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
       WHERE argv_hash NOT IN (SELECT DISTINCT argv_hash FROM process_events)`
   ).run();
 
+  // Log pattern events (independent retention, env-driven)
+  const lpRetention = parseInt(process.env.INSIGHTD_LOG_PATTERN_RETENTION_DAYS || '7', 10);
+  const rLpe = db.prepare(
+    `DELETE FROM log_pattern_events WHERE fired_at < datetime('now', '-${lpRetention} days')`
+  ).run();
+
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes
     + r6.changes + r7.changes + r8.changes + rC.changes + rPv.changes + rPvc.changes
     + rEv.changes + rIng.changes + rNc.changes + rTb.changes + rPveSt.changes
-    + r9.changes + r10.changes + r11.changes + r12.changes + rPe.changes + rAd.changes;
+    + r9.changes + r10.changes + r11.changes + r12.changes + rPe.changes + rAd.changes
+    + rLpe.changes;
 
   if (total > 0) {
     logger.info('schema', `Pruned ${total} rows (raw >${rawDays}d, rollups >${rollupDays}d)`);

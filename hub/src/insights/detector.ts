@@ -438,6 +438,55 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
     count++;
   }
 
+  // --- Log-pattern match insights ---
+  // Each (host, container, pattern_id) materializes one insight using the most
+  // recent event's evidence + cumulative occurrences over the last 24h.
+  const logPatternRows = db.prepare(`
+    SELECT host_id, container_name, image, pattern_id,
+           MAX(fired_at) AS latest_at,
+           SUM(occurrences) AS total_occ
+      FROM log_pattern_events
+     WHERE fired_at >= datetime('now', '-24 hours')
+     GROUP BY host_id, container_name, pattern_id
+  `).all() as Array<{ host_id: string; container_name: string; image: string | null; pattern_id: string; latest_at: string; total_occ: number }>;
+
+  for (const r of logPatternRows) {
+    const latest = db.prepare(`
+      SELECT matched_line, context_before, context_after, captures, fired_at
+        FROM log_pattern_events
+       WHERE host_id = ? AND container_name = ? AND pattern_id = ?
+       ORDER BY fired_at DESC
+       LIMIT 1
+    `).get(r.host_id, r.container_name, r.pattern_id) as
+      { matched_line: string; context_before: string | null; context_after: string | null; captures: string | null; fired_at: string } | undefined;
+    if (!latest) continue;
+
+    const evidence = JSON.stringify({
+      pattern_id: r.pattern_id,
+      image: r.image,
+      matched_line: latest.matched_line,
+      context_before: latest.context_before ? JSON.parse(latest.context_before) : [],
+      context_after:  latest.context_after  ? JSON.parse(latest.context_after)  : [],
+      captures:       latest.captures       ? JSON.parse(latest.captures)       : {},
+      fired_at: latest.fired_at,
+      occurrences: r.total_occ,
+    });
+
+    insert.run(
+      'container',
+      `${r.host_id}/${r.container_name}`,
+      'logs',
+      'warning',
+      `Log pattern: ${r.pattern_id}`,
+      `Matched ${r.total_occ}× in last 24h.`,
+      'log_pattern_match',
+      r.total_occ,
+      null,
+      evidence,
+    );
+    count++;
+  }
+
   // --- Correlation enrichment ---
   enrichInsightsWithCorrelations(db);
 
