@@ -563,6 +563,14 @@ function AlertsTable({
                     </span>
                   );
                 })()}
+                {a.explained_pattern_id && (
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1 rounded-full bg-bg-secondary px-2 py-0.5 text-[11px] text-muted"
+                    title={a.explained_line ?? undefined}
+                  >
+                    ↳ likely cause: <span className="font-mono">{a.explained_pattern_id}</span>
+                  </span>
+                )}
               </div>
             </div>
           );

@@ -780,6 +780,9 @@ export interface Alert {
   silenced_until: string | null;
   silenced_by: string | null;
   silenced_at: string | null;
+  explained_by_pattern_event_id: number | null;
+  explained_pattern_id: string | null;
+  explained_line: string | null;
 }
 
 // Timeline
