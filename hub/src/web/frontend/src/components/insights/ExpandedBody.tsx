@@ -7,6 +7,7 @@ import type { InsightExplanation } from '@/types/api';
 import { CardSkeleton } from '@/components/Skeleton';
 import { ReasonSummary } from './ReasonSummary';
 import { ContributingTimeline } from './ContributingTimeline';
+import { TopArgvsTable } from './TopArgvsTable';
 import { timeAgo } from '@/lib/formatters';
 import { splitContainerEntityId } from '@/lib/containers';
 
@@ -69,6 +70,10 @@ export function ExpandedBody({ insight }: { insight: ExpandedBodyInsight }) {
         <InsightChart chart={explain.chart} />
       </Suspense>
       <ContributingTimeline events={explain.timeline} />
+      {explain.extras?.map((block, i) => {
+        if (block.kind === 'top_argvs') return <TopArgvsTable key={i} {...block} />;
+        return null;
+      })}
       <MetadataRow insight={insight} />
     </div>
   );
