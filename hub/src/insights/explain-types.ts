@@ -65,7 +65,19 @@ export interface TopArgvsBlock {
   rows: TopArgvsRow[];
 }
 
-export type ExtraBlock = TopArgvsBlock;
+export interface LogMatchBlock {
+  kind: 'log_match';
+  pattern_id: string;
+  image: string | null;
+  matched_line: string;
+  context_before: string[];
+  context_after: string[];
+  captures: Record<string, string>;
+  occurrences: number;
+  fired_at: string;
+}
+
+export type ExtraBlock = TopArgvsBlock | LogMatchBlock;
 
 export interface InsightExplanation {
   summary: ExplanationSummary;
