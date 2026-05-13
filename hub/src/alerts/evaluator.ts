@@ -6,6 +6,7 @@ const { findActiveParent, findActiveChildren, DEPS } = require('./dependencies')
 const { buildAftermath } = require('./aftermath');
 const { getRule } = require('./rules');
 const { effectiveSeverity } = require('./severity');
+const { findActiveRespawnLoops } = require('./respawn-loop');
 
 interface AlertItem {
   type: string;
@@ -56,6 +57,11 @@ interface AlertsConfig {
   workloadRolloutStuckMinutes?: number;
   /** Days since last successful vzdump before pve_backup_overdue fires. 0 = disabled. */
   pveBackupAgeWarnDays?: number;
+  respawnLoop?: boolean;
+  respawnWindowMin?: number;
+  respawnMinSpawns?: number;
+  respawnShortLifetimeMs?: number;
+  respawnShortLifetimeRatio?: number;
   cooldownMinutes: number;
   reminderBackoff?: boolean;
   reminderMaxMinutes?: number;
@@ -189,6 +195,16 @@ function evaluateAlerts(db: Database.Database, config: EvaluatorConfig): Evaluat
     triggered.push(...checkDiskFull(db, alerts.diskPercent));
   }
 
+  // Respawn loop — host-agnostic: detector groups by container_id only.
+  if (alerts.respawnLoop !== false) {
+    triggered.push(...checkRespawnLoop(db, {
+      windowMin: alerts.respawnWindowMin ?? 15,
+      minSpawns: alerts.respawnMinSpawns ?? 20,
+      shortLifetimeMs: alerts.respawnShortLifetimeMs ?? 10_000,
+      shortLifetimeRatio: alerts.respawnShortLifetimeRatio ?? 0.6,
+    }).filter(notExcluded));
+  }
+
   // HTTP endpoints — hub-level checks
   if (alerts.endpointDown !== false) {
     triggered.push(...checkEndpointDown(db, alerts.endpointFailureThreshold || 3));
@@ -301,6 +317,30 @@ function checkRestartLoop(db: Database.Database, hostId: string, threshold: numb
     }
   }
   return alerts;
+}
+
+function checkRespawnLoop(db: Database.Database, params: {
+  windowMin: number; minSpawns: number; shortLifetimeMs: number; shortLifetimeRatio: number;
+}): AlertItem[] {
+  const groups = findActiveRespawnLoops(db, new Date(), params);
+  const out: AlertItem[] = [];
+  for (const g of groups) {
+    const hostRow = db.prepare(
+      'SELECT host_id, container_name FROM container_snapshots WHERE container_id = ? ORDER BY collected_at DESC LIMIT 1'
+    ).get(g.containerId) as { host_id: string; container_name: string } | undefined;
+    if (!hostRow) continue;
+    out.push({
+      type: 'respawn_loop',
+      hostId: hostRow.host_id,
+      target: hostRow.container_name,
+      message:
+        `Container "${hostRow.container_name}" has spawned the same process ${g.spawnCount} times in the last ${params.windowMin} min ` +
+        `(${(g.shortRatio * 100).toFixed(0)}% lifetime < ${Math.round(params.shortLifetimeMs / 1000)}s, avg ${Math.round(g.avgLifetimeMs)} ms).`,
+      value: g.spawnCount,
+      threshold: params.minSpawns,
+    });
+  }
+  return out;
 }
 
 /**
@@ -1020,6 +1060,7 @@ function checkEndpointDown(db: Database.Database, failureThreshold: number): Ale
 const CONTAINER_ALERT_TYPES = new Set<string>([
   'container_down',
   'restart_loop',
+  'respawn_loop',
   'high_cpu',
   'high_memory',
   'container_unhealthy',
@@ -1099,6 +1140,20 @@ function checkResolutions(db: Database.Database, alertsConfig: AlertsConfig): Al
       if (latest && older) {
         isResolved = (latest.restart_count - older.restart_count) < alertsConfig.restartCount;
       }
+    } else if (alert.alert_type === 'respawn_loop') {
+      const groups = findActiveRespawnLoops(db, new Date(), {
+        windowMin: alertsConfig.respawnWindowMin ?? 15,
+        minSpawns: alertsConfig.respawnMinSpawns ?? 20,
+        shortLifetimeMs: alertsConfig.respawnShortLifetimeMs ?? 10_000,
+        shortLifetimeRatio: alertsConfig.respawnShortLifetimeRatio ?? 0.6,
+      });
+      const stillFiring = groups.some((g: { containerId: string }) => {
+        const cn = db.prepare(
+          'SELECT container_name FROM container_snapshots WHERE container_id = ? ORDER BY collected_at DESC LIMIT 1'
+        ).get(g.containerId) as { container_name: string } | undefined;
+        return cn?.container_name === alert.target;
+      });
+      isResolved = !stillFiring;
     } else if (alert.alert_type === 'high_cpu') {
       const latest = db.prepare('SELECT cpu_percent FROM container_snapshots WHERE host_id = ? AND container_name = ? AND cpu_percent IS NOT NULL ORDER BY collected_at DESC LIMIT 1').get(alert.host_id, alert.target) as { cpu_percent: number } | undefined;
       isResolved = !!latest && latest.cpu_percent <= alertsConfig.cpuPercent;
@@ -1337,6 +1392,7 @@ function getResolutionMessage(type: string, target: string, hostId: string): str
   switch (type) {
     case 'container_down': return `Container "${target}"${on} is running again`;
     case 'restart_loop': return `Container "${target}"${on} restart loop resolved`;
+    case 'respawn_loop': return `Container "${target}"${on} respawn loop resolved`;
     case 'high_cpu': return `Container "${target}"${on} CPU back to normal`;
     case 'high_memory': return `Container "${target}"${on} memory back to normal`;
     case 'disk_full': return `Disk "${target}"${on} usage back to normal`;
@@ -1397,7 +1453,7 @@ function processAlerts(db: Database.Database, config: EvaluatorConfig, { trigger
           `).run(alert.hostId, alert.type, alert.target, alert.message, alert.value != null ? String(alert.value) : null, alert.threshold != null ? String(alert.threshold) : null);
           parentRow = { id: Number(info.lastInsertRowid) };
         }
-        const children = findActiveChildren(db, { alert_type: alert.type, host_id: alert.hostId });
+        const children = findActiveChildren(db, { alert_type: alert.type, host_id: alert.hostId, target: alert.target });
         const stamp = db.prepare('UPDATE alert_state SET suppressed_by_state_id = ? WHERE id = ? AND suppressed_by_state_id IS NULL AND resolved_at IS NULL');
         for (const c of children) stamp.run(parentRow.id, c.id);
         // Fall through — parent itself still flows through the mail path below.
