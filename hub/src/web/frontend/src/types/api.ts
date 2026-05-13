@@ -1179,7 +1179,19 @@ export interface ExplainTopArgvsBlock {
   rows: ExplainTopArgvsRow[];
 }
 
-export type ExplainExtraBlock = ExplainTopArgvsBlock;
+export interface ExplainLogMatchBlock {
+  kind: 'log_match';
+  pattern_id: string;
+  image: string | null;
+  matched_line: string;
+  context_before: string[];
+  context_after: string[];
+  captures: Record<string, string>;
+  occurrences: number;
+  fired_at: string;
+}
+
+export type ExplainExtraBlock = ExplainTopArgvsBlock | ExplainLogMatchBlock;
 
 export interface InsightExplanation {
   summary: ExplainSummary;
