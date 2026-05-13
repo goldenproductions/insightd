@@ -1166,10 +1166,26 @@ export interface ExplainSummary {
   confidence: 'high' | 'medium' | 'low' | null;
 }
 
+export interface ExplainTopArgvsRow {
+  argv_hash: string;
+  comm: string | null;
+  argv: string;
+  spawn_count: number;
+  avg_lifetime_ms: number;
+}
+
+export interface ExplainTopArgvsBlock {
+  kind: 'top_argvs';
+  rows: ExplainTopArgvsRow[];
+}
+
+export type ExplainExtraBlock = ExplainTopArgvsBlock;
+
 export interface InsightExplanation {
   summary: ExplainSummary;
   chart: ExplainChart;
   timeline: ExplainTimelineMarker[];
+  extras?: ExplainExtraBlock[];
 }
 
 /** Percentile subset used by analogies and ratings (no metadata fields) */
