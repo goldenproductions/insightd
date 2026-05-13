@@ -97,6 +97,7 @@ docker compose up -d        # Run full stack (mosquitto + hub + agent)
 - `INSIGHTD_RETENTION_ROLLUP_DAYS` — days to keep hourly rollups (default 365, min 30)
 - `GEMINI_API_KEY` — optional; enables the "Diagnose with AI" button on container detail (uses Google Gemini free tier)
 - `GEMINI_MODEL` — model to use (default `gemini-2.5-flash`; `gemini-2.0-flash` free tier returns `limit: 0` for new projects)
+- `INSIGHTD_RESPAWN_ENABLED` / `INSIGHTD_RESPAWN_WINDOW_MIN` / `INSIGHTD_RESPAWN_MIN_SPAWNS` / `INSIGHTD_RESPAWN_SHORT_LIFETIME_MS` / `INSIGHTD_RESPAWN_SHORT_LIFETIME_RATIO` — respawn-loop detector thresholds (defaults: on / 15 / 20 / 10000 / 0.6)
 - `NODE_NAME` / `NODE_IP` — required in Kubernetes DaemonSet mode (set via downward API)
 - See hub/src/config.ts and agent/src/config.ts for full list (40+ vars)
 
