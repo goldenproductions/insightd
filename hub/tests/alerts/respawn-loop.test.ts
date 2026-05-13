@@ -30,6 +30,7 @@ function freshDb(): Database.Database {
     );
     CREATE INDEX idx_pe_container_started ON process_events(container_id, started_at);
   `);
+  (db as any).__pidCursor = 1000;
   return db;
 }
 
@@ -37,7 +38,6 @@ function isoMinutesAgo(min: number): string {
   return new Date(Date.now() - min * 60_000).toISOString().slice(0, 19).replace('T', ' ');
 }
 
-let pidCursor = 1000;
 function seedSpawns(
   db: Database.Database,
   count: number,
@@ -51,7 +51,8 @@ function seedSpawns(
     const startedAt = isoMinutesAgo(opts.minutesAgoStart - i * 0.01);
     const exitedAtMs = Date.parse(startedAt.replace(' ', 'T') + 'Z') + opts.lifetimeMs;
     const exitedAt = new Date(exitedAtMs).toISOString().slice(0, 19).replace('T', ' ');
-    stmt.run(opts.containerId, pidCursor++, opts.argvHash, startedAt, exitedAt, opts.lifetimeMs);
+    const pid = (db as any).__pidCursor++;
+    stmt.run(opts.containerId, pid, opts.argvHash, startedAt, exitedAt, opts.lifetimeMs);
   }
 }
 

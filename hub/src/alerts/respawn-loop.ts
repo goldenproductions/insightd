@@ -95,28 +95,33 @@ function fetchTopArgvs(
   limit: number = 5,
 ): TopArgv[] {
   const nowSql = now.toISOString().slice(0, 19).replace('T', ' ');
-  const rows = db.prepare(`
-    SELECT pe.argv_hash,
-           ad.argv,
-           ad.comm,
-           COUNT(*) AS spawn_count,
-           AVG(pe.lifetime_ms) AS avg_lifetime_ms
-      FROM process_events pe
-      LEFT JOIN argv_dictionary ad ON ad.argv_hash = pe.argv_hash
-     WHERE pe.container_id = ?
-       AND pe.started_at >= datetime(?, '-' || ? || ' minutes')
-     GROUP BY pe.argv_hash
-     ORDER BY spawn_count DESC
-     LIMIT ?
-  `).all(containerId, nowSql, windowMin, limit) as TopArgvRow[];
+  try {
+    const rows = db.prepare(`
+      SELECT pe.argv_hash,
+             ad.argv,
+             ad.comm,
+             COUNT(*) AS spawn_count,
+             AVG(pe.lifetime_ms) AS avg_lifetime_ms
+        FROM process_events pe
+        LEFT JOIN argv_dictionary ad ON ad.argv_hash = pe.argv_hash
+       WHERE pe.container_id = ?
+         AND pe.started_at >= datetime(?, '-' || ? || ' minutes')
+       GROUP BY pe.argv_hash
+       ORDER BY spawn_count DESC
+       LIMIT ?
+    `).all(containerId, nowSql, windowMin, limit) as TopArgvRow[];
 
-  return rows.map(r => ({
-    argvHash: r.argv_hash,
-    comm: r.comm,
-    argv: (r.argv ?? '').slice(0, ARGV_TRUNCATE_BYTES),
-    spawnCount: r.spawn_count,
-    avgLifetimeMs: r.avg_lifetime_ms ?? 0,
-  }));
+    return rows.map(r => ({
+      argvHash: r.argv_hash,
+      comm: r.comm,
+      argv: (r.argv ?? '').slice(0, ARGV_TRUNCATE_BYTES),
+      spawnCount: r.spawn_count,
+      avgLifetimeMs: r.avg_lifetime_ms ?? 0,
+    }));
+  } catch (err) {
+    logger.warn('respawn-loop', `fetchTopArgvs query failed: ${(err as Error).message}`);
+    return [];
+  }
 }
 
 module.exports = { findActiveRespawnLoops, fetchTopArgvs };
