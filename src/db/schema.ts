@@ -1455,9 +1455,10 @@ function pruneOldData(db: Database.Database, rawDays: number = 30, rollupDays: n
       WHERE argv_hash NOT IN (SELECT DISTINCT argv_hash FROM process_events)`
   ).run();
 
-  // Log pattern events (independent 7d retention; Task 12 will wire env-driven retention)
+  // Log pattern events (independent retention, env-driven)
+  const lpRetention = parseInt(process.env.INSIGHTD_LOG_PATTERN_RETENTION_DAYS || '7', 10);
   const rLpe = db.prepare(
-    `DELETE FROM log_pattern_events WHERE fired_at < datetime('now', '-7 days')`
+    `DELETE FROM log_pattern_events WHERE fired_at < datetime('now', '-${lpRetention} days')`
   ).run();
 
   const total = r1.changes + r2.changes + r3.changes + r4.changes + r5.changes

@@ -105,6 +105,12 @@ const config = Object.freeze({
     respawnShortLifetimeRatio: parseFloat(process.env.INSIGHTD_RESPAWN_SHORT_LIFETIME_RATIO || '0.6'),
   }),
 
+  logPatterns: Object.freeze({
+    enabled: process.env.INSIGHTD_LOG_PATTERNS_ENABLED !== 'false',
+    dir: process.env.INSIGHTD_LOG_PATTERNS_DIR || 'shared/log-patterns',
+    retentionDays: parseInt(process.env.INSIGHTD_LOG_PATTERN_RETENTION_DAYS || '7', 10),
+  }),
+
   // AI diagnosis (Gemini)
   ai: Object.freeze({
     geminiApiKey: process.env.GEMINI_API_KEY || '',
