@@ -20,7 +20,7 @@
   "author": "goldenproductions",
   "license": "MIT",
   "dependencies": {
-    "better-sqlite3": "^12.9.0",
+    "better-sqlite3": "^12.10.0",
     "dockerode": "^5.0.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.7",
@@ -30,7 +30,7 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/dockerode": "^4.0.1",
     "@types/js-yaml": "^4.0.9",
-    "@types/node": "^25.6.0",
+    "@types/node": "^25.7.0",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^8.0.0",
     "js-yaml": "^4.1.1",
