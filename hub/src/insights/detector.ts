@@ -2,6 +2,11 @@ import logger = require('../../../shared/utils/logger');
 import type Database from 'better-sqlite3';
 
 const { getTimePeriod, MIN_PERIOD_SAMPLES } = require('./baselines') as { getTimePeriod: (hour: number) => string; MIN_PERIOD_SAMPLES: number };
+import type { RespawnLoopGroup, TopArgv, DetectorParams } from '../alerts/respawn-loop';
+const { findActiveRespawnLoops, fetchTopArgvs } = require('../alerts/respawn-loop') as {
+  findActiveRespawnLoops: (db: Database.Database, now: Date, params: DetectorParams) => RespawnLoopGroup[];
+  fetchTopArgvs: (db: Database.Database, containerId: string, now: Date, windowMin: number, limit?: number) => TopArgv[];
+};
 import {
   HOST_CPU_WARN_PCT,
   HOST_CPU_CRIT_PCT,
@@ -388,6 +393,50 @@ function generateInsights(db: Database.Database, baselineCache?: BaselineCache |
 
   const { generateDiskFillInsights } = require('./disk-fill') as typeof import('./disk-fill');
   count += generateDiskFillInsights(db);
+
+  // --- Process respawn-loop insights ---
+  // Mirrors the alert evaluator's check. category='availability', metric='process_spawn_count'
+  // discriminates this insight from generic availability rows so explain.ts can render the
+  // restart_histogram chart + top_argvs extras block.
+  const respawnGroups = findActiveRespawnLoops(db, new Date(), {
+    windowMin: 15,
+    minSpawns: 20,
+    shortLifetimeMs: 10_000,
+    shortLifetimeRatio: 0.6,
+  });
+  for (const g of respawnGroups) {
+    const row = db.prepare(
+      'SELECT host_id, container_name FROM container_snapshots WHERE container_id = ? ORDER BY collected_at DESC LIMIT 1'
+    ).get(g.containerId) as { host_id: string; container_name: string } | undefined;
+    if (!row) continue;
+    const topArgvs = fetchTopArgvs(db, g.containerId, new Date(), 15);
+    const evidence = JSON.stringify({
+      argv_hash: g.argvHash,
+      spawn_count: g.spawnCount,
+      short_ratio: g.shortRatio,
+      avg_lifetime_ms: g.avgLifetimeMs,
+      top_argvs: topArgvs.map(t => ({
+        argv_hash: t.argvHash,
+        comm: t.comm,
+        argv: t.argv,
+        spawn_count: t.spawnCount,
+        avg_lifetime_ms: t.avgLifetimeMs,
+      })),
+    });
+    insert.run(
+      'container',
+      `${row.host_id}/${row.container_name}`,
+      'availability',
+      'warning',
+      `Respawn loop in "${row.container_name}"`,
+      `${g.spawnCount} spawns of the same process in 15 min, ${(g.shortRatio * 100).toFixed(0)}% finished in <10s (avg ${Math.round(g.avgLifetimeMs)} ms).`,
+      'process_spawn_count',
+      g.spawnCount,
+      20,
+      evidence,
+    );
+    count++;
+  }
 
   // --- Correlation enrichment ---
   enrichInsightsWithCorrelations(db);
