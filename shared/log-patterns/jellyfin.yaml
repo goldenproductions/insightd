@@ -1,0 +1,37 @@
+images:
+  - "*jellyfin*"
+title: "Jellyfin"
+patterns:
+  - id: media_file_corrupted
+    title: "Media file ended prematurely"
+    description: >
+      ffmpeg or libavformat reports the input file ended before the declared
+      duration. Usually means a truncated source (incomplete download, broken
+      transfer) or misreported metadata duration. Jellyfin retries on every
+      playback, causing visible respawn loops.
+    regex: 'File ended prematurely|Premature end of (?:file|stream)'
+    severity: warning
+    insight_category: logs
+    explains_alert:
+      - respawn_loop
+      - container_unhealthy
+
+  - id: ffmpeg_fatal
+    title: "FFmpeg fatal error"
+    description: "Unrecoverable ffmpeg error during transcode."
+    regex: '\[fatal\]\s+(?<message>.+)'
+    captures:
+      - message
+    severity: warning
+    insight_category: logs
+    explains_alert:
+      - respawn_loop
+
+  - id: transcode_timeout
+    title: "Transcode segment timeout"
+    description: "Jellyfin transcoder dropped a segment after waiting too long."
+    regex: 'Transcode segment .*? timed out after (?<seconds>\d+) seconds'
+    captures:
+      - seconds
+    severity: warning
+    insight_category: logs
