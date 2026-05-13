@@ -10,10 +10,10 @@ export function TopArgvsTable({ rows }: ExplainTopArgvsBlock) {
       <table className="w-full text-sm">
         <thead className="text-xs text-muted">
           <tr>
-            <th className="px-3 py-1.5 text-left">Command</th>
-            <th className="px-3 py-1.5 text-right">Spawns</th>
-            <th className="px-3 py-1.5 text-right">Avg lifetime</th>
-            <th className="px-3 py-1.5 text-left">Argv</th>
+            <th scope="col" className="px-3 py-1.5 text-left">Command</th>
+            <th scope="col" className="px-3 py-1.5 text-right">Spawns</th>
+            <th scope="col" className="px-3 py-1.5 text-right">Avg lifetime</th>
+            <th scope="col" className="px-3 py-1.5 text-left">Argv</th>
           </tr>
         </thead>
         <tbody>

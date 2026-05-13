@@ -71,7 +71,7 @@ export function ExpandedBody({ insight }: { insight: ExpandedBodyInsight }) {
       </Suspense>
       <ContributingTimeline events={explain.timeline} />
       {explain.extras?.map((block, i) => {
-        if (block.kind === 'top_argvs') return <TopArgvsTable key={i} {...block} />;
+        if (block.kind === 'top_argvs') return <TopArgvsTable key={`${block.kind}-${i}`} {...block} />;
         return null;
       })}
       <MetadataRow insight={insight} />
