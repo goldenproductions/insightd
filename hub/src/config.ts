@@ -98,6 +98,11 @@ const config = Object.freeze({
     suppressDependents: process.env.INSIGHTD_ALERT_SUPPRESS_DEPENDENTS !== 'false',
     flapStabilizeMinutes: parseInt(process.env.INSIGHTD_ALERT_FLAP_STABILIZE || '5', 10),
     diskCriticalPercent: parseInt(process.env.INSIGHTD_ALERT_DISK_CRITICAL || '95', 10),
+    respawnLoop: process.env.INSIGHTD_RESPAWN_ENABLED !== 'false',
+    respawnWindowMin: parseInt(process.env.INSIGHTD_RESPAWN_WINDOW_MIN || '15', 10),
+    respawnMinSpawns: parseInt(process.env.INSIGHTD_RESPAWN_MIN_SPAWNS || '20', 10),
+    respawnShortLifetimeMs: parseInt(process.env.INSIGHTD_RESPAWN_SHORT_LIFETIME_MS || '10000', 10),
+    respawnShortLifetimeRatio: parseFloat(process.env.INSIGHTD_RESPAWN_SHORT_LIFETIME_RATIO || '0.6'),
   }),
 
   // AI diagnosis (Gemini)

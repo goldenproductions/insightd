@@ -7,7 +7,7 @@
 export type ChartKind = 'sparkline' | 'week_overlay' | 'forecast' | 'uptime_bars' | 'restart_histogram';
 
 export interface ChartPoint {
-  ts: string;     // ISO-ish "YYYY-MM-DD HH:MM:SS" (matches snapshot collected_at)
+  ts: string;
   value: number;
 }
 
@@ -52,8 +52,24 @@ export interface ExplanationSummary {
   confidence: 'high' | 'medium' | 'low' | null;
 }
 
+export interface TopArgvsRow {
+  argv_hash: string;
+  comm: string | null;
+  argv: string;
+  spawn_count: number;
+  avg_lifetime_ms: number;
+}
+
+export interface TopArgvsBlock {
+  kind: 'top_argvs';
+  rows: TopArgvsRow[];
+}
+
+export type ExtraBlock = TopArgvsBlock;
+
 export interface InsightExplanation {
   summary: ExplanationSummary;
   chart: ChartData;
   timeline: TimelineMarker[];
+  extras?: ExtraBlock[];
 }

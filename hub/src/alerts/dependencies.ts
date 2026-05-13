@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3';
 
-type ScopeKey = 'host' | 'cluster';
+type ScopeKey = 'host' | 'cluster' | 'container';
 
 interface Dep {
   parent: string;
@@ -39,6 +39,11 @@ const DEPS: Dep[] = [
       'pve_zfs_unhealthy', 'pve_storage_saturation', 'pve_backup_overdue',
     ],
   },
+  {
+    parent: 'respawn_loop',
+    scope: 'container',
+    children: ['high_cpu', 'high_memory'],
+  },
 ];
 
 // Reverse index: child -> list of parents that suppress it
@@ -73,7 +78,14 @@ function findActiveParent(db: Database.Database, alert: AlertLike): ParentRow | 
         WHERE alert_type = ? AND host_id = ? AND resolved_at IS NULL
         LIMIT 1
       `).get(dep.parent, alert.hostId) as ParentRow | undefined;
+    } else if (dep.scope === 'container') {
+      row = db.prepare(`
+        SELECT id, alert_type, host_id, target FROM alert_state
+        WHERE alert_type = ? AND host_id = ? AND target = ? AND resolved_at IS NULL
+        LIMIT 1
+      `).get(dep.parent, alert.hostId, alert.target) as ParentRow | undefined;
     } else {
+      // cluster
       row = db.prepare(`
         SELECT s.id, s.alert_type, s.host_id, s.target
         FROM alert_state s
@@ -91,7 +103,7 @@ function findActiveParent(db: Database.Database, alert: AlertLike): ParentRow | 
   return null;
 }
 
-interface ParentLike { alert_type: string; host_id: string }
+interface ParentLike { alert_type: string; host_id: string; target?: string }
 
 function findActiveChildren(db: Database.Database, parent: ParentLike): Array<{ id: number; alert_type: string; host_id: string; target: string; resolved_at: string | null }> {
   const dep = DEPS.find(d => d.parent === parent.alert_type);
@@ -103,6 +115,13 @@ function findActiveChildren(db: Database.Database, parent: ParentLike): Array<{ 
       WHERE host_id = ? AND alert_type IN (${placeholders})
     `).all(parent.host_id, ...dep.children) as any;
   }
+  if (dep.scope === 'container') {
+    return db.prepare(`
+      SELECT id, alert_type, host_id, target, resolved_at FROM alert_state
+      WHERE host_id = ? AND target = ? AND alert_type IN (${placeholders})
+    `).all(parent.host_id, parent.target ?? '', ...dep.children) as any;
+  }
+  // cluster
   return db.prepare(`
     SELECT s.id, s.alert_type, s.host_id, s.target, s.resolved_at FROM alert_state s
     JOIN hosts hp ON hp.host_id = s.host_id

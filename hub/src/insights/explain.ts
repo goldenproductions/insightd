@@ -278,7 +278,41 @@ function bucketRestartsByHour(deltas: { ts: string; delta: number }[], fromIso: 
   }));
 }
 
+function buildRespawnLoopChart(db: Database.Database, insight: InsightRow): ChartData {
+  const [hostId, ...nameParts] = insight.entity_id.split('/');
+  const containerName = nameParts.join('/');
+  let argvHash = '';
+  try {
+    const ev = insight.evidence ? JSON.parse(insight.evidence) : null;
+    argvHash = ev?.argv_hash ?? '';
+  } catch { /* evidence missing or malformed → no chart */ }
+  if (!argvHash) return { kind: 'restart_histogram', points: [] };
+
+  const rows = db.prepare(`
+    SELECT strftime('%Y-%m-%d %H:00:00', started_at) AS hour, COUNT(*) AS n
+      FROM process_events
+     WHERE argv_hash = ?
+       AND container_id IN (
+             SELECT container_id FROM container_snapshots
+              WHERE host_id = ? AND container_name = ?
+              ORDER BY collected_at DESC
+              LIMIT 1
+           )
+       AND started_at >= datetime('now', '-24 hours')
+     GROUP BY hour
+     ORDER BY hour
+  `).all(argvHash, hostId, containerName) as { hour: string; n: number }[];
+
+  return {
+    kind: 'restart_histogram',
+    points: rows.map(r => ({ ts: r.hour, value: r.n })),
+  };
+}
+
 function buildChart(db: Database.Database, insight: InsightRow): ChartData {
+  if (insight.entity_type === 'container' && insight.metric === 'process_spawn_count') {
+    return buildRespawnLoopChart(db, insight);
+  }
   const kind = chartKindForCategory(insight.category);
   const yLabel = yLabelForMetric(insight.metric);
   const thresholdLabel = thresholdLabelForCategory(insight.category);
@@ -429,11 +463,38 @@ function buildTimeline(
   return markers.length > 25 ? markers.slice(markers.length - 25) : markers;
 }
 
+interface TopArgvsRow {
+  argv_hash: string;
+  comm: string | null;
+  argv: string;
+  spawn_count: number;
+  avg_lifetime_ms: number;
+}
+
+interface TopArgvsBlock {
+  kind: 'top_argvs';
+  rows: TopArgvsRow[];
+}
+
+type ExtraBlock = TopArgvsBlock;
+
+function buildExtras(insight: InsightRow): ExtraBlock[] | undefined {
+  if (insight.metric !== 'process_spawn_count') return undefined;
+  try {
+    const ev = insight.evidence ? JSON.parse(insight.evidence) : null;
+    const rows = ev?.top_argvs;
+    if (!Array.isArray(rows) || rows.length === 0) return undefined;
+    return [{ kind: 'top_argvs', rows }];
+  } catch {
+    return undefined;
+  }
+}
+
 function buildExplanation(db: Database.Database, insight: InsightRow) {
   const summary  = buildSummary(insight);
   const chart    = buildChart(db, insight);
   const timeline = buildTimeline(db, insight, chart.points);
-  return { summary, chart, timeline };
+  return { summary, chart, timeline, extras: buildExtras(insight) };
 }
 
 module.exports = { buildSummary, buildChart, buildTimeline, buildExplanation };
