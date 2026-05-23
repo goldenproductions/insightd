@@ -25,6 +25,39 @@ No critical issues. Good week.
 
 > **First-time user?** I'm actively collecting early-user feedback. If you try insightd, I'm especially looking for feedback on whether **install worked on the first try**, **what environment you used**, and **what was confusing**. → [Join the discussion](https://github.com/goldenproductions/insightd/discussions/286)
 
+## Who is this for?
+
+Insightd is for self-hosters and homelabbers running Docker, Kubernetes/k3s, Proxmox VE, or a mix of them — especially if you want useful server awareness without building and maintaining a full Prometheus/Grafana stack.
+
+It is a good fit if you want to know:
+
+- which hosts, containers, pods, or endpoints need attention
+- why something likely broke
+- whether alerts are actionable instead of noisy
+- what changed across your small fleet over time
+
+## What v0.1 does today
+
+In v0.1, insightd can:
+
+- install a hub and local agent with Docker
+- monitor Docker containers, Kubernetes/k3s nodes/pods, Proxmox VE guests, and HTTP endpoints
+- show host, container, endpoint, metrics, logs, and status in a web UI
+- surface insights and ranked diagnosis when something looks unhealthy
+- send email digests and alerts
+- deliver webhook alerts to Slack, Discord, Telegram, ntfy, or generic endpoints
+- run self-hosted with SQLite and no external database
+
+## Non-goals / not yet
+
+Insightd v0.1 is intentionally not:
+
+- a hosted SaaS
+- an enterprise Prometheus/Grafana replacement
+- long-term high-cardinality metrics storage
+- a public MQTT service — keep MQTT private to your network/VPN
+- a guarantee that every runtime, OS, or edge case is supported yet
+
 ## Features
 
 - **Multi-host, multi-runtime monitoring** — deploy agents on each server reporting to a central hub via MQTT. Docker, Kubernetes/k3s (DaemonSet mode), and Proxmox VE (LXC + QEMU guests, ZFS pools, storage saturation, backup overdue, cluster quorum) are all first-class.
