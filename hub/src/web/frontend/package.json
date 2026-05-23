@@ -14,7 +14,7 @@
     "react-dom": "^19.2.6",
     "react-router-dom": "^7.15.1",
     "reactflow": "^11.11.4",
-    "recharts": "^2.15.4",
+    "recharts": "^3.8.1",
     "uplot": "^1.6.32",
     "uplot-react": "^1.2.4"
   },
