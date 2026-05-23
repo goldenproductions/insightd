@@ -22,6 +22,12 @@ jobs:
 
       - run: npm ci
 
+      - name: Install frontend deps
+        run: cd hub/src/web/frontend && npm ci
+
+      - name: Build frontend
+        run: cd hub/src/web/frontend && npm run build
+
       - run: npx tsc --noEmit
 
       - run: npm test

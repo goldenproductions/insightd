@@ -149,3 +149,18 @@ insightd.dev/
 
 # Superpowers brainstorming session artifacts
 .superpowers/
+
+# Vite build output for the hub frontend.
+# Dockerfile rebuilds this from hub/src/web/frontend/ on every image build,
+# so the tracked copies were just churn. Run `cd hub/src/web/frontend && npm run build`
+# before running the hub outside Docker (e.g. `tsx hub/src/index.ts`).
+hub/src/web/public/
+
+# Claude Code worktrees / local agent state
+.claude/worktrees/
+
+# Local-only docker-compose override layered on top of docker-compose.hub.yml
+docker-compose.hub.override.yml
+
+# Stray files from redirect typos (e.g. `> =2026-...`)
+=*
