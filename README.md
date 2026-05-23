@@ -1,12 +1,10 @@
 # Insightd
 
-**Server awareness without the overhead.** A self-hosted monitoring tool for homelabbers that watches your containers, hosts, and HTTP endpoints across Docker, Kubernetes, and Proxmox VE — with a modern web dashboard, smart alerts, and weekly digests.
+**Server awareness without the overhead.** A self-hosted monitoring tool for self-hosters that watches your containers, hosts, and HTTP endpoints across Docker, Kubernetes, and Proxmox VE — and tells you *why* something broke, not just *what*.
 
-Most homelab monitors cover one runtime. Insightd treats Docker containers, Kubernetes pods (with full namespace topology and workload health), and Proxmox LXC/QEMU guests (with ZFS, backups, and quorum) as first-class citizens in the same UI. It runs predictive and correlation-based diagnosis to tell you *why* something looks wrong, not just *what* — and it stays calm by default with capacity-based thresholds, so you don't get woken up by 1.4% baseline noise. Privacy-first, SQLite-backed, one-command Docker install.
+Most self-hosted monitors cover one runtime. Insightd treats Docker containers, Kubernetes pods (with full namespace topology and workload health), and Proxmox LXC/QEMU guests (with ZFS, backups, and quorum) as first-class citizens in the same UI. When a container goes unhealthy, it correlates metrics, restart history, host state, and log patterns into a ranked explanation — so you spend less time digging. Calm alerts by default (capacity thresholds, not 1.4% baseline noise), modern web dashboard, email + webhook delivery. Privacy-first, SQLite-backed, one-command Docker install.
 
-<!-- TODO before launch: drop a dashboard screenshot or animated GIF here.
-     Recommended: 1280x720 PNG of the multi-host overview with at least one
-     active alert + one insight visible. -->
+Demo video and screenshots are being prepared. For now, the install steps below show the core workflows you can run locally — install takes under 5 minutes on a single host. Example weekly digest email (real format, fictional numbers):
 
 ```
 Insightd — Week 14
@@ -22,9 +20,10 @@ No critical issues. Good week.
 
 ## Try it
 
-- [Live demo](https://demo.insightd.org) (coming soon)
 - [Quick Start guide](https://docs.insightd.org/guides/quick-start/) — Docker Compose walkthrough
 - Or jump straight to [single-server install](#single-server-standalone-mode) below
+
+> **First-time user?** I'm actively collecting early-user feedback. If you try insightd, I'm especially looking for feedback on whether **install worked on the first try**, **what environment you used**, and **what was confusing**. → [Join the discussion](https://github.com/goldenproductions/insightd/discussions/286)
 
 ## Features
 
