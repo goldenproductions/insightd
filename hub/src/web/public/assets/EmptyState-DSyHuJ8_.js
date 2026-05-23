@@ -1,1 +1,0 @@
-import{t as e}from"./jsx-runtime-2UHhqg_S.js";var t=e();function n({message:e}){return(0,t.jsx)(`div`,{className:`py-12 text-center`,children:(0,t.jsx)(`p`,{className:`text-sm text-muted`,children:e})})}export{n as t};
