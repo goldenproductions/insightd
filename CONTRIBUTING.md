@@ -56,6 +56,8 @@ Security issues — please use GitHub's private vulnerability reporting (see `SE
 
 Releases are cut by maintainers via tags: `hub-vX.Y.Z` and `agent-vX.Y.Z` independently trigger the publish workflows in `.github/workflows/`. Hub and agent versions are not coupled; a hub release without an agent change just bumps the hub.
 
+Use [`docs/release-checklist.md`](./docs/release-checklist.md) before tagging a public release so tests, Docker smoke checks, Quick Start validation, release notes, and post-release verification happen consistently.
+
 ## Where things live
 
 ```

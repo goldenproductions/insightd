@@ -22,6 +22,7 @@ Confidence: high (3 signals agree)
 ## Try it
 
 - [Quick Start guide](https://docs.insightd.org/guides/quick-start/) — full Docker Compose walkthrough
+- [Privacy and security model](./docs/privacy-security.md) — what insightd can see, where data lives, and which permissions matter
 - Or jump straight to [install](#quick-start) below
 
 > **First-time user?** I'm actively collecting early-user feedback. If you try insightd, I'm especially looking for feedback on whether **install worked on the first try**, **what environment you used**, and **what was confusing**. → [Join the discussion](https://github.com/goldenproductions/insightd/discussions/286)
