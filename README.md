@@ -80,7 +80,7 @@ For monitoring multiple servers, insightd uses MQTT to connect lightweight agent
 curl -sSL https://insightd.org/install.sh | bash
 ```
 
-The script is ~40 lines of bash and [public on GitHub](https://github.com/goldenproductions/insightd.org/blob/main/public/install.sh) — audit before running if you prefer.
+The script is [public on GitHub](https://github.com/goldenproductions/insightd.org/blob/main/public/install.sh) — audit before running if you prefer.
 
 Open **http://your-server:3000** and follow the **Setup Wizard** — it walks you through setting a password, configuring email, and adding agents. No `.env` file required.
 
