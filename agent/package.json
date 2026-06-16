@@ -12,6 +12,6 @@
     "node-cron": "^4.2.1"
   },
   "devDependencies": {
-    "tsx": "^4.22.3"
+    "tsx": "^4.22.4"
   }
 }
