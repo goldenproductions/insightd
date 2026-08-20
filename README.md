@@ -25,7 +25,7 @@ Confidence: high (3 signals agree)
 - [Privacy and security model](./docs/privacy-security.md) — what insightd can see, where data lives, and which permissions matter
 - Or jump straight to [install](#quick-start) below
 
-> **First-time user?** I'm actively collecting early-user feedback. If you try insightd, I'm especially looking for feedback on whether **install worked on the first try**, **what environment you used**, and **what was confusing**. → [Join the discussion](https://github.com/goldenproductions/insightd/discussions/286)
+> **First-time user?** I'm actively collecting early-user feedback in [GitHub Discussion #286](https://github.com/goldenproductions/insightd/discussions/286). If you try insightd, please tell me whether **install worked on the first try**, **which environment you used** (Docker, k3s, Proxmox, VM/LXC, etc.), **what was confusing**, **what made you trust or distrust it**, and **what would make you keep it running**.
 
 ## Who is this for?
 
