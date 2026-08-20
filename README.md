@@ -21,11 +21,24 @@ Confidence: high (3 signals agree)
 
 ## Try it
 
+- [Interactive demo](https://insightd.org/demo/) — click through a realistic sample homelab before installing
 - [Quick Start guide](https://docs.insightd.org/guides/quick-start/) — full Docker Compose walkthrough
 - [Privacy and security model](./docs/privacy-security.md) — what insightd can see, where data lives, and which permissions matter
 - Or jump straight to [install](#quick-start) below
 
 > **First-time user?** I'm actively collecting early-user feedback. If you try insightd, I'm especially looking for feedback on whether **install worked on the first try**, **what environment you used**, and **what was confusing**. → [Join the discussion](https://github.com/goldenproductions/insightd/discussions/286)
+
+## Demo proof-of-work
+
+These launch screenshots come from the public [interactive demo](https://insightd.org/demo/) and show the current story end to end: health, host pressure, diagnosis evidence, alert routing, and endpoint monitoring. The full asset pack and captions live in [`docs/launch/demo-proof-assets/`](./docs/launch/demo-proof-assets/), with a LinkedIn launch draft in [`docs/launch/linkedin-launch-post.md`](./docs/launch/linkedin-launch-post.md).
+
+| Dashboard health / attention feed | Container diagnosis / log evidence |
+| --- | --- |
+| ![Demo dashboard showing fleet health, attention feed, and what insightd is doing](./docs/launch/demo-proof-assets/screenshots/01-dashboard-attention-feed.png) | ![Demo diagnosis showing likely cause, confidence, suggested action, log pattern, and evidence cards](./docs/launch/demo-proof-assets/screenshots/03-diagnosis-log-evidence.png) |
+
+| Host metrics | Alert routes | Endpoint monitoring |
+| --- | --- | --- |
+| ![Demo host metrics across Docker, k3s, and Proxmox hosts](./docs/launch/demo-proof-assets/screenshots/02-host-metrics.png) | ![Demo alerts routed to Slack and ntfy with dedupe and suppression context](./docs/launch/demo-proof-assets/screenshots/04-alert-routes.png) | ![Demo endpoint monitoring with HTTP status, latency, TLS, and delivery signals](./docs/launch/demo-proof-assets/screenshots/05-endpoint-monitoring.png) |
 
 ## Who is this for?
 

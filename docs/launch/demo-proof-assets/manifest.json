@@ -1,0 +1,47 @@
+{
+  "sourceUrl": "https://insightd.org/demo/",
+  "capturedAt": "2026-08-20T01:39:22.253Z",
+  "viewport": "1440x1050",
+  "assets": [
+    {
+      "id": "01-dashboard-attention-feed",
+      "tab": "overview",
+      "title": "Dashboard health and attention feed",
+      "caption": "Fleet health starts with the one thing that needs attention: Jellyfin restart-spamming, backed by memory pressure and recent log context instead of a raw wall of charts.",
+      "file": "screenshots/01-dashboard-attention-feed.png",
+      "bytes": 131240
+    },
+    {
+      "id": "02-host-metrics",
+      "tab": "hosts",
+      "title": "Host metrics across Docker, k3s, and Proxmox",
+      "caption": "The sample workspace mixes Docker, k3s, Proxmox VE, and HTTP endpoints so users can see host pressure and runtime status in one shared fleet view.",
+      "file": "screenshots/02-host-metrics.png",
+      "bytes": 95160
+    },
+    {
+      "id": "03-diagnosis-log-evidence",
+      "tab": "diagnosis",
+      "title": "Container diagnosis with log evidence",
+      "caption": "When a container is unhealthy, insightd ranks the likely cause, shows confidence, and keeps the exact log pattern and metric/restart/topology evidence beside the next action.",
+      "file": "screenshots/03-diagnosis-log-evidence.png",
+      "bytes": 140253
+    },
+    {
+      "id": "04-alert-routes",
+      "tab": "alerts",
+      "title": "Alert routes and calm delivery",
+      "caption": "Alerts are deduped, routed to Slack and ntfy, and suppressed when they match a known maintenance window so launch readers see calm notification behavior.",
+      "file": "screenshots/04-alert-routes.png",
+      "bytes": 97463
+    },
+    {
+      "id": "05-endpoint-monitoring",
+      "tab": "endpoints",
+      "title": "Endpoint monitoring alongside infrastructure",
+      "caption": "HTTP checks live beside infrastructure signals: p95 latency, TLS age, status, and alert-route delivery stay visible without leaving the homelab dashboard.",
+      "file": "screenshots/05-endpoint-monitoring.png",
+      "bytes": 92989
+    }
+  ]
+}
